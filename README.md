@@ -9,17 +9,78 @@ Extensions for Rex, the terminal multiplexer. Each one is a folder with a Lua fi
 
 ## Install
 
-Clone the repo once, then install the extensions you want:
+Rex has no plugin manager. An extension is enabled when the `init.lua` Rex reads loads its Lua file and binds a key to its action. Each extension's `install.js` makes that edit for you.
+
+### 1. Clone the repo once
 
 ```sh
 git clone https://github.com/luongnv89/rex-extensions ~/.config/rex/rex-extensions
+```
+
+Any folder works. `init.lua` loads the extensions from where you cloned them, so keep the clone there.
+
+### 2. Install and enable the extensions you want
+
+Run each extension's `install.js`:
+
+```sh
 node ~/.config/rex/rex-extensions/github/install.js
 node ~/.config/rex/rex-extensions/mcc/install.js
 ```
 
-Each `install.js` adds a few lines to the `init.lua` Rex reads (`REX_CONFIG`, else `$XDG_CONFIG_HOME/rex/init.lua`, else `~/.config/rex/init.lua`), checks the result with `rex config check`, puts the old file back if the check fails, and reloads the config. `install.js --remove` takes the extension out again.
+Each one:
 
-To update every extension, `git pull` in the clone. A change to an extension's Lua file needs `rex config reload`.
+1. adds three lines to `init.lua`: a comment, a `dofile` that loads the extension, and a `rex.bind` for its key;
+2. checks the result with `rex config check`, and puts the old file back if the check fails;
+3. saves the old file as `init.lua.bak-rex-<extension>`;
+4. runs `rex config reload`, so the key works at once, with no restart.
+
+The file it edits is `REX_CONFIG` when that's set, else `$XDG_CONFIG_HOME/rex/init.lua`, else `~/.config/rex/init.lua`. It's created if it doesn't exist. Running `install.js` again when the extension is already there changes nothing.
+
+For mcc, the lines look like this:
+
+```lua
+-- rex-mcc: the mcc usage panel (https://github.com/luongnv89/rex-extensions/tree/main/mcc)
+dofile("/Users/you/.config/rex/rex-extensions/mcc/rex-mcc.lua")
+rex.bind("cmd+shift+u", "mcc_usage")
+```
+
+### 3. Use it
+
+Press the extension's key in any Rex pane:
+
+| Extension | Key | Action | In the command palette |
+| --- | --- | --- | --- |
+| github | `cmd+shift+g` | `github_panel` | **PR and Issue Panel** |
+| mcc | `cmd+shift+u` | `mcc_usage` | **mcc Usage Panel** |
+
+Without the key, pick the extension in Rex's command palette, or run its action from a shell with `rex do ACTION`, such as `rex do mcc_usage`.
+
+To check that an extension is enabled:
+
+```sh
+rex config check                  # init.lua loads without errors
+rex keymap | grep mcc_usage       # the key is bound to the action
+```
+
+### Pick another key
+
+When the default key is already bound in your `init.lua`, `install.js` takes the first free key from its own list and says which one it picked. To choose a key yourself, pass it:
+
+```sh
+node ~/.config/rex/rex-extensions/mcc/install.js ctrl+alt+u
+```
+
+It refuses a key your `init.lua` already binds. It can't see the shortcuts built into the Rex app, so if the key does something else there, remove the extension and install it again with another key.
+
+### Enable it by hand
+
+To skip `install.js`, add the `dofile` and `rex.bind` lines above to `init.lua` yourself, using the path of your clone, then run `rex config check` and `rex config reload`.
+
+### Update, disable or remove
+
+- **Update:** run `git pull` in the clone. Every extension updates at once. A change to a pane's script shows the next time the pane opens; a change to an extension's Lua file needs `rex config reload`.
+- **Disable or remove:** `node ~/.config/rex/rex-extensions/mcc/install.js --remove` takes the extension's lines out of `init.lua` and reloads the config. Run `install.js` again to bring it back.
 
 ## Needs
 
