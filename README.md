@@ -5,6 +5,7 @@ Extensions for Rex, the terminal multiplexer. Each one is a folder with a Lua fi
 | Extension | What it does | Default key |
 | --- | --- | --- |
 | [github](github/README.md) | The open pull requests and issues of the repo you're in, from GitHub or GitLab, in a side pane. Resolve an issue or review a pull request with your agent. | `cmd+shift+g` |
+| [mcc](mcc/README.md) | The 5-hour and weekly Claude Code usage of every [mcc](https://github.com/luongnv89/mcc) account, in a strip along the bottom of the tab, with a button to look them up live. | `cmd+shift+u` |
 
 ## Install
 
@@ -13,6 +14,7 @@ Clone the repo once, then install the extensions you want:
 ```sh
 git clone https://github.com/luongnv89/rex-extensions ~/.config/rex/rex-extensions
 node ~/.config/rex/rex-extensions/github/install.js
+node ~/.config/rex/rex-extensions/mcc/install.js
 ```
 
 Each `install.js` adds a few lines to the `init.lua` Rex reads (`REX_CONFIG`, else `$XDG_CONFIG_HOME/rex/init.lua`, else `~/.config/rex/init.lua`), checks the result with `rex config check`, puts the old file back if the check fails, and reloads the config. `install.js --remove` takes the extension out again.
