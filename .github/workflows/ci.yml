@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: JavaScript syntax
+        run: for f in $(git ls-files '*.js'); do node --check "$f" || exit 1; done
+      - name: Lua syntax
+        run: |
+          sudo apt-get install -y lua5.1 >/dev/null
+          for f in $(git ls-files '*.lua'); do luac5.1 -p "$f" || exit 1; done
+      - name: Tests
+        # Every extension folder with a test/ folder runs its own tests.
+        run: |
+          for d in */; do
+            [ -d "$d/test" ] || continue
+            echo "== $d"
+            (cd "$d" && node --test) || exit 1
+          done
