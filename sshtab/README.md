@@ -3,8 +3,8 @@
 When the tab you're in is ssh'd into a machine, a new tab opens on that machine too, however you open it: the **+** button, **New Tab** in the menu bar or the command palette, or `cmd+t`. Splitting a pane that's ssh'd into a machine does the same for the new pane.
 
 ```
-new tab from a tab running   ssh -p 2222 -t admin@aws-dev htop
-types into the new tab       ssh -p 2222 -t admin@aws-dev
+new tab from a tab running   ssh -p 2222 -t you@devbox htop
+types into the new tab       ssh -p 2222 -t you@devbox
 ```
 
 A new tab or pane opened from a local one stays local. Tabs and panes that scripts and agents open (`rex window new`, `rex run`, `rex split`, `rex do`) are never touched.
@@ -41,7 +41,7 @@ It runs on its own. The key, **Same-Machine Tabs** in the command palette, or `r
 - **The new tab or pane.** It starts as the app's usual local one, where the app puts it. The command is typed into its shell once the shell waits at its prompt, so it's in your shell history, and when you log out of the remote machine you're back in the local shell.
 - **Which tabs and panes.** Only ones Rex.app itself made, that start as a plain shell. Rex records which client created each pane: one the app makes is created by the app, one `rex` makes from a script or an agent is created by that `rex` command, and those are skipped. A pane that runs a program, such as the github and mcc panels, is skipped even when the app opens it. Moving a pane to a new tab or into a split, floating panes, and the first tab of a new session are skipped too.
 
-Each decision is written to `~/.cache/rex-sshtab/log`, such as `skip window:…: made by cli, not the app` or `typed ssh -p 2222 admin@aws-dev into block:…`. Look there when a tab didn't connect.
+Each decision is written to `~/.cache/rex-sshtab/log`, such as `skip window:…: made by cli, not the app` or `typed ssh -p 2222 you@devbox into block:…`. Look there when a tab didn't connect.
 
 ## Limits
 

@@ -6,7 +6,7 @@ local M = {}
 
 -- Separates a tab's folder from its name: "skills · claude".
 M.TAB_SEP = " · "
--- Separates a session's machines from its name: "aws-dev:skills-work".
+-- Separates a session's machines from its name: "devbox:skills-work".
 M.SESSION_SEP = ":"
 -- Rex refuses labels longer than this.
 M.MAX = 128
@@ -33,7 +33,7 @@ function M.basename(path, home)
   return path:match("([^/]+)$")
 end
 
--- The short form of a host name: "aws-dev" for "aws-dev.example.com", and an
+-- The short form of a host name: "devbox" for "devbox.example.com", and an
 -- IP address as it is.
 function M.short_host(host)
   host = trim(host)
@@ -51,7 +51,7 @@ function M.parse_pwd(url)
   return host, path
 end
 
--- The machine and folder in a title like "user@aws-dev:~/workspace/skills",
+-- The machine and folder in a title like "user@devbox:~/workspace/skills",
 -- which most shells set by default. Needs the "user@" so a title such as
 -- "vim: notes.txt" doesn't pass for a host.
 function M.parse_ssh_title(title)
@@ -64,7 +64,7 @@ end
 -- Where a terminal is, from its title, pwd and process replies:
 --   info = { title = "...", pwd = { pwd = url, owner = { pid } },
 --            process = { foreground = {...}, ancestors = {...}, home = "..." },
---            local_host = "M1" }
+--            local_host = "Laptop" }
 -- Returns machine, folder; either may be nil.
 function M.locate(info)
   local proc = info.process or {}

@@ -84,7 +84,7 @@ The panel, and the `git`, `gh` and `glab` it runs, run on the machine of the Rex
 ## Needs
 
 - Rex on macOS or Linux, with a server that speaks API revision 8 or later (`rex version` shows it).
-- Node 18 or later, as `node` on the `PATH` your login shell sets.
+- Node 20 or later, as `node` on the `PATH` your login shell sets.
 - For GitHub repos, [`gh`](https://cli.github.com), logged in (`gh auth login`; add `--hostname` for GitHub Enterprise).
 - For GitLab repos, [`glab`](https://gitlab.com/gitlab-org/cli), logged in (`glab auth login`; add `--hostname` for a self-hosted GitLab).
 
@@ -133,4 +133,4 @@ node --test
 
 ## License
 
-[MIT](LICENSE)
+[MIT](../LICENSE)

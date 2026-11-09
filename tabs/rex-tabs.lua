@@ -1,9 +1,9 @@
 -- rex-tabs: the machine in each session's name and the folder in each tab's
 -- name, so the sidebar reads
 --
---   aws-dev:deploy
+--   devbox:deploy
 --     skills · claude
---     api · adminuser@aws-dev:~/workspace/api
+--     api · you@devbox:~/workspace/api
 --
 -- Load it from init.lua, then bind a key to its action:
 --

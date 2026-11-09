@@ -62,7 +62,7 @@ Click the panel, or move focus to it, before using its keys.
 ## Needs
 
 - Rex on macOS or Linux, with a server that speaks API revision 8 or later (`rex version` shows it).
-- Node 18 or later, as `node` on the `PATH` your login shell sets.
+- Node 20 or later, as `node` on the `PATH` your login shell sets.
 - [mcc](https://github.com/luongnv89/mcc) 0.6 or later, which prints `mcc usage --json-v2`. The panel looks for it on `PATH`, then in `~/.local/bin`, `~/.cargo/bin`, `/opt/homebrew/bin` and `/usr/local/bin`. If it's elsewhere, set `MCC_BIN` to its full path.
 
 ## What it runs
