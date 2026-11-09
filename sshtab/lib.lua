@@ -119,6 +119,41 @@ function M.command_line(argv)
   return table.concat(words, " ")
 end
 
+-- The pane a new pane was split from: its sibling in the layout tree. When a
+-- pane is split, the new one and the old one become the two sides of a new
+-- split node, so right after the split the other side is a single pane.
+-- `window` is a window from session.view. Returns nil when the pane isn't
+-- in a tiled layer or its sibling is more than one pane.
+function M.split_source(window, block_id)
+  local function walk(node)
+    if type(node) ~= "table" then return nil end
+    local split = node.split
+    if type(split) ~= "table" then return nil end
+    local before, after = split.before or {}, split.after or {}
+    if before.block_id == block_id then return after.block_id end
+    if after.block_id == block_id then return before.block_id end
+    return walk(before) or walk(after)
+  end
+  for _, layer in ipairs((type(window) == "table" and window.layers) or {}) do
+    if layer.kind == nil or layer.kind == "tiled" then
+      local found = walk(layer.layout)
+      if found then return found end
+    end
+  end
+  return nil
+end
+
+-- Whether a terminal's process reply is a plain shell: started as a login
+-- shell or a shell (not a command such as `node panel.js` run through one),
+-- with a shell in the foreground.
+function M.plain_shell(process)
+  if type(process) ~= "table" then return false end
+  local child, fg = process.child, process.foreground
+  if type(child) ~= "table" or type(fg) ~= "table" then return false end
+  local started = child.name == "login" or M.is_shell(child.name) or M.is_shell(child.argv0)
+  return started and M.is_shell(fg.name)
+end
+
 -- The ssh command for a terminal's process reply, given a function that
 -- returns the argv of a pid. Returns argv, destination and the local folder
 -- ssh runs in, or nil when the terminal isn't running ssh.

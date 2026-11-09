@@ -70,6 +70,27 @@ eq(lib.quote(""), "''", "quote nothing")
 eq(lib.quote("$HOME;rm"), "'$HOME;rm'", "quote shell syntax")
 eq(lib.command_line({ "ssh", "-p", "2222", "-o", "ProxyCommand nc %h %p", "box" }), "ssh -p 2222 -o 'ProxyCommand nc %h %p' box", "command_line")
 
+-- split_source
+local function leaf(id) return { block_id = id } end
+local function split(a, b) return { split = { direction = "horizontal", before = a, after = b } } end
+local win = { layers = { { kind = "tiled", layout = split(split(leaf("b0"), leaf("b2")), leaf("b1")) } } }
+eq(lib.split_source(win, "b2"), "b0", "split_source: new pane after its source")
+eq(lib.split_source(win, "b0"), "b2", "split_source: new pane before its source")
+eq(lib.split_source(win, "b1"), nil, "split_source: sibling is more than one pane")
+eq(lib.split_source(win, "bx"), nil, "split_source: pane not in the window")
+eq(lib.split_source({ layers = { { kind = "tiled", layout = leaf("b0") } } }, "b0"), nil, "split_source: the only pane")
+eq(lib.split_source({ layers = { { kind = "floating", layout = split(leaf("f0"), leaf("f1")) } } }, "f1"), nil, "split_source: floating layers don't count")
+eq(lib.split_source(nil, "b0"), nil, "split_source: no window")
+
+-- plain_shell
+eq(lib.plain_shell({ child = { name = "login" }, foreground = { name = "zsh" } }), true, "plain_shell: macOS login shell")
+eq(lib.plain_shell({ child = { name = "bash" }, foreground = { name = "bash" } }), true, "plain_shell: a shell")
+eq(lib.plain_shell({ child = { name = "login" }, foreground = { name = "ssh" } }), false, "plain_shell: running ssh")
+eq(lib.plain_shell({ child = { name = "node" }, foreground = { name = "node" } }), false, "plain_shell: a command")
+eq(lib.plain_shell({ child = { name = "ssh" }, foreground = { name = "ssh" } }), false, "plain_shell: a command tab")
+eq(lib.plain_shell({ foreground = { name = "zsh" } }), false, "plain_shell: no child")
+eq(lib.plain_shell(nil), false, "plain_shell: nil")
+
 -- from_process
 local argvs = { [42] = words("ssh -t admin@box htop") }
 local function argv_of(pid) return argvs[pid] end

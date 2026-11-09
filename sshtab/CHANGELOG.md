@@ -8,6 +8,7 @@
 - `rex-sshtab.lua`: starts the watcher when `init.lua` loads (one at a time, by pid file), and a `same_host_tabs` action that turns it off or on again.
 - `lib.lua`: reads ssh's command line the way OpenSSH does, with options before or after the destination, attached arguments (`-p2222`) and grouped flags (`-At`), and drops the remote command, port forwards, and the options that don't give a shell (`-f`, `-N`, `-T`, `-n` and others). The argv comes from `/proc/PID/cmdline` on Linux and `ps` elsewhere.
 - `install.js`: adds it to `init.lua` with a key for the action (`cmd+alt+t`, or the first free fallback). `--remove` stops the watcher and takes it out.
+- Split panes follow too (#5): a pane split from a pane running ssh, by key, menu, palette or button, gets the same ssh command. The pane it was split from is its sibling in the layout. A pane that starts with a program instead of a plain shell, such as a panel, is never typed into.
 
 ### Changed
 

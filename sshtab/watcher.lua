@@ -1,16 +1,18 @@
 -- rex-sshtab watcher: when you open a new tab from a tab that's ssh'd into a
--- machine, types the same ssh command into the new tab. rex-sshtab.lua starts
--- it with
+-- machine, or split a pane that's ssh'd into one, types the same ssh command
+-- into the new tab or pane. rex-sshtab.lua starts it with
 --
 --   rex do watcher.lua --all state=DIR
 --
 -- and stops it by creating DIR/off.
 --
--- It acts only on a tab that Rex.app itself made (the + button, New Tab in
--- the menu or the command palette, cmd+t): a new window holding one new shell
--- block whose creator is a client of kind "app". Tabs that scripts and agents
--- open (rex window new, rex run, rex do) come from other clients and are left
--- alone. It decides nothing it can't check, and logs each decision to DIR/log.
+-- It acts only on a tab or pane that Rex.app itself made (the + button, New
+-- Tab in the menu or the command palette, cmd+t, and the split keys, menu
+-- items and buttons): a new shell block whose creator is a client of kind
+-- "app", that started as a plain shell. Tabs and panes that scripts and agents
+-- open (rex window new, rex run, rex split, rex do) come from other clients
+-- and are left alone. It decides nothing it can't check, and logs each
+-- decision to DIR/log.
 
 local here = debug.getinfo(1, "S").source:gsub("^@", ""):match("^(.*)/[^/]*$") or "."
 local lib = dofile(here .. "/lib.lua")
@@ -126,10 +128,12 @@ local function seed(session_id)
   if view then active[session_id] = view.active_window_id end
 end
 
--- Type `line` into the new tab once its shell waits at its prompt. A shell's
--- line editor (zsh's, bash's readline, fish's) takes the terminal out of
--- canonical mode while it reads, so that's the sign. A shell without one
+-- Type `line` into the new tab or pane once its shell waits at its prompt. A
+-- shell's line editor (zsh's, bash's readline, fish's) takes the terminal out
+-- of canonical mode while it reads, so that's the sign. A shell without one
 -- stays canonical: after PROMPT_WAIT with the shell running, type anyway.
+-- A pane started with a command, such as a panel's `node panel.js`, is never
+-- a plain shell, even while a login shell starts it.
 local function type_when_ready(session_id, block_id, line)
   local polls, shell_polls = 0, 0
   local function send()
@@ -140,9 +144,14 @@ local function type_when_ready(session_id, block_id, line)
     if exists(OFF) then return end
     polls = polls + 1
     local process = block_call(session_id, block_id, "process")
-    if not process then return log("skip " .. block_id .. ": the new tab is gone") end
-    local fg = process.foreground
-    if fg and lib.is_shell(fg.name) then
+    if not process then return log("skip " .. block_id .. ": it's gone") end
+    local child, fg = process.child, process.foreground
+    -- Rex starts every pane through itself ("rex"), then execs the program.
+    local starting = not child or child.name == "rex"
+    if not starting and child.name ~= "login" and not lib.is_shell(child.name) and not lib.is_shell(child.argv0) then
+      return log("skip " .. block_id .. ": it runs " .. tostring(child.name) .. ", not a shell")
+    end
+    if lib.plain_shell(process) then
       shell_polls = shell_polls + 1
       local mode = block_call(session_id, block_id, "input_mode")
       if (mode and mode.canonical == false) or shell_polls * POLL >= PROMPT_WAIT then return send() end
@@ -181,10 +190,39 @@ local function on_window_created(ctx, ev)
   type_when_ready(session_id, block_id, lib.command_line(cmd))
 end
 
-rex.on("block_owner_changed", function(_, ev)
+-- A new pane in a window that has others: a split, if its sibling in the
+-- layout is one pane. A new tab's pane is alone in its window and is left to
+-- on_window_created, which comes next.
+local function on_block_created(session_id, block_id, kind)
+  if exists(OFF) or not session_id then return end
+  local view = call("session.view", { session_id = session_id })
+  local window
+  for _, w in ipairs((view and view.windows) or {}) do
+    for _, b in ipairs(blocks_of(w)) do
+      if b.block_id == block_id then window = w end
+    end
+  end
+  if not window or #blocks_of(window) < 2 then return end
+  created[block_id] = nil
+  local source = lib.split_source(window, block_id)
+  if not source then return log("skip " .. block_id .. ": not split from a single pane") end
+  if not TRUST[kind] then
+    return log("skip pane " .. block_id .. ": made by " .. tostring(kind) .. ", not the app")
+  end
+  local process = block_call(session_id, source, "process")
+  local cmd, dest = lib.from_process(process, argv_of)
+  if not cmd then return log("skip pane " .. block_id .. ": the pane it was split from isn't running ssh") end
+  log("new pane " .. block_id .. " split from an ssh pane: connecting to " .. dest)
+  type_when_ready(session_id, block_id, lib.command_line(cmd))
+end
+
+rex.on("block_owner_changed", function(ctx, ev)
   if ev.reason ~= "create" or not ev.block_id or not ev.owner then return end
   -- Look the creator up now: a CLI client disconnects right after.
-  created[ev.block_id] = client_kind(ev.owner) or "unknown"
+  local kind = client_kind(ev.owner) or "unknown"
+  created[ev.block_id] = kind
+  -- The pane is already in its window's layout when this arrives.
+  on_block_created(ctx.session_id or ev.session_id, ev.block_id, kind)
 end)
 
 rex.on("window_created", on_window_created)
