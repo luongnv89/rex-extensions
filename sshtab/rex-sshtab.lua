@@ -1,81 +1,95 @@
--- rex-sshtab: a new tab on the same machine. In a pane running ssh, the
--- action opens a tab that runs the same ssh command (same options and
--- destination, without a remote command or port forwards). Anywhere else it
--- opens an ordinary new tab.
+-- rex-sshtab: new tabs open on the machine the current tab is ssh'd into.
+-- Open a tab from a tab running ssh, with the + button, New Tab in the menu or
+-- the command palette, or cmd+t, and the new tab connects to the same machine
+-- with the same ssh command. Tabs that scripts and agents open are left alone.
 --
--- Load it from init.lua and bind it to the new-tab key:
+-- Load it from init.lua, then bind a key to its on/off action:
 --
 --   dofile("/path/to/rex-extensions/sshtab/rex-sshtab.lua")
---   rex.bind("cmd+t", "same_host_tab")
+--   rex.bind("cmd+alt+t", "same_host_tabs")
+--
+-- Loading the file starts watcher.lua in the background, unless it is already
+-- running or was turned off. The action turns it off, or on again. Off is
+-- remembered across restarts in ~/.cache/rex-sshtab/off.
 
 local here = debug.getinfo(1, "S").source:gsub("^@", ""):match("^(.*)/[^/]*$") or "."
-local lib = dofile(here .. "/lib.lua")
+local WATCHER = here .. "/watcher.lua"
+local STATE = (os.getenv("HOME") or "") .. "/.cache/rex-sshtab"
+local PIDFILE = STATE .. "/watcher.pid"
+local OFF = STATE .. "/off"
 
-local TERMINAL = "com.superlogical.terminal"
-local SHELL = "com.superlogical.terminal.shell"
-
--- The arguments a process was started with. Linux has them exactly in
--- /proc; elsewhere ps prints them joined by spaces.
-local function argv_of(pid)
-  local f = io.open("/proc/" .. tostring(pid) .. "/cmdline", "rb")
-  if f then
-    local text = f:read("*a")
-    f:close()
-    local argv = lib.split_nul(text)
-    if argv then return argv end
-  end
-  local r = rex.exec({ "ps", "-ww", "-o", "args=", "-p", tostring(pid) })
-  if not (r and r.ok) then return nil end
-  return lib.split_words(r.stdout)
+local function read(path)
+  local f = io.open(path, "r")
+  if not f then return nil end
+  local text = f:read("*a")
+  f:close()
+  return text
 end
 
--- The pane the action was run from: ctx.block_id, else the focused pane of
--- the session's active tab.
-local function focused_block(session_id, block_id)
-  if block_id then return block_id end
-  local view = rex.session.view({ session_id = session_id })
-  if not view then return nil end
-  for _, window in ipairs(view.windows or {}) do
-    if window.window_id == view.active_window_id then return window.focused_block_id end
-  end
-  return nil
+local function write(path, text)
+  rex.exec({ "mkdir", "-p", STATE })
+  local f = io.open(path, "w")
+  if not f then return false end
+  f:write(text)
+  f:close()
+  return true
 end
 
--- The ssh command running in a pane, or nil.
-local function ssh_in(session_id, block_id)
-  if not block_id then return nil end
-  local ok, process = pcall(rex.block.call, TERMINAL, "process", { session_id = session_id, block_id = block_id })
-  if not ok or type(process) ~= "table" then return nil end
-  return lib.from_process(process, argv_of)
+-- The `rex` on PATH, else the one inside the Rex app on macOS: the server may
+-- load this file with a PATH that doesn't have it.
+local APP_REX = (os.getenv("HOME") or "")
+  .. "/Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS/rex"
+local function rex_bin()
+  local r = rex.exec({ "sh", "-c", "command -v rex" })
+  local path = r and r.ok and r.stdout:gsub("%s+$", "") or ""
+  if path ~= "" then return path end
+  if read(APP_REX) then return APP_REX end
+  return "rex"
 end
 
-local function new_tab(ctx)
-  local session_id = ctx.session_id
-  local cmd, dest, cwd = ssh_in(session_id, focused_block(session_id, ctx.block_id))
-  if cmd then
-    local result, err = rex.session.new_window({
-      session_id = session_id,
-      layout = { block = { flavor = SHELL, options = { command = cmd, cwd = cwd } } },
-    })
-    if not result then error("rex-sshtab: can't open a tab on " .. dest .. ": " .. tostring(err)) end
-    return { host = dest, command = cmd, window_id = result.window_id }
+-- Whether the watcher in the pid file is still running. The command line is
+-- checked too, so a reused pid doesn't count.
+local function running()
+  local pid = tonumber(read(PIDFILE) or "")
+  if not pid then return false end
+  local r = rex.exec({ "ps", "-p", tostring(pid), "-o", "command=" })
+  return r and r.ok and r.stdout:find(WATCHER, 1, true) ~= nil
+end
+
+local function start()
+  rex.exec({ "mkdir", "-p", STATE })
+  local h, err = rex.exec.start(
+    { rex_bin(), "do", WATCHER, "--all", "state=" .. STATE },
+    { detach = true, cwd = here, stdout = false, stderr = false }
+  )
+  if not h then return nil, err end
+  write(PIDFILE, tostring(h.pid))
+  return h
+end
+
+local function toggle()
+  if running() then
+    write(OFF, "")
+    return { on = false }
   end
-  -- Not in ssh: the app's own new tab, so local tabs open as they always do.
-  -- Without a client to ask (rex do from a script), open a shell tab.
-  if pcall(rex.client.queue, "client.tab.new") then return { host = nil } end
-  local result, err = rex.session.new_window({
-    session_id = session_id,
-    layout = { block = { flavor = SHELL } },
-  })
-  if not result then error("rex-sshtab: can't open a tab: " .. tostring(err)) end
-  return { host = nil, window_id = result.window_id }
+  os.remove(OFF)
+  local _, err = start()
+  if err then error("rex-sshtab: can't start the watcher: " .. tostring(err)) end
+  return { on = true }
 end
 
 rex.action({
-  name = "same_host_tab",
-  title = "New Tab on Same Machine",
-  description = "Open a new tab. In a pane running ssh, the tab connects to the same machine.",
+  name = "same_host_tabs",
+  title = "Same-Machine Tabs",
+  description = "Turn on or off: a new tab opened from a tab running ssh connects to the same machine.",
   category = "Tabs",
-  keywords = "new tab ssh remote host machine server same connect duplicate",
-  run = new_tab,
+  keywords = "new tab ssh remote host machine server same connect follow",
+  run = toggle,
 })
+
+-- At load, start the watcher unless it runs already or was turned off. A
+-- script (install.js reads this file with rex do) has rex.args and skips it.
+if rex.args == nil and not read(OFF) and not running() then
+  local _, err = start()
+  if err then rex.log("warn", "rex-sshtab: can't start the watcher: " .. tostring(err)) end
+end

@@ -93,6 +93,32 @@ function M.ssh_command(argv)
   return out, dest
 end
 
+-- Shells a new tab starts. A tab whose foreground is one of these, and
+-- nothing else, is a plain shell waiting for input.
+M.SHELLS = { zsh = true, bash = true, fish = true, sh = true, dash = true, ksh = true, mksh = true, tcsh = true, csh = true, nu = true, xonsh = true, elvish = true }
+
+-- Whether a process name is a shell: "zsh", "-zsh" (a login shell), "/bin/zsh".
+function M.is_shell(name)
+  if type(name) ~= "string" then return false end
+  name = M.program(name:gsub("^%-", "")) or ""
+  return M.SHELLS[name] == true
+end
+
+-- One argument quoted for a POSIX shell (and zsh, bash, fish): left as it is
+-- when it holds only safe characters, else in single quotes.
+function M.quote(word)
+  word = tostring(word)
+  if word ~= "" and not word:find("[^%w@%%_%-%+=:,%./~]") and word:sub(1, 1) ~= "~" then return word end
+  return "'" .. word:gsub("'", [['\'']]) .. "'"
+end
+
+-- A command line to type into a shell.
+function M.command_line(argv)
+  local words = {}
+  for i, word in ipairs(argv) do words[i] = M.quote(word) end
+  return table.concat(words, " ")
+end
+
 -- The ssh command for a terminal's process reply, given a function that
 -- returns the argv of a pid. Returns argv, destination and the local folder
 -- ssh runs in, or nil when the terminal isn't running ssh.

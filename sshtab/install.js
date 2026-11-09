@@ -1,13 +1,15 @@
 #!/usr/bin/env node
-// Adds same-machine tabs to Rex's init.lua: loads rex-sshtab.lua and binds a key
-// (cmd+t, the app's New Tab key, by default) to its same_host_tab action, then
-// reloads the config. Rex has no plugin manager, so this is the install step. It
-// never rebinds a key the config already uses, and leaves a config alone when it
-// already fails `rex config check`.
+// Adds same-machine tabs to Rex's init.lua: loads rex-sshtab.lua, which starts the
+// watcher that types the ssh command into a new tab opened from an ssh tab, and
+// binds a key to its same_host_tabs on/off action, then reloads the config. Rex
+// has no plugin manager, so this is the install step. It never rebinds a key the
+// config already uses, and leaves a config alone when it already fails
+// `rex config check`. An earlier install that bound cmd+t to same_host_tab is
+// replaced, which gives cmd+t back to the app.
 //
-//   node install.js            bind cmd+t, or the first free fallback
-//   node install.js ctrl+alt+t bind this key
-//   node install.js --remove   take it out of init.lua
+//   node install.js            bind cmd+alt+t, or the first free fallback
+//   node install.js ctrl+alt+s bind this key
+//   node install.js --remove   stop the watcher and take it out of init.lua
 "use strict";
 const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
@@ -15,10 +17,14 @@ const os = require("node:os");
 const path = require("node:path");
 
 const REX = process.env.REX_SSHTAB_REX || "rex";
-const ACTION = "same_host_tab";
+const ACTION = "same_host_tabs";
+// The action an earlier version bound to cmd+t.
+const OLD_ACTION = "same_host_tab";
 const MODULE = path.join(__dirname, "rex-sshtab.lua");
-const CANDIDATES = ["cmd+t", "cmd+alt+t", "ctrl+alt+t"];
+const CANDIDATES = ["cmd+alt+t", "ctrl+alt+t", "ctrl+shift+t"];
 const MARKER = "-- rex-sshtab: new tabs open on the machine the current tab is ssh'd into";
+// Where rex-sshtab.lua keeps the watcher's pid, the off switch and the log.
+const stateDir = (env = process.env) => env.REX_SSHTAB_STATE || path.join(os.homedir(), ".cache", "rex-sshtab");
 
 // The config file Rex reads: REX_CONFIG when it's set, else the XDG one.
 const configPath = (env = process.env) =>
@@ -33,6 +39,9 @@ function luaString(text) {
 const block = (key, module = MODULE) =>
   `\n${MARKER} (https://github.com/luongnv89/rex-extensions/tree/main/sshtab)\ndofile(${luaString(module)})\nrex.bind(${luaString(key)}, "${ACTION}")\n`;
 
+// Whether a config binds the action of the earlier version.
+const bindsOldAction = (config) => new RegExp(`^\\s*rex\\.bind\\s*\\(.*"${OLD_ACTION}"`, "m").test(config);
+
 // Whether a config already loads rex-sshtab.lua.
 const loadsModule = (config) => /^\s*dofile\s*\(?\s*["'][^"'\n]*rex-sshtab\.lua["']/m.test(config);
 
@@ -43,7 +52,7 @@ function removeBlock(config) {
   for (let i = 0; i < lines.length; i++) {
     if (lines[i].startsWith(MARKER)) {
       if (out.length && out[out.length - 1].trim() === "") out.pop();
-      while (i + 1 < lines.length && /^\s*(dofile\s*\(.*rex-sshtab\.lua|rex\.bind\s*\(.*"same_host_tab")/.test(lines[i + 1])) i++;
+      while (i + 1 < lines.length && /^\s*(dofile\s*\(.*rex-sshtab\.lua|rex\.bind\s*\(.*"same_host_tabs?")/.test(lines[i + 1])) i++;
       continue;
     }
     out.push(lines[i]);
@@ -112,9 +121,16 @@ function fail(message) {
   process.exitCode = 1;
 }
 
+// Turn the watcher off: it sees the off file and exits. The next install clears it.
+function stopWatcher() {
+  if (process.env.REX_SSHTAB_NO_RELOAD) return;
+  try { fs.mkdirSync(stateDir(), { recursive: true }); fs.writeFileSync(path.join(stateDir(), "off"), ""); } catch {}
+}
+
 function remove(file) {
   const config = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
   if (!config.includes(MARKER)) return console.log(`Same-machine tabs aren't in ${file}`);
+  stopWatcher();
   fs.writeFileSync(`${file}.bak-rex-sshtab`, config);
   fs.writeFileSync(file, removeBlock(config));
   reload();
@@ -124,7 +140,11 @@ function remove(file) {
 function main(argv = process.argv.slice(2)) {
   const file = configPath();
   if (argv[0] === "--remove") return remove(file);
-  const config = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
+  const original = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
+  // An earlier version bound cmd+t to same_host_tab: take its lines out, so the
+  // key goes back to the app and the new lines go in below.
+  const upgrading = loadsModule(original) && bindsOldAction(original);
+  const config = upgrading ? removeBlock(original) : original;
   if (loadsModule(config)) return console.log(`Same-machine tabs are already in ${file}`);
 
   // Rex may not load a config that already fails the check, so a key added to it
@@ -145,19 +165,21 @@ function main(argv = process.argv.slice(2)) {
 
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const backup = `${file}.bak-rex-sshtab`;
-  if (config) fs.writeFileSync(backup, config);
+  if (original) fs.writeFileSync(backup, original);
   fs.writeFileSync(file, config ? config + block(key) : block(key).trimStart());
 
   // The config passed the check before the edit, so a failure now is ours: undo it.
   const after = checkConfig(file);
   if (!after.ok) {
-    if (config) fs.writeFileSync(file, config); else fs.rmSync(file, { force: true });
+    if (original) fs.writeFileSync(file, original); else fs.rmSync(file, { force: true });
     return fail(`Not installed: Rex rejected it: ${after.text}`);
   }
+  // A watcher turned off before (or by --remove) would stay off: clear that.
+  try { fs.rmSync(path.join(stateDir(), "off"), { force: true }); } catch {}
   reload();
-  const note = key === "cmd+t" ? " (it replaces the app's New Tab key, and opens a plain tab outside ssh)" : "";
-  console.log(`Same-machine tabs on ${key}${note}: added to ${file}${config ? ` (backup: ${path.basename(backup)})` : ""}`);
+  const upgraded = upgrading ? " (replaced the cmd+t binding of the earlier version: cmd+t is the app's New Tab again)" : "";
+  console.log(`Same-machine tabs on, turned off and on with ${key}: added to ${file}${original ? ` (backup: ${path.basename(backup)})` : ""}${upgraded}`);
 }
 
 if (require.main === module) main();
-else module.exports = { configPath, luaString, block, loadsModule, removeBlock, pickKey, checkConfig, inspectKeys, main, MARKER, CANDIDATES };
+else module.exports = { stateDir, bindsOldAction, configPath, luaString, block, loadsModule, removeBlock, pickKey, checkConfig, inspectKeys, main, MARKER, CANDIDATES };

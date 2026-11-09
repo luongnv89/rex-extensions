@@ -4,6 +4,11 @@
 
 ### Added
 
-- `rex-sshtab.lua`: a `same_host_tab` action. In a pane running ssh, it opens a tab that runs the same ssh command, without the remote command, port forwards, or the options that don't give a shell (`-f`, `-N`, `-T`, `-n` and others). Anywhere else it asks the app for its own new tab.
-- `lib.lua`: reads ssh's command line the way OpenSSH does, with options before or after the destination, attached arguments (`-p2222`) and grouped flags (`-At`). The argv comes from `/proc/PID/cmdline` on Linux and `ps` elsewhere.
-- `install.js`: adds it to `init.lua` on `cmd+t` (or `cmd+alt+t`, `ctrl+alt+t` when it's taken). `--remove` takes it out.
+- `watcher.lua`: a `rex do --all` script that follows new tabs Rex.app makes, from the **+** button, **New Tab** in the menu bar and the command palette, or `cmd+t` (#1, #2, #3). When the tab a new one was opened from runs ssh, it types the same ssh command into the new tab once its shell waits at its prompt. Tabs made by other clients, such as `rex window new` and `rex run` from scripts and agents, are left alone. Each decision is logged to `~/.cache/rex-sshtab/log`.
+- `rex-sshtab.lua`: starts the watcher when `init.lua` loads (one at a time, by pid file), and a `same_host_tabs` action that turns it off or on again.
+- `lib.lua`: reads ssh's command line the way OpenSSH does, with options before or after the destination, attached arguments (`-p2222`) and grouped flags (`-At`), and drops the remote command, port forwards, and the options that don't give a shell (`-f`, `-N`, `-T`, `-n` and others). The argv comes from `/proc/PID/cmdline` on Linux and `ps` elsewhere.
+- `install.js`: adds it to `init.lua` with a key for the action (`cmd+alt+t`, or the first free fallback). `--remove` stops the watcher and takes it out.
+
+### Changed
+
+- The first version bound `cmd+t` to a `same_host_tab` action that opened the tab itself, so only the key worked. That action is gone and `cmd+t` is the app's New Tab again; `install.js` replaces the lines of that install.
