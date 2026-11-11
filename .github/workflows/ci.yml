@@ -21,10 +21,13 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: JavaScript syntax
         run: for f in $(git ls-files '*.js'); do node --check "$f" || exit 1; done
+      # Lua 5.1, the version Rex runs, built by the action and cached
+      # between runs, so the job doesn't depend on Ubuntu's package mirrors.
+      - uses: leafo/gh-actions-lua@v13
+        with:
+          luaVersion: "5.1.5"
       - name: Lua syntax
-        run: |
-          sudo apt-get install -y lua5.1 >/dev/null
-          for f in $(git ls-files '*.lua'); do luac5.1 -p "$f" || exit 1; done
+        run: for f in $(git ls-files '*.lua'); do luac -p "$f" || exit 1; done
       - name: Tests
         # Every extension folder with a test/ folder runs its own tests.
         run: |
