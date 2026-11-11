@@ -2,6 +2,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const p = require("../panel.js");
+const F = require("./system-fixtures.js");
 
 const strip = (s) => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
 const NOW = Date.parse("2026-11-03T22:00:00Z");
@@ -137,8 +138,8 @@ test("wantedRows fits the accounts and notices, or only the header when collapse
   p.ui.issues = {};
   p.ui.error = null;
   p.ui.collapsed = false;
-  // header + rule + 3 accounts + 2 notices + footer
-  assert.equal(p.wantedRows(), 8);
+  // header + stats line + rule + 3 accounts + 2 notices + footer
+  assert.equal(p.wantedRows(), 9);
   p.ui.collapsed = true;
   assert.equal(p.wantedRows(), 1);
   p.ui.collapsed = false;
@@ -156,4 +157,164 @@ test("clip cuts by cells and keeps colour codes", () => {
   const line = "\x1b[32mabcdef\x1b[0m";
   assert.equal(p.clip(line, 3), "\x1b[32mabc\x1b[0m");
   assert.equal(strip(p.clip("日本語", 4)), "日本");
+});
+
+// ── Machine stats ───────────────────────────────────────────────────────────
+
+// Set some of p.ui for one test and put it back after, so test order never matters.
+function withUi(t, values) {
+  const saved = Object.fromEntries(Object.keys(values).map((k) => [k, p.ui[k]]));
+  Object.assign(p.ui, values);
+  t.after(() => Object.assign(p.ui, saved));
+}
+
+const MEM = { used: (764905 - 8234 + 203523 + 716032) * 16384, total: F.MEMSIZE };
+const STATES = {
+  read: { cpu: 16.7, mem: MEM, net: { rx: 1.2 * 1024 ** 2, tx: 40 * 1024 } },
+  busy: { cpu: 97, mem: { used: 31 * 1024 ** 3, total: 32 * 1024 ** 3 }, net: { rx: 999 * 1024 ** 3, tx: 999 * 1024 ** 3 } },
+  pending: {},
+  unavailable: { cpu: null, mem: null, net: null },
+  mixed: { cpu: 3, mem: null, net: undefined },
+};
+
+test("CPU: /proc/stat samples and os.cpus() times", () => {
+  const a = p.parseProcStat(F.PROC_STAT_1), b = p.parseProcStat(F.PROC_STAT_2);
+  assert.deepEqual(a, { total: 1000, idle: 850 });
+  assert.equal(Math.round(p.cpuPercent(a, b) * 10) / 10, 16.7);
+  assert.equal(p.cpuPercent(null, b), null);
+  assert.equal(p.cpuPercent(b, b), null, "no time passed");
+  for (const bad of [F.EMPTY, F.GARBAGE, null]) assert.equal(p.parseProcStat(bad), null);
+  const core = (user, idle) => ({ times: { user, nice: 0, sys: 10, idle, irq: 0 } });
+  assert.deepEqual(p.cpuTimes([core(30, 60), core(10, 80)]), { total: 200, idle: 140 });
+  assert.equal(p.cpuTimes([]), null);
+});
+
+test("memory: /proc/meminfo and vm_stat", () => {
+  assert.deepEqual(p.parseMeminfo(F.MEMINFO), { used: (16384000 - 8192000) * 1024, total: 16384000 * 1024 });
+  // Anonymous - purgeable + wired + compressor, in 16 KB pages.
+  const mac = p.parseVmStat(F.VM_STAT, F.MEMSIZE);
+  assert.deepEqual(mac, MEM);
+  assert.equal(Math.round(p.memPercent(mac)), 80);
+  assert.equal(p.parseVmStat(F.VM_STAT, NaN), null, "no total");
+  assert.equal(p.parseVmStat(F.VM_STAT.replace(/^Anonymous pages.*$/m, ""), F.MEMSIZE), null, "a field missing");
+  for (const bad of [F.EMPTY, F.GARBAGE, null]) {
+    assert.equal(p.parseMeminfo(bad), null);
+    assert.equal(p.parseVmStat(bad, F.MEMSIZE), null);
+  }
+});
+
+test("network: physical interfaces only, from /proc/net/dev and netstat", () => {
+  assert.deepEqual(p.parseNetDev(F.NET_DEV), { rx: 5200, tx: 3100 }, "eth0 + wlan0");
+  // What Linux says about an interface beats the name list.
+  assert.deepEqual(p.parseNetDev(F.NET_DEV, (n) => (n === "eth0" ? true : n === "wg0" ? false : undefined)), { rx: 900, tx: 700 });
+  assert.deepEqual(p.parseNetstat(F.NETSTAT), { rx: 1300, tx: 700 }, "en0 + en1");
+  for (const bad of [F.EMPTY, F.GARBAGE, null]) {
+    assert.equal(p.parseNetDev(bad), null);
+    assert.equal(p.parseNetstat(bad), null);
+  }
+});
+
+test("rate: bytes per second over the time measured, never negative", () => {
+  assert.deepEqual(p.rate({ rx: 1000, tx: 500, at: 0 }, { rx: 3000, tx: 500, at: 2000 }), { rx: 1000, tx: 0 });
+  assert.deepEqual(p.rate({ rx: 3000, tx: 500, at: 0 }, { rx: 1000, tx: 900, at: 1000 }), { rx: 0, tx: 400 }, "a counter reset");
+  assert.equal(p.rate(null, { rx: 1, tx: 1, at: 1 }), null);
+  assert.equal(p.rate({ rx: 1, tx: 1, at: 5 }, { rx: 2, tx: 2, at: 5 }), null);
+  // The first sample only sets the base; a failed one shows null and drops it.
+  const first = p.step(null, { rx: 0, tx: 0, at: 0 }, p.rate);
+  assert.equal(first.value, undefined);
+  assert.deepEqual(p.step(first.base, { rx: 2048, tx: 0, at: 2000 }, p.rate).value, { rx: 1024, tx: 0 });
+  assert.deepEqual(p.step(first.base, null, p.rate), { value: null, base: null });
+});
+
+test("formats: sizes, rates and used of total", () => {
+  assert.deepEqual([0, 512, 40 * 1024, 1.2 * 1024 ** 2, 28 * 1024 ** 3].map(p.formatBytes), ["0 B", "512 B", "40 KB", "1.2 MB", "28.0 GB"]);
+  assert.equal(p.formatRate(1.2 * 1024 ** 2), "1.2 MB/s");
+  assert.equal(p.formatRate(NaN), "—");
+  assert.deepEqual([40 * 1024, 1.2 * 1024 ** 2].map(p.shortBytes), ["40K", "1.2M"]);
+  assert.equal(p.formatPair(28 * 1024 ** 3, 32 * 1024 ** 3), "28.0/32.0 GB");
+  assert.equal(p.formatPair(1, 0), "—");
+});
+
+test("a stats source that fails reads as unavailable", () => {
+  const ok = { code: 0, error: null, stdout: F.NETSTAT };
+  assert.deepEqual(p.readout(ok, p.parseNetstat), { rx: 1300, tx: 700 });
+  assert.equal(p.readout(null, p.parseNetstat), null, "it couldn't start");
+  assert.equal(p.readout({ ...ok, code: 1 }, p.parseNetstat), null, "non-zero exit");
+  // run() reports a killed program as code 0 with `error` set and what it printed so far.
+  const killed = { code: 0, error: Object.assign(new Error("killed"), { killed: true }), stdout: F.NETSTAT.split("\n").slice(0, 9).join("\n") };
+  assert.equal(p.readout(killed, p.parseNetstat), null, "timed out");
+  assert.equal(p.readout({ ...ok, stdout: "" }, p.parseNetstat), null, "no output");
+  assert.equal(p.readout({ ...ok, stdout: F.GARBAGE }, p.parseNetstat), null, "nothing it can read");
+  assert.equal(p.readout(ok, () => { throw new Error("bad"); }), null);
+  assert.deepEqual([p.label(undefined, String), p.label(null, String), p.label(5, (v) => `${v}%`)], ["—", "unavailable", "5%"]);
+});
+
+test("the stats row never exceeds the pane width, read or not", () => {
+  for (const [name, s] of Object.entries(STATES)) {
+    for (const cols of [16, 20, 24, 28, 32, 40, 50, 60, 80, 120, 200]) {
+      const text = strip(p.statsRow(cols, s));
+      assert.ok(p.width(text) <= cols, `${name} at ${cols} cols: "${text}" is ${p.width(text)} wide`);
+    }
+  }
+});
+
+test("the stats row shows CPU, memory and network, dropping the network, then the totals, when narrow", () => {
+  const s = STATES.read;
+  assert.equal(strip(p.statsRow(80, s)), " cpu 17% · mem 25.6/32.0 GB · net ↓1.2 MB/s ↑40 KB/s");
+  assert.equal(strip(p.statsRow(40, s)), " cpu 17% · mem 25.6/32.0 GB");
+  assert.equal(strip(p.statsRow(24, s)), " cpu 17% · mem 80%");
+  assert.equal(strip(p.statsRow(80, STATES.pending)), " cpu — · mem — · net —");
+});
+
+test("a metric that can't be read says so, and the rest still show", () => {
+  assert.equal(strip(p.statsRow(80, STATES.mixed)), " cpu 3% · mem unavailable · net —");
+  assert.equal(strip(p.statsRow(80, STATES.unavailable)), " cpu unavailable · mem unavailable · net unavailable");
+});
+
+test("each sample updates the stats: CPU and network from the second one on", (t) => {
+  withUi(t, { stats: {}, cpuBase: null, netBase: null });
+  p.applyStats({ cpu: { total: 1000, idle: 850 }, mem: MEM, net: { rx: 0, tx: 0 }, at: 0 });
+  assert.deepEqual(p.ui.stats, { cpu: undefined, mem: MEM, net: undefined });
+  p.applyStats({ cpu: { total: 1900, idle: 1600 }, mem: MEM, net: { rx: 10240, tx: 5120 }, at: 5000 });
+  assert.equal(Math.round(p.ui.stats.cpu), 17);
+  assert.deepEqual(p.ui.stats.net, { rx: 2048, tx: 1024 });
+  p.applyStats({ cpu: null, mem: MEM, net: { rx: 20480, tx: 5120 }, at: 10000 });
+  assert.equal(p.ui.stats.cpu, null, "CPU failed this time");
+  assert.deepEqual(p.ui.stats.net, { rx: 2048, tx: 0 }, "the network still updates");
+  p.applyStats({ cpu: { total: 2900, idle: 1700 }, mem: MEM, net: null, at: 15000 });
+  assert.equal(strip(p.statsRow(80)), " cpu — · mem 25.6/32.0 GB · net unavailable");
+});
+
+test("collapse and expand start the CPU and network over from a new base", (t) => {
+  withUi(t, { stats: {}, cpuBase: null, netBase: null });
+  p.applyStats({ cpu: { total: 1000, idle: 850 }, mem: MEM, net: { rx: 0, tx: 0 }, at: 0 });
+  p.applyStats({ cpu: { total: 1900, idle: 1600 }, mem: MEM, net: { rx: 10240, tx: 0 }, at: 5000 });
+  assert.equal(Math.round(p.ui.stats.cpu), 17);
+  p.resetStats();
+  assert.deepEqual(p.ui.stats, {}, "— until the next sample");
+  // The first sample after the reset only sets the bases again.
+  p.applyStats({ cpu: { total: 2900, idle: 1700 }, mem: MEM, net: { rx: 20480, tx: 0 }, at: 60000 });
+  assert.deepEqual(p.ui.stats, { cpu: undefined, mem: MEM, net: undefined });
+});
+
+test("collapsed, the title line adds CPU and memory, and the network when there's room", (t) => {
+  withUi(t, { collapsed: true, profiles: p.parse(DOC), stats: STATES.read });
+  assert.match(strip(p.header(120)), /5h 12% · wk 96% · cpu 17% · mem 80% · net ↓1\.2M ↑40K/);
+  const mid = strip(p.header(60));
+  assert.match(mid, /5h 12% · wk 96% · cpu 17% · mem 80%/);
+  assert.doesNotMatch(mid, /net/);
+  for (const [name, s] of Object.entries(STATES)) {
+    p.ui.stats = s;
+    for (const cols of [24, 28, 32, 40, 50, 60, 80, 120, 200]) {
+      const text = strip(p.header(cols));
+      assert.ok(p.width(text) <= cols, `${name} at ${cols} cols: "${text}" is ${p.width(text)} wide`);
+    }
+  }
+});
+
+test("readStats reads this machine without failing", async () => {
+  const r = await p.readStats();
+  assert.ok(r.cpu === null || r.cpu.total > 0);
+  assert.ok(r.mem === null || (r.mem.total > 0 && r.mem.used >= 0 && r.mem.used <= r.mem.total));
+  assert.ok(r.net === null || (r.net.rx >= 0 && r.net.tx >= 0));
 });

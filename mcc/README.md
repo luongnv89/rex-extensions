@@ -1,9 +1,10 @@
 # mcc usage panel for Rex
 
-The 5-hour and weekly Claude Code usage of every account [mcc](https://github.com/luongnv89/mcc) manages, in a strip along the bottom of a Rex tab, with a button that looks every account up live.
+The 5-hour and weekly Claude Code usage of every account [mcc](https://github.com/luongnv89/mcc) manages, in a strip along the bottom of a Rex tab, with a button that looks every account up live, and this machine's CPU, memory and network.
 
 ```
  ▾ mcc usage                                                            updated 4m ago  ↻ refresh
+ cpu 12% · mem 27.0/32.0 GB · net ↓1.2 MB/s ↑40 KB/s
 ─────────────────────────────────────────────────────────────────────────────────────────────────
  default    5h █░░░░░░░░░░░░░░░░░░░   5%   3h17    wk ███░░░░░░░░░░░░░░░░░  17%   4d4h
  csdaisy    5h ░░░░░░░░░░░░░░░░░░░░   0%           wk ███░░░░░░░░░░░░░░░░░  13%   21h57  ⚠ 1h ago
@@ -13,6 +14,8 @@ The 5-hour and weekly Claude Code usage of every account [mcc](https://github.co
 ```
 
 Each row shows a bar, the percent used and the time until the window resets. As in `mcc usage`, `!` marks 80% or more and `!!` marks 95% or more. The default account's name is in cyan. A ⚠ marks an account whose last live lookup failed or whose login ends soon, with a line under the table naming the `mcc login` command that fixes it. When an account's numbers are more than an hour old, its row says how old they are.
+
+The line under the title shows this machine's CPU and memory use (green, yellow from 80%, red from 95%) and how fast it's receiving (↓) and sending (↑) over the network. A value it can't read says `unavailable`; the usage rows still show. A narrow panel drops the network, then the memory totals.
 
 It is the Rex twin of [mcc-herdr-plugin](https://github.com/luongnv89/mcc-herdr-plugin), the same panel for Herdr.
 
@@ -56,7 +59,8 @@ Click the panel, or move focus to it, before using its keys.
 
 - **Refresh** runs `mcc usage --all`, which looks up every account's usage live with that account's own login and saves the result to mcc's cache. It sends each account's OAuth token to Anthropic's undocumented, rate-limited usage endpoint, so it only runs when you ask for it. For the details, see `mcc usage --help`.
 - **Between refreshes**, the panel rereads mcc's cache (`mcc usage --json-v2`, a local file read) every 30 seconds. That picks up whatever `mcc statusline` caches as you work.
-- **Collapse** shrinks the strip so the panes above get the room back. The title row then shows the highest 5-hour and weekly percent across accounts. Rex keeps a pane at least a few rows high, so a collapsed panel still shows the first accounts. Expanding fits the strip to its rows again, up to 60% of the tab. The panel remembers whether it was collapsed.
+- **Collapse** shrinks the strip so the panes above get the room back. The title row then shows the highest 5-hour and weekly percent across accounts, the CPU and memory percent, and the network when there's room. Rex keeps a pane at least a few rows high, so a collapsed panel still shows the first accounts. Expanding fits the strip to its rows again, up to 60% of the tab. The panel remembers whether it was collapsed.
+- **Machine stats** update by themselves every 5 seconds, collapsed or not. They're of the machine the panel runs on. They come from `/proc` on Linux and from `vm_stat` and `netstat` on macOS, with CPU from Node's `os.cpus()`. On macOS, memory used is counted as Activity Monitor's "Memory Used" counts it (app memory, wired and compressed). The network counts physical interfaces only: loopback, bridges, VPN tunnels and container interfaces are left out, so no byte counts twice.
 - **Height:** the panel grows or shrinks when its content changes, such as an account added or a notice shown. A height you set by dragging the border stays until then.
 
 ## Needs
@@ -71,6 +75,7 @@ Rex runs `init.lua` and the panel as your user, with no sandbox. This one:
 
 - in Rex's server, when you press the key: reads the session's layout and opens or closes one pane labelled `rex-mcc` running `node panel.js`;
 - in the panel: runs `mcc usage --json-v2` every 30 seconds, and `mcc usage --all --json-v2` when you refresh;
+- every 5 seconds, reads the machine's CPU, memory and network: `/usr/bin/vm_stat` and `/usr/sbin/netstat -ibn` on macOS, `/proc/meminfo`, `/proc/net/dev` and `/sys/devices/virtual/net` on Linux;
 - runs `rex api call` to read the tab's layout and its panes' sizes, and to move the border above the panel when it fits its height;
 - when you run `install.js`: runs `rex config check`, a `rex do` script that loads your `init.lua` to list the keys it binds, edits `init.lua` (see [Install](#install)), and runs `rex config reload`;
 - otherwise writes only `~/.local/state/rex-mcc/collapsed` (`$XDG_STATE_HOME/rex-mcc/collapsed` when that's set): whether the panel was collapsed.
@@ -100,7 +105,7 @@ node --test
 - `rex-mcc.lua`: the `mcc_usage` action, which opens the panel across the bottom of the tab or closes it.
 - `panel.js`: the panel itself. Plain Node, no npm packages.
 - `install.js`: adds the panel and a key to `init.lua`, or takes them out.
-- `test/`: unit tests for reading mcc's JSON, the rows at every width, the notices, finding the split above the panel and the ratio that fits it, and for which key `install.js` picks and how it edits `init.lua`.
+- `test/`: unit tests for reading mcc's JSON, the rows at every width, the notices, the machine stats parsers and their line at every width (fixtures in `test/system-fixtures.js`), finding the split above the panel and the ratio that fits it, and for which key `install.js` picks and how it edits `init.lua`.
 
 ## License
 
