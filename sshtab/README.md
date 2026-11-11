@@ -61,7 +61,9 @@ types              cd /Users/you/project && claude --resume 3f2a…
 | OpenCode | When started with `-s ID` or `--session ID` | The command line. `opencode run` and `-c` aren't. |
 | Cursor Agent | When started with `--resume ID` | The command line. `-p` and `--print` aren't. |
 | pi | When started with `--session ID` | The command line. `-p` isn't. |
-| Gemini, Amp, Qwen, Copilot, Kimi | No | Their session id isn't visible from outside the process. The log says so once per process. |
+| Gemini | No | It has no resume by exact session id. The log says so once per process. |
+| Amp | No | It has no resume by exact session id that this extension has verified. The log says so once per process. |
+| Qwen, Copilot, Kimi | No | Their session id isn't visible from outside the process. The log says so once per process. |
 
 - **What it types.** `cd FOLDER && AGENT RESUME ID`, built from the table above, with the folder and id quoted. When Claude ran with a `CLAUDE_CONFIG_DIR` other than `~/.claude`, or Codex with a `CODEX_HOME` other than `~/.codex`, it starts with `env CLAUDE_CONFIG_DIR=…` so the right account's session is found. Nothing else from the old command line is carried over.
 - **When.** Only within 120 seconds of the server starting, and only into a pane that the server that just stopped had that agent in. A watcher started later, such as one you turned off and on again, types nothing and forgets those sessions.
@@ -101,6 +103,7 @@ It reads `<config dir>/sessions/<pid>.json` for each running Claude, and writes,
 - A pane waits at most 120 seconds after the server starts. A shell that takes longer to reach its prompt, or that runs `csh`, `tcsh`, `nu`, `xonsh` or `elvish`, is left alone. A shell without a line editor, such as plain `sh` or `dash`, never looks ready and is left alone too.
 - A vi keymap set in your rc file (`bindkey -v`, `set -o vi`, `fish_vi_key_bindings`) isn't detected, so Ctrl-E Ctrl-U is sent anyway. In vi insert mode that may beep or leave a `^E` before the command, which then fails instead of running.
 - If the agent isn't on the `PATH` of a new shell, the typed command fails with "command not found".
+- A session whose folder, `CLAUDE_CONFIG_DIR` or `CODEX_HOME` holds a backslash isn't restored. fish reads a backslash inside single quotes differently from the other shells, so such a path can't be quoted the same way for all of them. The log says `isn't restored: its folder has a backslash` (or `its config folder`) without the path.
 
 ## Remove
 

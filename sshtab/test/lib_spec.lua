@@ -225,6 +225,15 @@ eq(lib.resume_line(entry({ env = { PATH = "/evil" } })), nil, "T4 resume_line: a
 eq(lib.resume_line(entry({ env = { CLAUDE_CONFIG_DIR = "/c", LD_PRELOAD = "/x.so" } })), nil, "T4 resume_line: an extra variable")
 eq(lib.resume_line(entry({ env = { CODEX_HOME = "/c" } })), nil, "T4 resume_line: codex's variable on claude")
 eq(lib.resume_line(entry({ env = { CLAUDE_CONFIG_DIR = "rel" } })), nil, "T4 resume_line: a relative config dir")
+-- fish reads \' and \\ inside single quotes as escapes: a backslash is never typed
+eq(lib.resume_line(entry({ cwd = "/tmp/x\\'; echo pwned; #" })), nil, "resume_line: a folder with a backslash (fish injection)")
+eq(select(2, lib.resume_line(entry({ cwd = "/tmp/x\\'; echo pwned; #" }))), "its folder has a backslash", "resume_line: why, without the folder")
+eq(lib.resume_line(entry({ cwd = "/w/a\\b" })), nil, "resume_line: a folder with a plain backslash")
+eq(lib.resume_line(entry({ env = { CLAUDE_CONFIG_DIR = "/u/.claude\\'; echo pwned; #" } })), nil, "resume_line: a CLAUDE_CONFIG_DIR with a backslash")
+eq(lib.resume_line(entry({ agent = "codex", env = { CODEX_HOME = "/u/.codex\\x" } })), nil, "resume_line: a CODEX_HOME with a backslash")
+eq(select(2, lib.resume_line(entry({ agent = "codex", env = { CODEX_HOME = "/u/.codex\\x" } }))), "its config folder has a backslash", "resume_line: why, without the value")
+eq(lib.resume_line(entry({ cwd = "/tmp/it's" })), [[cd '/tmp/it'\''s' && claude --resume ]] .. A, "resume_line: a folder with a single quote is still quoted")
+eq(select(2, lib.resume_line(entry())), nil, "resume_line: no reason when it succeeds")
 
 -- times
 eq(lib.iso_to_epoch("1970-01-01T00:00:00Z"), 0, "iso_to_epoch epoch")
@@ -249,6 +258,7 @@ local raw = {
     ["block:bad-id"] = entry({ session_id = "$(reboot)" }),
     ["block:bad-agent"] = entry({ agent = "sh" }),
     ["block:bad-env"] = entry({ env = { CLAUDE_CONFIG_DIR = "/c", PATH = "/x" } }),
+    ["block:backslash"] = entry({ cwd = "/tmp/x\\'; echo pwned; #" }),
     ["not a block"] = entry(),
   },
 }
@@ -268,6 +278,7 @@ eq(st.blocks["block:1"].instance_id, "i-1", "observe sets the instance")
 eq(lib.observe(st, "block:2", { agent = "claude", session_id = "a b", cwd = "/w" }, "i-1", 100), false, "T3 observe refuses a bad id")
 eq(lib.observe(st, "block:3", { agent = "claude", session_id = A, cwd = "/w", env = { HOME = "/h" } }, "i-1", 100), false, "T4 observe refuses another variable")
 eq(st.blocks["block:3"], nil, "T4 nothing kept for it")
+eq(lib.observe(st, "block:4", { agent = "claude", session_id = A, cwd = "/w\\x" }, "i-1", 100), false, "observe refuses a folder with a backslash")
 
 -- T10: prune only after two timed sweeps, or when the block is gone
 local e = entry({ instance_id = "i-1" })

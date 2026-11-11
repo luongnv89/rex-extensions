@@ -105,8 +105,10 @@ function M.is_shell(name)
   return M.SHELLS[name] == true
 end
 
--- One argument quoted for a POSIX shell (and zsh, bash, fish): left as it is
--- when it holds only safe characters, else in single quotes.
+-- One argument quoted for a POSIX shell (sh, bash, zsh, ksh): left as it is
+-- when it holds only safe characters, else in single quotes, with ' written
+-- as '\''. fish reads \' and \\ inside single quotes as escapes, so a word
+-- that holds a backslash reads differently there; resume_line refuses those.
 function M.quote(word)
   word = tostring(word)
   if word ~= "" and not word:find("[^%w@%%_%-%+=:,%./~]") and word:sub(1, 1) ~= "~" then return word end
@@ -184,8 +186,9 @@ M.RESTORE_WINDOW = 120
 M.SWEEP = 15
 
 -- Shells a restore types into. Their line editors take the line the same way,
--- and lib.quote quotes for all of them. csh, tcsh, nu, xonsh and elvish read
--- quotes and `&&` differently, so they are skipped.
+-- and every one reads a lib.quote word the same as long as it holds no
+-- backslash, which resume_line never types. csh, tcsh, nu, xonsh and elvish
+-- read quotes and `&&` differently, so they are skipped.
 M.RESTORE_SHELLS = { zsh = true, bash = true, sh = true, dash = true, ksh = true, mksh = true, fish = true }
 
 -- The agents that are resumed. Each one names the program the restored line
@@ -419,21 +422,36 @@ function M.restore_shell(name)
   return M.RESTORE_SHELLS[M.program(name:gsub("^%-", "")) or ""] == true
 end
 
--- The line that resumes an entry's session in its folder, or nil when the
--- entry isn't valid. The program and the words before the id come from AGENTS;
--- the folder, the id and the one environment value are quoted.
+-- Why a folder or config folder can't be typed into every restore shell, or
+-- nil when it can. A backslash is refused: fish reads \' and \\ inside single
+-- quotes as escapes, so the quoted word would read differently there than in
+-- a POSIX shell. The value itself is never part of the reason.
+local function untypable(path, what)
+  if not M.valid_path(path) then return what .. " isn't an absolute path" end
+  if path:find("\\", 1, true) then return what .. " has a backslash" end
+  return nil
+end
+
+-- The line that resumes an entry's session in its folder, or nil and why when
+-- the entry isn't valid. The program and the words before the id come from
+-- AGENTS; the folder, the id and the one environment value are quoted.
 function M.resume_line(entry)
-  if type(entry) ~= "table" then return nil end
+  if type(entry) ~= "table" then return nil, "no entry" end
   local agent = M.AGENTS[entry.agent]
-  if not agent or not M.valid_path(entry.cwd) then return nil end
+  if not agent then return nil, "it isn't an agent that is resumed" end
+  local why = untypable(entry.cwd, "its folder")
+  if why then return nil, why end
   local id = entry.session_id
-  if not (agent.program == "codex" and M.valid_uuid(id) or agent.program ~= "codex" and M.valid_session_id(id)) then return nil end
+  if not (agent.program == "codex" and M.valid_uuid(id) or agent.program ~= "codex" and M.valid_session_id(id)) then
+    return nil, "its session id isn't one that is resumed"
+  end
   local words = {}
   local env = entry.env
   if type(env) == "table" and next(env) ~= nil then
     local value = agent.env and env[agent.env]
-    if not M.valid_path(value) then return nil end
-    for k in pairs(env) do if k ~= agent.env then return nil end end
+    why = untypable(value, "its config folder")
+    if why then return nil, why end
+    for k in pairs(env) do if k ~= agent.env then return nil, "it has another environment variable" end end
     words[#words + 1] = "env"
     words[#words + 1] = agent.env .. "=" .. M.quote(value)
   end

@@ -356,7 +356,11 @@ local function session_in(block_id, process)
       end
     end
   end
-  return { agent = agent, session_id = id, cwd = cwd, env = env }
+  local seen = { agent = agent, session_id = id, cwd = cwd, env = env }
+  -- The reason names what is wrong, never the folder or value itself.
+  local line, why = lib.resume_line(seen)
+  if not line then return not_recorded(fg.pid, block_id, agent, why) end
+  return seen
 end
 
 -- Every terminal block, as block_id -> session_id, or nil when a call failed.
