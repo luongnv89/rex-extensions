@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **Machine stats**, ported from [mcc-herdr-plugin](https://github.com/luongnv89/mcc-herdr-plugin) 0.2.0: a line under the title shows this machine's CPU and memory use and its network download/upload rate, updated every 5 seconds. Linux reads `/proc`; macOS reads `vm_stat` and `netstat` (memory as Activity Monitor's "Memory Used"), and CPU comes from `os.cpus()`. Only physical network interfaces count. A value that can't be read shows `unavailable` and the usage rows still show. Collapsed, the title row adds the CPU and memory percent, and the network when there's room.
+
 ## 0.1.0 (2026-11-05)
 
 ### Added
