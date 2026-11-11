@@ -13,6 +13,12 @@
 -- open (rex window new, rex run, rex split, rex do) come from other clients
 -- and are left alone. It decides nothing it can't check, and logs each
 -- decision to DIR/log.
+--
+-- It also keeps DIR/agents.json: which AI coding agent session runs in each
+-- pane (Claude Code, Codex, OpenCode, Cursor Agent, pi). When the server
+-- restarts, the panes come back as plain shells in their old folders, and the
+-- watcher types into each one the line that resumes its session. lib.lua
+-- decides what is recorded and what is typed; DIR/restore-off turns it off.
 
 local here = debug.getinfo(1, "S").source:gsub("^@", ""):match("^(.*)/[^/]*$") or "."
 local lib = dofile(here .. "/lib.lua")
@@ -21,6 +27,9 @@ local TERMINAL = "com.superlogical.terminal"
 local STATE = rex.args.state or ((os.getenv("HOME") or "") .. "/.cache/rex-sshtab")
 local OFF = STATE .. "/off"
 local LOG = STATE .. "/log"
+local AGENTS_FILE = STATE .. "/agents.json"
+local RESTORE_OFF = STATE .. "/restore-off"
+local HOME = os.getenv("HOME") or ""
 local LOG_MAX = 256 * 1024
 -- The kinds of client whose new tabs are followed. Only "app" in use; tests
 -- pass trust=app,cli to drive it from the CLI.
@@ -216,6 +225,288 @@ local function on_block_created(session_id, block_id, kind)
   type_when_ready(session_id, block_id, lib.command_line(cmd))
 end
 
+-- Agent sessions -------------------------------------------------------------
+
+local server       -- { instance_id, started_at } of the server this watcher talks to
+local state = lib.new_state()
+local reported = {} -- pid -> true once its agent was logged as not restored
+
+local function restore_off() return exists(OFF) or exists(RESTORE_OFF) end
+
+local function load_state()
+  local f = io.open(AGENTS_FILE, "r")
+  if not f then return lib.new_state() end
+  local text = f:read("*a")
+  f:close()
+  local ok, raw = pcall(rex.json.decode, text)
+  return lib.clean_state(ok and raw or nil)
+end
+
+-- Write agents.json whole: to a temporary file, then renamed over the old one.
+local function save_state()
+  if restore_off() then return end
+  local ok, text = pcall(rex.json.encode, state)
+  if not ok then return log("can't save agents.json: " .. tostring(text)) end
+  local tmp = AGENTS_FILE .. ".tmp"
+  local f = io.open(tmp, "w")
+  if not f then return log("can't write " .. tmp) end
+  f:write(text)
+  f:close()
+  rex.exec({ "chmod", "600", tmp })
+  local renamed, err = os.rename(tmp, AGENTS_FILE)
+  if not renamed then log("can't save agents.json: " .. tostring(err)) end
+end
+
+local function server_info()
+  local st = call("server.status", {})
+  local started = st and lib.iso_to_epoch(st.started_at)
+  if not (st and type(st.instance_id) == "string" and started) then return nil end
+  return { instance_id = st.instance_id, started_at = started }
+end
+
+local function read_json(path)
+  local f = io.open(path, "r")
+  if not f then return nil end
+  local text = f:read("*a")
+  f:close()
+  local ok, value = pcall(rex.json.decode, text)
+  return ok and value or nil
+end
+
+-- The `allow`ed variables of a process's environment: exactly from /proc on
+-- Linux, else from ps. Only these are read out; nothing else is kept or logged.
+local function read_env(pid, allow)
+  local f = io.open("/proc/" .. tostring(pid) .. "/environ", "rb")
+  if f then
+    local text = f:read("*a")
+    f:close()
+    return lib.env_from_environ(text, allow)
+  end
+  local args = rex.exec({ "ps", "-ww", "-o", "args=", "-p", tostring(pid) })
+  local all = rex.exec({ "ps", "-wwE", "-o", "args=", "-p", tostring(pid) })
+  if not (args and args.ok and all and all.ok) then return {} end
+  return lib.env_from_ps(args.stdout, all.stdout, allow)
+end
+
+-- A process's environment doesn't change, so each one is read once.
+local env_cache, env_cached = {}, 0
+local function env_of(pid, allow)
+  local keys = {}
+  for k in pairs(allow) do keys[#keys + 1] = k end
+  table.sort(keys)
+  local key = tostring(pid) .. " " .. table.concat(keys, " ")
+  if env_cache[key] then return env_cache[key] end
+  if env_cached >= 256 then env_cache, env_cached, reported = {}, 0, {} end
+  env_cache[key], env_cached = read_env(pid, allow), env_cached + 1
+  return env_cache[key]
+end
+
+local function is_dir(path)
+  local r = rex.exec({ "test", "-d", path })
+  return r and r.ok
+end
+
+-- Log once per process why its agent isn't recorded.
+local function not_recorded(pid, block_id, agent, why)
+  if reported[pid] then return nil end
+  reported[pid] = true
+  log("agent " .. agent .. " in " .. block_id .. " isn't restored: " .. why)
+  return nil
+end
+
+-- The agent session a terminal runs, from its process reply:
+-- { agent, session_id, cwd, env }, or nil.
+local function session_in(block_id, process)
+  local fg = type(process) == "table" and process.foreground
+  local agent = lib.identify_agent(fg)
+  if not agent or not fg.pid then return nil end
+  if lib.NOT_RESTORED[agent] then return not_recorded(fg.pid, block_id, agent, lib.NOT_RESTORED[agent]) end
+  local id, cwd, env = nil, fg.cwd, nil
+  if agent == "claude" then
+    -- Claude writes <config dir>/sessions/<pid>.json. A CLAUDE_CONFIG_DIR from
+    -- its environment counts only when that file is there for this pid.
+    local default = HOME .. "/.claude"
+    local dirs = {}
+    local from_env = env_of(fg.pid, { CLAUDE_CONFIG_DIR = true }).CLAUDE_CONFIG_DIR
+    if lib.valid_path(from_env) and from_env ~= default then dirs[1] = from_env end
+    dirs[#dirs + 1] = default
+    local why
+    for _, dir in ipairs(dirs) do
+      local found, where = lib.claude_session(read_json(dir .. "/sessions/" .. fg.pid .. ".json"), fg.pid)
+      if found then
+        id, cwd = found, where or cwd
+        if dir ~= default then env = { CLAUDE_CONFIG_DIR = dir } end
+        break
+      end
+      why = why or where
+    end
+    if not id then return not_recorded(fg.pid, block_id, agent, why or "no session record") end
+  else
+    id = lib.argv_session(agent, lib.agent_args(argv_of(fg.pid), agent))
+    if not id then
+      return not_recorded(fg.pid, block_id, agent, "it wasn't started with a session id this extension resumes")
+    end
+    if agent == "codex" then
+      local home = env_of(fg.pid, { CODEX_HOME = true }).CODEX_HOME
+      if home and home ~= HOME .. "/.codex" then
+        if not (lib.valid_path(home) and is_dir(home .. "/sessions")) then
+          return not_recorded(fg.pid, block_id, agent, "its CODEX_HOME has no sessions folder")
+        end
+        env = { CODEX_HOME = home }
+      end
+    end
+  end
+  return { agent = agent, session_id = id, cwd = cwd, env = env }
+end
+
+-- Every terminal block, as block_id -> session_id, or nil when a call failed.
+local function terminals()
+  local list = call("session.list", {})
+  if not list then return nil end
+  local found = {}
+  for _, s in ipairs(list.sessions or {}) do
+    local view = call("session.view", { session_id = s.session_id })
+    if not view then return nil end
+    for _, window in ipairs(view.windows or {}) do
+      for _, block in ipairs(blocks_of(window)) do
+        if block.creator_name == TERMINAL then found[block.block_id] = s.session_id end
+      end
+    end
+  end
+  return found
+end
+
+-- Look at every pane and record the agent sessions in them. Only a timed
+-- sweep forgets one (see lib.prune_step) and leaves the heartbeat.
+local function sweep(timed)
+  if not server or restore_off() then return end
+  local blocks = terminals()
+  if not blocks then return end
+  local now = os.time()
+  for block_id, session_id in pairs(blocks) do
+    local process = block_call(session_id, block_id, "process")
+    local seen = process and session_in(block_id, process)
+    local old = state.blocks[block_id]
+    if seen then
+      local changed = not old or old.session_id ~= seen.session_id or old.instance_id ~= server.instance_id
+      if lib.observe(state, block_id, seen, server.instance_id, now) and changed then
+        log("recorded " .. seen.agent .. " session " .. seen.session_id .. " in " .. block_id)
+      end
+    elseif process and old then
+      state.blocks[block_id] = lib.prune_step(old, "absent", server.instance_id, timed)
+      if not state.blocks[block_id] then log("forgot the " .. old.agent .. " session in " .. block_id .. ": it stopped") end
+    end
+  end
+  for block_id, old in pairs(state.blocks) do
+    if not blocks[block_id] then
+      state.blocks[block_id] = lib.prune_step(old, "gone", server.instance_id, timed)
+      if not state.blocks[block_id] then log("forgot the " .. old.agent .. " session in " .. block_id .. ": the pane is closed") end
+    end
+  end
+  if timed then lib.heartbeat(state, server.instance_id, now) end
+  save_state()
+end
+
+local function drop(block_id, why)
+  local e = state.blocks[block_id]
+  if e and e.instance_id ~= server.instance_id then
+    state.blocks[block_id] = nil
+    save_state()
+  end
+  log("restore: skip " .. block_id .. ": " .. why)
+end
+
+-- Type the resume line into a restored pane once it is a plain shell, started
+-- by this server, waiting at its prompt with the same cursor line on two looks
+-- a second apart. Gives up at the deadline and never types after it.
+local function restore_one(block_id, entry, deadline)
+  local line = lib.resume_line(entry)
+  local instance = server.instance_id
+  local last_line, unreadable
+  local function poll()
+    if restore_off() then return log("restore: " .. block_id .. " left alone: restore is off") end
+    if not server or server.instance_id ~= instance then return end
+    if os.time() > deadline then return drop(block_id, "its shell wasn't ready in time") end
+    local function again() rex.after(1, poll) end
+    local blocks = terminals()
+    local session_id = blocks and blocks[block_id]
+    if not session_id then return again() end
+    local process = block_call(session_id, block_id, "process")
+    local fg = type(process) == "table" and process.foreground
+    if not lib.plain_shell(process) then last_line = nil return again() end
+    if not lib.restore_shell(fg.name) then return drop(block_id, "its shell " .. tostring(fg.name) .. " isn't one a restore types into") end
+    local r = rex.exec({ "ps", "-o", "etime=", "-p", tostring(fg.pid) })
+    local age = r and r.ok and lib.parse_etime(r.stdout)
+    if not age then return again() end
+    if os.time() - age < server.started_at - 2 then return drop(block_id, "its shell was running before the server started") end
+    local mode = block_call(session_id, block_id, "input_mode")
+    if not (mode and mode.canonical == false) then last_line = nil return again() end
+    local screen = block_call(session_id, block_id, "format", { trim = true })
+    local cursor = screen and lib.cursor_line(screen.content)
+    if not cursor then
+      if not unreadable then log("restore: can't read the cursor line of " .. block_id .. "; not typing") end
+      unreadable, last_line = true, nil
+      return again()
+    end
+    if cursor ~= last_line then last_line = cursor return again() end
+    -- Ctrl-E Ctrl-U clears anything left on the line in an emacs keymap.
+    local keymap = lib.keymap(fg.name, env_of(fg.pid, { EDITOR = true, VISUAL = true }))
+    local clear = keymap == "emacs" and "\5\21" or ""
+    if clear == "" then log("restore: " .. block_id .. " has a " .. keymap .. " keymap: the line isn't cleared first") end
+    local ok = block_call(session_id, block_id, "write", { data = clear .. line .. "\r" }) ~= nil
+    if lib.mark_restored(state, block_id, instance, ok) then
+      save_state()
+      return log("restore: typed " .. line .. " into " .. block_id)
+    end
+    log("restore: couldn't type into " .. block_id .. "; trying again")
+    again()
+  end
+  poll()
+end
+
+-- Plan from agents.json as the last server left it, before anything is
+-- written in this one, then type each resume line.
+local function start_restore()
+  state = load_state()
+  if restore_off() then return log("restore is off") end
+  local now = os.time()
+  local plan = lib.plan_restore(state, { instance_id = server.instance_id, started_at = server.started_at, now = now })
+  for _, d in ipairs(plan.drop) do
+    state.blocks[d.block_id] = nil
+    log("restore: skip " .. d.block_id .. ": " .. d.reason)
+  end
+  lib.heartbeat(state, server.instance_id, now)
+  save_state()
+  if #plan.restore == 0 then return end
+  local deadline = server.started_at + lib.RESTORE_WINDOW
+  for _, item in ipairs(plan.restore) do
+    log("restore: resuming " .. item.entry.agent .. " session " .. item.entry.session_id .. " in " .. item.block_id)
+    restore_one(item.block_id, item.entry, deadline)
+  end
+  -- Whatever wasn't typed by the deadline is dropped.
+  local instance = server.instance_id
+  rex.after(math.max(deadline - os.time(), 0) + 1, function()
+    if not server or server.instance_id ~= instance then return end
+    local dropped = false
+    for block_id, e in pairs(state.blocks) do
+      if e.instance_id ~= instance then state.blocks[block_id] = nil dropped = true end
+    end
+    if dropped then save_state() end
+  end)
+end
+
+-- A debounced sweep for each change of a terminal's program: it records, and
+-- never forgets.
+local pending_sweep
+local function sweep_soon()
+  if pending_sweep then return end
+  pending_sweep = true
+  rex.after(1, function()
+    pending_sweep = nil
+    sweep(false)
+  end)
+end
+
 rex.on("block_owner_changed", function(ctx, ev)
   if ev.reason ~= "create" or not ev.block_id or not ev.owner then return end
   -- Look the creator up now: a CLI client disconnects right after.
@@ -240,6 +531,19 @@ rex.on("session_created", function(_, ev)
   if s and s.session_id then seed(s.session_id) end
 end)
 rex.on("session_destroyed", function(_, ev) if ev.session_id then active[ev.session_id] = nil end end)
+rex.on("terminal.process_changed", function() sweep_soon() end)
+
+-- The timed sweep. A server that changed under a running watcher is a restart.
+rex.every(lib.SWEEP, function()
+  if restore_off() then return end
+  local info = server_info()
+  if info and server and info.instance_id ~= server.instance_id then
+    server = info
+    log("the server restarted")
+    start_restore()
+  end
+  sweep(true)
+end)
 
 -- rex-sshtab.lua asks the watcher to stop by creating the off file.
 rex.every(1, function()
@@ -255,4 +559,8 @@ rex.after(0, function()
   local list = call("session.list", {})
   for _, s in ipairs((list and list.sessions) or {}) do seed(s.session_id) end
   log("started")
+  server = server_info()
+  if not server then return log("can't read the server's instance: agent sessions aren't kept") end
+  start_restore()
+  sweep(false)
 end)
