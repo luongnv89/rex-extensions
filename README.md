@@ -10,7 +10,7 @@ Extensions for Rex, the terminal multiplexer. Each one is a folder with a Lua fi
 | [github](github/README.md) | The open pull requests and issues of the repo you're in, from GitHub or GitLab, in a side pane. Resolve an issue or review a pull request with an agent, from a button on each row, with the agent profile and prompt you choose. | `cmd+shift+g` |
 | [mcc](mcc/README.md) | The 5-hour and weekly Claude Code usage of every [mcc](https://github.com/luongnv89/mcc) account, in a strip along the bottom of the tab, with a button to look them up live, and the machine's CPU, memory and network. | `cmd+shift+u` |
 | [tabs](tabs/README.md) | The machine in each session's name and the folder in each tab's name, such as `devbox` over `skills · claude`, so the sidebar shows where every tab is. Works over ssh. | `cmd+shift+l` |
-| [sshtab](sshtab/README.md) | A new tab or split pane opened from one that's ssh'd into a machine connects to that machine too, with the same ssh options, from the + button, the menu, the command palette or the keys. | `cmd+alt+t` |
+| [sshtab](sshtab/README.md) | A new tab or split pane opened from one that's ssh'd into a machine connects to that machine too, with the same ssh options, from the + button, the menu, the command palette or the keys. After Rex restarts, the Claude Code, Codex and other agent sessions that were running come back in their panes and folders. | `cmd+alt+t` |
 
 ![The GitHub panel in Rex](github/docs/preview.svg)
 
@@ -76,7 +76,7 @@ Press the extension's key in any Rex pane:
 | github | `cmd+shift+g` | `github_panel` | **PR and Issue Panel** |
 | mcc | `cmd+shift+u` | `mcc_usage` | **mcc Usage Panel** |
 | tabs | `cmd+shift+l` | `tab_locations` | **Tab Locations** (turns it off or on; it runs on its own) |
-| sshtab | `cmd+alt+t` | `same_host_tabs` | **Same-Machine Tabs** (turns it off or on; it runs on its own) |
+| sshtab | `cmd+alt+t` | `same_host_tabs` | **Same-Machine Tabs** (turns it off or on; it runs on its own). `restore_agent_sessions`, **Restore Agent Sessions**, turns agent session restore alone off or on. |
 
 Without the key, pick the extension in Rex's command palette, or run its action from a shell with `rex do ACTION`, such as `rex do mcc_usage`.
 
