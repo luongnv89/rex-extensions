@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+Brings the panel up to date with [herdr-github](https://github.com/luongnv89/herdr-github)'s unreleased changes after 0.4.0 ([luongnv89/herdr-github#18](https://github.com/luongnv89/herdr-github/issues/18), [#20](https://github.com/luongnv89/herdr-github/issues/20), [#25](https://github.com/luongnv89/herdr-github/issues/25)).
+
+### Added
+
+- A **Resolve #N** button under every issue and a **Review #N** button under every pull request, on GitHub. Each acts on its own row; the header button and `a` still act on the selected one. There are no buttons on GitLab, since both skills work through `gh`.
+- Agent profiles. A profile has a name, an id, a harness (Claude Code via `mcc run`, Claude Code, Codex, Pi or OpenCode) and an optional model and thinking level; an empty one leaves the harness's own default. Resolve and Review each get their own profile. Models with shell characters or brackets (such as `opus[1m]`) are refused. OpenCode has no model or thinking flag when it starts, so the panel says it ignores them.
+- A profiles view (`s`, or `⚙` in the header) to add, edit, delete and assign profiles, from the keyboard and the mouse. It reads and writes `~/.config/rex-github/profiles.json`, in herdr-github's format, and never overwrites a change made meanwhile, nor a file it can't read or that holds a profile it can't use.
+- Choose the profile when you start Resolve or Review. With one or more profiles of your own, a **Resolve #N** or **Review #N** click, or `a`, opens a menu of every profile, the built-in **Claude Code via mcc run** first, with the action's assigned profile highlighted, under the button clicked (above it when there's no room). Enter or a click starts the one chosen; esc, `q` or a click elsewhere closes the menu and starts nothing. With only the built-in profile, the button starts it right away.
+- Custom prompts for Resolve and Review. Each action can send a prompt you write, with `{number}` where the number goes, instead of the IDD skill's; left empty, it sends the skill's prompt as before. The prompt is the last word of the agent's command line, and a custom prompt starts the agent even when the IDD skills aren't installed. Set it in the profiles view's **Resolve prompt** and **Review prompt** rows.
+- With mcc, the skills are looked up in the Claude Code folder `mcc env` names for the repo. For mcc, the panel says it opened the pane rather than that Claude Code started, since mcc may first ask something, such as about a usage limit.
+
+### Changed
+
+- **Behavior change:** with no profile assigned, Resolve and Review start Claude Code through `mcc run`, instead of the same kind of agent as the one in your tab. Assign a profile to keep using another agent. The panel no longer needs an agent in the tab: with none, the new pane opens below the pane the panel follows. `pi` now counts as an agent when the panel looks for yours; `gemini` still does, but isn't a harness a profile can start.
+
 ## 0.1.0 (2026-11-05)
 
 ### Added

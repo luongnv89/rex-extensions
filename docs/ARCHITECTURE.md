@@ -46,7 +46,7 @@ Every `install.js` is the same code with different constants (`ACTION`, `MODULE`
 - The label is the only state: nothing is kept on disk to find the panel again.
 - `panel.js` reads `REX_SESSION` and `REX_BLOCK` and talks to Rex with `rex api call -s <session>`. github polls every 2 seconds to follow the focused pane and its folder; mcc reloads usage every 30 seconds.
 - It shells out to `git` and `gh` or `glab` (github) or `mcc` (mcc), and keeps one small state file under `$XDG_STATE_HOME` (default `~/.local/state`).
-- github's Resolve and Review run `rex split` to start your agent in a pane below it.
+- github's Resolve and Review run `rex split` to start the chosen profile's agent in a pane below yours (or below the pane the panel follows), and read and write `~/.config/rex-github/profiles.json`.
 
 The full list of what each panel runs is in its README's "What it runs": [github](../github/README.md#what-it-runs), [mcc](../mcc/README.md#what-it-runs).
 

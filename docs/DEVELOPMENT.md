@@ -14,7 +14,7 @@ How to work on the extensions: what you need, how to run the checks CI runs, how
 
 | Extension | Pattern | Files |
 | --- | --- | --- |
-| github | panel | `rex-github.lua`, `panel.js`, `install.js`, `docs/preview.svg` |
+| github | panel | `rex-github.lua`, `panel.js`, `profiles.cjs`, `install.js`, `docs/preview.svg` |
 | mcc | panel | `rex-mcc.lua`, `panel.js`, `install.js` |
 | tabs | watcher | `rex-tabs.lua`, `watcher.lua`, `lib.lua`, `install.js` |
 | sshtab | watcher | `rex-sshtab.lua`, `watcher.lua`, `lib.lua`, `install.js` |
