@@ -67,6 +67,7 @@ cd github && node --test --experimental-test-coverage
   - `rex do tabs/watcher.lua --all state=DIR` runs the tabs watcher; `rex do tabs/watcher.lua --all mode=restore` puts the names back.
   - `rex do sshtab/watcher.lua --all state=DIR trust=app,cli` runs the sshtab watcher and also follows tabs made from the CLI, so you can drive it with `rex` commands. Its decisions go to `DIR/log`.
   - Creating `DIR/off` stops either watcher.
+- Agent session restore: don't restart the Rex server you work in to try it. Run `REX_SSHTAB_E2E=1 node --test test/restore.e2e.test.js` in `sshtab/`: it starts its own server on a socket in a temporary folder (`rex server run --listen unix://DIR/rex.sock --state-dir DIR/state --config DIR/init.lua`, with `REX_SERVER` and `REX_SSHTAB_STATE` pointing into `DIR`), so its watcher never talks to yours.
 
 ## Environment variables
 
@@ -77,7 +78,8 @@ cd github && node --test --experimental-test-coverage
 | `XDG_STATE_HOME` | github and mcc `panel.js` | Where the panel keeps its state file. Default `~/.local/state`. |
 | `REX_GITHUB_REX`, `REX_MCC_REX`, `REX_TABS_REX`, `REX_SSHTAB_REX` | `install.js`, and `panel.js` for github and mcc | The `rex` binary to call. The tests point it at a stand-in script. |
 | `REX_GITHUB_NO_RELOAD`, `REX_MCC_NO_RELOAD`, `REX_TABS_NO_RELOAD`, `REX_SSHTAB_NO_RELOAD` | `install.js` | When set, skip `rex config reload`. |
-| `REX_TABS_STATE`, `REX_SSHTAB_STATE` | tabs and sshtab `install.js` | The watcher's state folder (pid and `off` file). Default `~/.cache/rex-tabs` or `~/.cache/rex-sshtab`. |
+| `REX_TABS_STATE`, `REX_SSHTAB_STATE` | tabs and sshtab `install.js`, and `rex-sshtab.lua` | The watcher's state folder (pid and `off` file, and sshtab's `agents.json`). Default `~/.cache/rex-tabs` or `~/.cache/rex-sshtab`. |
+| `REX_SSHTAB_E2E` | `sshtab/test/restore.e2e.test.js` | Set to `1` to run the agent session restore test on a throwaway Rex server. Needs Rex and zsh as the login shell. |
 | `REX_SESSION`, `REX_BLOCK` | github and mcc `panel.js` | Set by Rex in the panel's pane: the session and block the panel is in. |
 | `REX_GITHUB_STARTUP_MS` | github `panel.js` | How long Resolve/Review waits for the agent to start, in ms. Default 3000. |
 | `MCC_BIN` | mcc `panel.js` | The full path to `mcc`, when it isn't on `PATH` or in the usual install folders. |

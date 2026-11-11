@@ -7,7 +7,9 @@ new tab from a tab running   ssh -p 2222 -t you@devbox htop
 types into the new tab       ssh -p 2222 -t you@devbox
 ```
 
-A new tab or pane opened from a local one stays local. Tabs and panes that scripts and agents open (`rex window new`, `rex run`, `rex split`, `rex do`) are never touched.
+A new tab or pane opened from a local one stays local. Tabs and panes that scripts and agents open (`rex window new`, `rex run`, `rex split`, `rex do`) are never touched by this.
+
+It also brings back your AI coding agents after Rex restarts: a pane that was running Claude Code, or one of the other [supported agents](#agent-sessions-after-a-restart), resumes the same session in the same folder. That is the one case where it types into a pane it didn't see opened, and only into a pane that was running an agent when the server stopped.
 
 ## Install
 
@@ -43,6 +45,49 @@ It runs on its own. The key, **Same-Machine Tabs** in the command palette, or `r
 
 Each decision is written to `~/.cache/rex-sshtab/log`, such as `skip window:…: made by cli, not the app` or `typed ssh -p 2222 you@devbox into block:…`. Look there when a tab didn't connect.
 
+## Agent sessions after a restart
+
+When the Rex server restarts (you quit Rex, reboot, update it, or run `rex server stop`), your panes come back in their folders, but as plain shells: the programs in them stopped. The watcher remembers which agent session each pane ran, and once the server is back it types the line that resumes it:
+
+```
+pane was running   claude                       (session 3f2a…)
+types              cd /Users/you/project && claude --resume 3f2a…
+```
+
+| Agent | Restored | Session id from |
+| --- | --- | --- |
+| Claude Code | Yes, however it was started | `sessions/<pid>.json` in `CLAUDE_CONFIG_DIR` (default `~/.claude`), which Claude writes for each running process. Only an interactive session counts, not `claude -p`. |
+| Codex | When started as `codex [options] resume UUID` | The command line. Plain `codex` doesn't say which session it has, so it isn't restored. `exec`, `e`, `review`, `resume --last` and the other subcommands aren't. |
+| OpenCode | When started with `-s ID` or `--session ID` | The command line. `opencode run` and `-c` aren't. |
+| Cursor Agent | When started with `--resume ID` | The command line. `-p` and `--print` aren't. |
+| pi | When started with `--session ID` | The command line. `-p` isn't. |
+| Gemini | No | It has no resume by exact session id. The log says so once per process. |
+| Amp | No | It has no resume by exact session id that this extension has verified. The log says so once per process. |
+| Qwen, Copilot, Kimi | No | Their session id isn't visible from outside the process. The log says so once per process. |
+
+- **What it types.** `cd FOLDER && AGENT RESUME ID`, built from the table above, with the folder and id quoted. When Claude ran with a `CLAUDE_CONFIG_DIR` other than `~/.claude`, or Codex with a `CODEX_HOME` other than `~/.codex`, it starts with `env CLAUDE_CONFIG_DIR=…` so the right account's session is found. Nothing else from the old command line is carried over.
+- **When.** Only within 120 seconds of the server starting, and only into a pane that the server that just stopped had that agent in. A watcher started later, such as one you turned off and on again, types nothing and forgets those sessions.
+- **Which panes.** The pane must be a plain `zsh`, `bash` or `fish` started by the new server, in emacs keys, waiting at its prompt with nothing being typed (the line under the cursor stays the same for a second). It sends Ctrl-E Ctrl-U first, which clears anything left on the line, then the resume line. A pane where the line can't be cleared that way isn't restored, because leftover input would run with it: zsh started in vi mode (`EDITOR` or `VISUAL` holds `vi`, such as `nvim`), and `sh`, `dash`, `ksh` and `mksh`, whose keymap the watcher can't tell. So sessions in those shells aren't restored at all. The log says `restore: skip block:…: its keymap is vi: the line can't be cleared first` (or `unknown`).
+- **Once.** Each session is resumed at most once per restart, and a session id recorded in two panes is resumed in the first only.
+
+**Restore Agent Sessions** in the command palette, or `rex do restore_agent_sessions`, turns this part off, and on again; same-machine tabs keep working. Off is remembered in `~/.cache/rex-sshtab/restore-off`, and turning it off deletes what was recorded. Turning the whole watcher off stops it too.
+
+The log shows each step, such as `recorded claude session 3f2a… in block:…`, `restore: typed cd … into block:…` and `restore: skip block:…: <why>`.
+
+## What it runs
+
+The watcher runs as you, with no sandbox. Besides the `rex` calls (it reads sessions, panes and their processes, and types with the terminal's `write`), it runs:
+
+- `ps -ww -o args= -p PID` to read the command line of the program in a pane: ssh's, and an agent's for its session id. On Linux it reads `/proc/PID/cmdline` instead.
+- `ps -wwE -o args= -p PID` on macOS, or `/proc/PID/environ` on Linux, to read an agent's or a restored shell's environment. Only `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `EDITOR` and `VISUAL` are taken from it; nothing else is kept or logged.
+- `ps -o etime= -p PID`, to check that a restored shell started after the server.
+- `test -d`, `mkdir -p` and `chmod 600` on its own files.
+
+It reads `<config dir>/sessions/<pid>.json` for each running Claude, and writes, in `~/.cache/rex-sshtab/`:
+
+- `watcher.pid`, `off`, `restore-off` and `log`;
+- `agents.json`: for each pane with an agent, the agent's name, its session id, its folder, the config folder above if it isn't the default, and which server saw it and when. No prompt, option or other environment is kept.
+
 ## Limits
 
 - It never opens a tab or pane itself; it types into the one the app opened. One whose shell hasn't started within 5 seconds is left alone.
@@ -52,6 +97,13 @@ Each decision is written to `~/.cache/rex-sshtab/log`, such as `skip window:…:
 - Any other plain shell tab or pane the app opens from an ssh one is followed too, such as one an action in your own `init.lua` opens with `rex.session.new_window` or `new_split`.
 - The new tab starts in your home folder on the remote machine, not in the folder the first tab is in.
 - It follows tabs on the Rex server on this machine. Sessions on another Rex server you connect to with `rex.host` need the extension installed on that machine.
+- Agent sessions come back after a Rex **server** restart only. If you quit an agent yourself, it's forgotten; a pane closed while the server was down isn't restored.
+- The resumed agent starts with its default options: the model, permission mode and other flags it was started with, and its first prompt, aren't carried over.
+- It resumes the session the agent was started on. A session you switch to inside the agent (Claude's `/clear` or `/resume`, Codex's or OpenCode's picker) is followed only if the agent updates what the watcher reads: Claude's `sessions/<pid>.json` (not checked for every Claude version), and never for the command-line agents.
+- A pane waits at most 120 seconds after the server starts. A shell that takes longer to reach its prompt, or that runs `csh`, `tcsh`, `nu`, `xonsh` or `elvish`, is left alone. Only zsh, bash and fish are typed into: `sh`, `dash`, `ksh` and `mksh` are left alone, as is zsh started in vi mode (see **Which panes**).
+- A vi keymap set in your rc file (`bindkey -v`, `set -o vi`, `fish_vi_key_bindings`) isn't detected, so Ctrl-E Ctrl-U is sent anyway. In vi insert mode Ctrl-U still clears the line and the command runs. A pane left in vi command mode reads the typed text as vi commands instead, so the agent may not resume there.
+- If the agent isn't on the `PATH` of a new shell, the typed command fails with "command not found".
+- A session whose folder, `CLAUDE_CONFIG_DIR` or `CODEX_HOME` holds a backslash isn't restored. fish reads a backslash inside single quotes differently from the other shells, so such a path can't be quoted the same way for all of them. The log says `isn't restored: its folder has a backslash` (or `its config folder`) without the path.
 
 ## Remove
 
@@ -59,4 +111,4 @@ Each decision is written to `~/.cache/rex-sshtab/log`, such as `skip window:…:
 node ~/.config/rex/rex-extensions/sshtab/install.js --remove
 ```
 
-This stops the watcher and takes the three lines out of `init.lua`.
+This stops the watcher, deletes the agent sessions it recorded (`agents.json`), and takes the three lines out of `init.lua`.

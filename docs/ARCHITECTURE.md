@@ -58,8 +58,9 @@ The full list of what each panel runs is in its README's "What it runs": [github
   - `rex_bin()` uses the `rex` on `PATH`, else the one inside the Rex app on macOS.
 - `watcher.lua` subscribes to events with `rex.on`, uses `rex.after` for debouncing and polling, and checks for the `off` file every second with `rex.every(1, ...)`.
   - **tabs** listens to `session_view_changed`, `session_created`, `terminal.title_changed`, `terminal.pwd_changed`, `terminal.process_changed`, `window_label_changed`, `session_label_changed`, `window_closed` and `session_destroyed`. It reads each terminal's `title`, `pwd` and `process`, and sets labels with `session.set_label` and `session.set_window_label`.
-  - **sshtab** listens to `window_created`, `block_owner_changed`, `active_window_changed`, `block_closed`, `session_created` and `session_destroyed`. It acts only on blocks whose creator client is of kind `app` (from `client.list`), and types the ssh command with the terminal's `write` once the shell waits at its prompt (`input_mode`). Each decision goes to `~/.cache/rex-sshtab/log`.
-- `lib.lua` holds the pure logic: finding a tab's machine and folder and building labels (tabs); parsing ssh command lines, recognising shells and finding the pane a split came from (sshtab). It makes no `rex` calls, so plain Lua 5.1 tests it through `test/lib_spec.lua`.
+  - **sshtab** listens to `window_created`, `block_owner_changed`, `active_window_changed`, `block_closed`, `session_created`, `session_destroyed` and `terminal.process_changed`. It acts only on blocks whose creator client is of kind `app` (from `client.list`), and types the ssh command with the terminal's `write` once the shell waits at its prompt (`input_mode`). Each decision goes to `~/.cache/rex-sshtab/log`.
+  - sshtab also keeps `agents.json`: the AI coding agent session each pane runs, found every 15 seconds (`rex.every`) and on `terminal.process_changed`. When the watcher starts, it compares `server.status`'s `instance_id` with the instance that last wrote the file. Within 120 seconds of the server's `started_at`, it types the resume line into each restored pane that ran an agent, once the pane is a plain shell at its prompt (`process`, `input_mode`, and the cursor line from `format`). `restore-off` turns this part off. The design, and how it compares with herdr's, is in [herdr-session-restore-study.md](herdr-session-restore-study.md).
+- `lib.lua` holds the pure logic: finding a tab's machine and folder and building labels (tabs); parsing ssh command lines, recognising shells and finding the pane a split came from, and recognising agents, reading their session ids, building the resume line and planning a restore (sshtab). It makes no `rex` calls, so plain Lua 5.1 tests it through `test/lib_spec.lua`.
 
 ## Rex API surface
 
@@ -78,9 +79,11 @@ The server must speak API revision 8 or later.
 | `rex.call("session.list")` | tabs, sshtab | Every session at start. |
 | `rex.call("session.set_label")`, `rex.call("session.set_window_label")` | tabs | Rename sessions and tabs. |
 | `rex.call("client.list")` | sshtab | The kind of client that created a block. |
-| `rex.block.call` (terminal `title`, `pwd`, `process`, `input_mode`, `write`) | tabs, sshtab | Read a terminal's state; type into it. |
-| `rex.exec`, `rex.exec.start` | tabs, sshtab | Run `ps`, `hostname`, `mkdir`; start the detached watcher. |
-| `rex.on`, `rex.after`, `rex.every` | tabs, sshtab watchers | Events, debounce and polling, the `off` check. |
+| `rex.block.call` (terminal `title`, `pwd`, `process`, `input_mode`, `format`, `write`) | tabs, sshtab | Read a terminal's state and screen; type into it. |
+| `rex.call("server.status")` | sshtab | The server's `instance_id` and `started_at`, to tell a restart from a watcher restart. |
+| `rex.json` | sshtab | Read and write `agents.json` and Claude's `sessions/<pid>.json`. |
+| `rex.exec`, `rex.exec.start` | tabs, sshtab | Run `ps`, `hostname`, `mkdir`, `test`, `chmod`; start the detached watcher. |
+| `rex.on`, `rex.after`, `rex.every` | tabs, sshtab watchers | Events, debounce and polling, the `off` check, sshtab's agent sweep. |
 | `rex.log` | tabs, sshtab | Warn when a watcher can't start. |
 | `rex api call`, `rex split` (CLI) | github and mcc `panel.js` | Talk to Rex from the panel; start the agent pane. |
 
@@ -88,8 +91,8 @@ The server must speak API revision 8 or later.
 
 - **Self-contained folders.** The duplication between them is deliberate: each extension can be installed, removed and versioned on its own.
 - **No dependencies.** Plain Node and Lua 5.1, no npm packages.
-- **No hidden state.** Panels are found by their label; watchers keep only a pid file, an `off` file and, for sshtab, a log.
-- **Leave other tools alone.** sshtab never types into a pane that a script or agent made, and tabs keeps a name someone set by hand, only adding the machine or folder to it.
+- **No hidden state.** Panels are found by their label; watchers keep only a pid file, an `off` file and, for sshtab, a log, a `restore-off` file and `agents.json`. `install.js --remove` deletes `agents.json`.
+- **Leave other tools alone.** sshtab never types into a pane that a script or agent made, except to resume the agent session that pane ran before a server restart, and tabs keeps a name someone set by hand, only adding the machine or folder to it. Agent sessions are found without changing any agent's config: no hooks are installed.
 - **"What it runs" is a contract.** Everything runs as your user with no sandbox, so each README says what it runs and writes. See [SECURITY.md](../SECURITY.md).
 
 ## Testing
@@ -98,5 +101,6 @@ The server must speak API revision 8 or later.
 - `install.test.js` points `REX_<NAME>_REX` at a stand-in `rex` script, steered by `FAKE_REX_LOG` and `FAKE_REX_REJECT`, and `REX_CONFIG` at a temporary file.
 - `github/test/panel.test.js` replaces `child_process.spawn` and `execFile` to fake `git`, `gh`, `glab` and `rex`.
 - `tabs` and `sshtab` run `test/lib_spec.lua` under Lua 5.1 or LuaJIT through `test/lib.test.js`.
+- `sshtab/test/restore.e2e.test.js` restarts a throwaway Rex server with a stand-in `claude` in two panes and checks each one is resumed once. It needs Rex and runs only with `REX_SSHTAB_E2E=1`, so CI skips it.
 
 How to run them is in [DEVELOPMENT.md](DEVELOPMENT.md#run-the-checks).

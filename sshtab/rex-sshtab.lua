@@ -11,12 +11,20 @@
 -- Loading the file starts watcher.lua in the background, unless it is already
 -- running or was turned off. The action turns it off, or on again. Off is
 -- remembered across restarts in ~/.cache/rex-sshtab/off.
+--
+-- The watcher also resumes the AI coding agent sessions (Claude Code, Codex
+-- and others) that were running in each pane when the Rex server restarts.
+-- The restore_agent_sessions action turns that alone off, or on again; off is
+-- remembered in ~/.cache/rex-sshtab/restore-off. REX_SSHTAB_STATE moves the
+-- folder, as it does for install.js.
 
 local here = debug.getinfo(1, "S").source:gsub("^@", ""):match("^(.*)/[^/]*$") or "."
 local WATCHER = here .. "/watcher.lua"
-local STATE = (os.getenv("HOME") or "") .. "/.cache/rex-sshtab"
+local STATE = os.getenv("REX_SSHTAB_STATE") or ((os.getenv("HOME") or "") .. "/.cache/rex-sshtab")
 local PIDFILE = STATE .. "/watcher.pid"
 local OFF = STATE .. "/off"
+local RESTORE_OFF = STATE .. "/restore-off"
+local AGENTS_FILE = STATE .. "/agents.json"
 
 local function read(path)
   local f = io.open(path, "r")
@@ -78,6 +86,17 @@ local function toggle()
   return { on = true }
 end
 
+-- Restore off also forgets the sessions recorded so far.
+local function toggle_restore()
+  if read(RESTORE_OFF) then
+    os.remove(RESTORE_OFF)
+    return { on = true, watcher = running() }
+  end
+  write(RESTORE_OFF, "")
+  os.remove(AGENTS_FILE)
+  return { on = false }
+end
+
 rex.action({
   name = "same_host_tabs",
   title = "Same-Machine Tabs",
@@ -85,6 +104,15 @@ rex.action({
   category = "Tabs",
   keywords = "new tab ssh remote host machine server same connect follow",
   run = toggle,
+})
+
+rex.action({
+  name = "restore_agent_sessions",
+  title = "Restore Agent Sessions",
+  description = "Turn on or off: after the Rex server restarts, resume the Claude Code, Codex and other agent sessions each pane was running.",
+  category = "Tabs",
+  keywords = "restore resume agent session claude codex opencode cursor restart reboot",
+  run = toggle_restore,
 })
 
 -- At load, start the watcher unless it runs already or was turned off. A

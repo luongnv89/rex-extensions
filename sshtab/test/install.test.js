@@ -165,15 +165,20 @@ test("when Rex rejects the edited config, it goes back as it was", (t) => {
   assert.equal(s.read(), null);
 });
 
-test("--remove turns the watcher off, takes the lines out and keeps the rest", (t) => {
+test("--remove turns the watcher off, deletes agents.json, takes the lines out and keeps the rest", (t) => {
   const s = sandbox(t);
   s.write("-- mine\n");
   assert.equal(s.run().status, 0);
+  fs.mkdirSync(s.state, { recursive: true });
+  fs.writeFileSync(path.join(s.state, "agents.json"), "{}");
+  fs.writeFileSync(path.join(s.state, "log"), "kept\n");
   const r = s.run(["--remove"]);
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.match(r.stdout, /Took same-machine tabs out of/);
   assert.equal(s.read(), "-- mine\n");
   assert.ok(fs.existsSync(path.join(s.state, "off")), "the watcher was not told to stop");
+  assert.ok(!fs.existsSync(path.join(s.state, "agents.json")), "the recorded agent sessions were not deleted");
+  assert.ok(fs.existsSync(path.join(s.state, "log")), "the log should stay");
   assert.ok(s.calls().includes("config reload"), "the config was not reloaded");
   assert.match(s.run(["--remove"]).stdout, /aren't in/);
   // Installing again turns it back on.

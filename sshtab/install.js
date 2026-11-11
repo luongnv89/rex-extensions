@@ -9,7 +9,8 @@
 //
 //   node install.js            bind cmd+alt+t, or the first free fallback
 //   node install.js ctrl+alt+s bind this key
-//   node install.js --remove   stop the watcher and take it out of init.lua
+//   node install.js --remove   stop the watcher, delete the agent sessions it
+//                              recorded and take it out of init.lua
 "use strict";
 const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
@@ -122,9 +123,13 @@ function fail(message) {
 }
 
 // Turn the watcher off: it sees the off file and exits. The next install clears it.
+// The agent sessions it recorded for a restart are deleted with it.
 function stopWatcher() {
   if (process.env.REX_SSHTAB_NO_RELOAD) return;
   try { fs.mkdirSync(stateDir(), { recursive: true }); fs.writeFileSync(path.join(stateDir(), "off"), ""); } catch {}
+  for (const name of ["agents.json", "agents.json.tmp"]) {
+    try { fs.rmSync(path.join(stateDir(), name), { force: true }); } catch {}
+  }
 }
 
 function remove(file) {
