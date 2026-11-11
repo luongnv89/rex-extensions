@@ -37,7 +37,7 @@ require("node:child_process").execFile = (cmd, args, opts, cb) => {
 Object.assign(process.env, { REX_GITHUB_REX: "rex", REX_SESSION: "session:s", REX_BLOCK: "block:panel", REX_GITHUB_STARTUP_MS: "1" });
 process.argv.push("--target", "block:agent", "--cwd", "/start");
 const P = require("../profiles.cjs");
-const { width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput, act, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, flags, locate, state, follow, splitLeft, ratioFor, fitWidth, COLUMNS } = require("../panel.js");
+const { width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput, MODES_ON, MODES_OFF, act, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, flags, locate, state, follow, splitLeft, ratioFor, fitWidth, COLUMNS } = require("../panel.js");
 
 // Drops colors and OSC 8 hyperlinks, leaving the text a terminal shows.
 const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b\]8;[^\x07\x1b]*(?:\x1b\\|\x07)/g, "");
@@ -233,7 +233,7 @@ function setup(view) {
   Object.assign(ui, {
     view, prs: items("pull"), issues: items("issues"), errors: {}, error: null, repo: { name: "o/p", url: "https://x/o/p" },
     loading: false, fetched: true, follow: false, sel: { prs: 0, issues: 0 }, top: { prs: 0, issues: 0 }, notice: null,
-    forge: null, root: null, settings: null, acting: null, menu: null,
+    forge: null, root: null, settings: null, acting: null, menu: null, pasting: false, pasteCR: false,
   });
   follow("block:agent");
   opened.length = 0;
@@ -1561,6 +1561,127 @@ test("on a short pane a failed open keeps the whole URL, before its reason", () 
   assert.ok(shows(lines, url), lines.join("\n"));
   assert.ok(text(lines).includes(`${lastChild.cmd} exited 3`), lines.join("\n"));
   assert.match(lines[10], /^ ↑↓ select/);
+});
+
+// ── Pasting ─────────────────────────────────────────────────────────────────
+
+// The profiles view, with the Resolve prompt open in its editor.
+function openResolvePrompt(t) {
+  claudeHome(t);
+  setupGitHub("issues");
+  screen(() => onInput(Buffer.from("s")));
+  while (ui.settings.promptSel !== "resolve") screen(() => onInput(Buffer.from("j")));
+  screen(() => onInput(Buffer.from("e")));
+  assert.equal(ui.settings.mode, "prompt");
+}
+
+test("a paste without bracketed paste saves the prompt at its line break and runs none of the rest", (t) => {
+  openResolvePrompt(t);
+  ui.settings.prompt.text = "";
+  // One chunk, as a terminal without bracketed paste sends it: after the save, s
+  // would close the view, a would start an agent, d and y delete, q quit.
+  const exit = noExit(() => screen(() => onInput(Buffer.from("Fix {number}\rmore a s d y q"))));
+  assert.equal(exit, null, "the paste closed the panel");
+  assert.equal(ui.settings?.mode, "list", "the paste left the list");
+  assert.equal(ui.settings.prompt, null);
+  assert.equal(JSON.parse(fs.readFileSync(storeFile(), "utf8")).prompts.resolve, "Fix {number}");
+  assert.equal(ui.acting, null);
+  assert.equal(ui.menu, null);
+  assert.deepEqual(calls, []);
+  assert.deepEqual(opened, []);
+  // The same in the form: enter saves it, and the rest is dropped, so n opens no
+  // new form and R assigns nothing.
+  const assign = { ...ui.settings.store.assign };
+  screen(() => onInput(Buffer.from("n")));
+  screen(() => onInput(Buffer.from("\x1b[B")));
+  screen(() => onInput(Buffer.from("pp")));
+  screen(() => onInput(Buffer.from("\x1b[A")));
+  const exit2 = noExit(() => screen(() => onInput(Buffer.from("Paste\rnRs q"))));
+  assert.equal(exit2, null);
+  assert.equal(ui.settings?.mode, "list");
+  assert.equal(ui.settings.form, null);
+  assert.ok(ui.settings.store.profiles.some((p) => p.id === "pp"), "the form wasn't saved");
+  assert.deepEqual(ui.settings.store.assign, assign);
+  assert.deepEqual(calls, []);
+  // A paste ending in a line break, \r\n, doesn't open the prompt again either.
+  screen(() => onInput(Buffer.from("e")));
+  assert.equal(ui.settings.mode, "edit");
+  screen(() => onInput(Buffer.from("\x1b")));
+  while (ui.settings.promptSel !== "resolve") screen(() => onInput(Buffer.from("j")));
+  screen(() => onInput(Buffer.from("e")));
+  ui.settings.prompt.text = "";
+  screen(() => onInput(Buffer.from("Go {number}\r\n")));
+  assert.equal(ui.settings.mode, "list");
+  assert.equal(ui.settings.prompt, null);
+});
+
+test("a bracketed paste is text in the prompt, its line breaks as spaces, and no key", (t) => {
+  openResolvePrompt(t);
+  ui.settings.prompt.text = "";
+  const before = fs.existsSync(storeFile()) ? fs.readFileSync(storeFile(), "utf8") : null;
+  const exit = noExit(() => screen(() => onInput(Buffer.from("\x1b[200~line1\r\nline2\ra\tq\x1b[A\x1b\x01 s\x1b[201~"))));
+  assert.equal(exit, null);
+  assert.equal(ui.settings?.mode, "prompt");
+  assert.equal(ui.settings.prompt.text, "line1 line2 a q s");
+  assert.equal(ui.acting, null);
+  assert.deepEqual(calls, []);
+  assert.equal(fs.existsSync(storeFile()) ? fs.readFileSync(storeFile(), "utf8") : null, before, "the paste saved the prompt");
+  assert.equal(ui.pasting, false);
+  // Split over chunks, as a long paste comes: still text until its end mark.
+  ui.settings.prompt.text = "";
+  noExit(() => screen(() => { onInput(Buffer.from("\x1b[200~Fix {number}\r")); onInput(Buffer.from("\nq a\r")); onInput(Buffer.from("s\x1b[201~")); }));
+  assert.equal(ui.settings?.mode, "prompt");
+  assert.equal(ui.settings.prompt.text, "Fix {number} q a s");
+  // After it, enter is a key again: it saves.
+  screen(() => onInput(Buffer.from("\r")));
+  assert.equal(ui.settings.mode, "list");
+  assert.equal(JSON.parse(fs.readFileSync(storeFile(), "utf8")).prompts.resolve, "Fix {number} q a s");
+});
+
+test("a bracketed paste goes into a form's text field, and stops at its length", (t) => {
+  claudeHome(t);
+  setupGitHub("issues");
+  screen(() => onInput(Buffer.from("s")));
+  screen(() => onInput(Buffer.from("n")));
+  screen(() => onInput(Buffer.from(`\x1b[200~My\nprofile ${"x".repeat(60)}\x1b[201~`)));
+  assert.equal(ui.settings.mode, "edit");
+  assert.equal(ui.settings.form.name, `My profile ${"x".repeat(29)}`);
+  // On a choice, a paste changes nothing: its spaces don't step the harness.
+  screen(() => onInput(Buffer.from("\x1b[B\x1b[B")));
+  const harness = ui.settings.form.harness;
+  screen(() => onInput(Buffer.from("\x1b[200~ a b \x1b[201~")));
+  assert.equal(ui.settings.form.harness, harness);
+});
+
+test("a bracketed paste on the rows or in the profile list does nothing", (t) => {
+  claudeHome(t);
+  setupGitHub("issues");
+  const exit = noExit(() => screen(() => onInput(Buffer.from("\x1b[200~s a r o 2 \r q\x1b[201~"))));
+  assert.equal(exit, null);
+  assert.equal(ui.settings, null);
+  assert.equal(ui.view, "issues");
+  assert.equal(ui.acting, null);
+  assert.deepEqual(calls, []);
+  assert.deepEqual(opened, []);
+  screen(() => onInput(Buffer.from("s")));
+  const sel = ui.settings.sel;
+  noExit(() => screen(() => onInput(Buffer.from("\x1b[200~jnd\x1b\x1b[201~"))));
+  assert.equal(ui.settings?.mode, "list");
+  assert.equal(ui.settings.sel, sel);
+});
+
+test("bracketed paste is on while the panel runs and off when it quits", () => {
+  setup("prs");
+  assert.ok(MODES_ON.includes("\x1b[?2004h"));
+  assert.ok(MODES_OFF.includes("\x1b[?2004l"));
+  const { write } = process.stdout;
+  let out = "";
+  process.stdout.write = (s) => { out += s; return true; };
+  let code;
+  try { code = noExit(() => onInput(Buffer.from("q"))); } finally { process.stdout.write = write; }
+  assert.equal(code, 0);
+  assert.ok(out.includes("\x1b[?2004l"), "quit left bracketed paste on");
+  assert.ok(out.includes(MODES_OFF));
 });
 
 test("the profiles view sets, changes and clears each action's prompt, under the profiles", async (t) => {

@@ -239,6 +239,9 @@ const ui = {
   // key, entries, sel, top, anchor }, anchor being "row" (under that row's button)
   // or "header" (under the header's).
   menu: null,
+  // Between a paste's start and end marks, which can come in different chunks;
+  // pasteCR when the last part ended in \r, so a \n starting the next is its \r\n.
+  pasting: false, pasteCR: false,
 };
 // `--target BLOCK --cwd DIR`, as rex-github.lua passes them.
 function flags(argv) {
@@ -1355,17 +1358,62 @@ function click(x, y) {
   openUrl(ui[ui.view][i]?.url);
 }
 
+// While the panel runs: the alternate screen, no cursor, mouse reports (SGR), and
+// bracketed paste, so that what's pasted comes as text and not as keys.
+const MODES_ON = `${ESC}?1049h${ESC}?25l${ESC}?1000h${ESC}?1006h${ESC}?2004h`;
+const MODES_OFF = `${ESC}?2004l${ESC}?1006l${ESC}?1000l${ESC}?25h${ESC}?1049l`;
+
 function quit() {
-  process.stdout.write(`${ESC}?1006l${ESC}?1000l${ESC}?25h${ESC}?1049l`);
+  process.stdout.write(MODES_OFF);
   process.exit(0);
 }
 
+// Pasted text goes into the prompt, or the form's text field, being typed in: its
+// line breaks and tabs as spaces, since neither holds one, and with no control
+// character. Anywhere else, on the rows, in the list or the menu, it does nothing.
+function pasteText(text) {
+  const st = ui.settings;
+  if (ui.pasteCR && text.startsWith("\n")) text = text.slice(1);
+  if (text) ui.pasteCR = text.endsWith("\r");
+  if (!text || (st?.mode !== "prompt" && st?.mode !== "edit")) return;
+  const field = st.mode === "prompt" ? { key: "prompt", max: P.PROMPT_MAX } : FIELDS[st.field];
+  if (!field.max) return;
+  const box = st.mode === "prompt" ? st.prompt : st.form, key = st.mode === "prompt" ? "text" : field.key;
+  for (const c of text.replace(/\r\n|[\r\n\t]/g, " ")) {
+    if (box[key].length >= field.max) break;
+    if (!/[\x00-\x1f\x7f-\x9f]/.test(c)) box[key] += c;
+  }
+  delete st.fieldErrors[field.key];
+  st.scroll = 0;
+  draw();
+}
+
 const KEYS = /\x1b\[<(\d+);(\d+);(\d+)([mM])|\x1b\[[0-9;]*[A-Za-z~]|\x1bO[A-Za-z]|\x1b|[\s\S]/g;
+const PASTE_START = "\x1b[200~", PASTE_END = "\x1b[201~";
 function onInput(data) {
-  for (const m of data.toString("utf8").matchAll(KEYS)) {
+  // A paste comes between PASTE_START and PASTE_END, often over several chunks, so
+  // ui.pasting outlasts this one. Nothing in it is a key.
+  let pasted = "";
+  const str = data.toString("utf8");
+  for (const m of str.matchAll(KEYS)) {
     const k = m[0];
+    if (k === PASTE_START) { Object.assign(ui, { pasting: true, pasteCR: false }); continue; }
+    if (k === PASTE_END) { ui.pasting = false; pasteText(pasted); pasted = ""; continue; }
+    if (ui.pasting) { if (!k.startsWith("\x1b")) pasted += k; continue; }
     // The profile views take every key and click while they're open.
-    if (ui.settings) { settingsKey(m); continue; }
+    if (ui.settings) {
+      // A terminal without bracketed paste sends a paste as keys, all in one chunk:
+      // once one saves the prompt or the form, or leaves it, a rest of the chunk that
+      // holds text is dropped rather than run as commands in the view that follows.
+      // A rest of only esc, arrows or clicks is no paste's, and still counts.
+      const mode = ui.settings.mode, typing = mode === "edit" || mode === "prompt";
+      settingsKey(m);
+      if (typing && ui.settings?.mode !== mode) {
+        const rest = str.slice(m.index + k.length);
+        if ([...rest.matchAll(KEYS)].some((r) => !r[0].startsWith("\x1b"))) return;
+      }
+      continue;
+    }
     // So does the profile menu: esc and q close it, not the panel.
     if (ui.menu) { menuKey(m); continue; }
     if (m[1] != null) {
@@ -1393,6 +1441,7 @@ function onInput(data) {
     else if (k === "s") openSettings();
     else if (k === "r") refresh();
   }
+  if (ui.pasting) pasteText(pasted);
 }
 
 // ── Width ───────────────────────────────────────────────────────────────────
@@ -1494,14 +1543,14 @@ function onResize() {
 function main() {
   try { if (fs.readFileSync(path.join(STATE, "view"), "utf8").trim() === "issues") ui.view = "issues"; } catch {}
 
-  process.stdout.write(`${ESC}?1049h${ESC}?25l${ESC}?1000h${ESC}?1006h${ESC}2J`);
+  process.stdout.write(`${MODES_ON}${ESC}2J`);
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
   process.stdin.on("data", onInput);
   process.stdout.on("resize", onResize);
   for (const sig of ["SIGTERM", "SIGHUP", "SIGINT"]) process.on(sig, quit);
   // Keep a crash on screen: the pane closes as soon as the process exits.
   process.on("uncaughtException", (e) => {
-    process.stdout.write(`${ESC}?1006l${ESC}?1000l${ESC}?25h${ESC}?1049l`);
+    process.stdout.write(MODES_OFF);
     process.stderr.write(`rex-github: ${e?.stack || e}\n\nPress any key to close.\n`);
     process.stdin.removeAllListeners("data");
     process.stdin.once("data", () => process.exit(1));
@@ -1522,7 +1571,7 @@ function main() {
 if (require.main === module) main();
 else {
   module.exports = {
-    width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput,
+    width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput, MODES_ON, MODES_OFF,
     act, startChoice, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, AGENT_NAMES, flags, locate, splitLeft, ratioFor, fitWidth, COLUMNS,
     state: () => ({ cwd, target }),
     // Tests point the panel at another followed pane, or none.
