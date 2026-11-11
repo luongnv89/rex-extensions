@@ -46,7 +46,7 @@ To update, `git pull` in the folder you cloned. To remove it, run `node github/i
 
 ## Use
 
-Press the key in any pane. The panel opens on the right of the tab, a third of its width. Press the key again in that tab, from any pane, to close it.
+Press the key in any pane. The panel opens on the right of the tab, 36 columns wide: about the width of Rex's sidebar. It takes at most half the tab. When a pane opens or closes in the tab, and Rex evens out the tab's splits, the panel sets its width back; a border you drag keeps its place until then. Press the key again in that tab, from any pane, to close it.
 
 - **Which repo:** the folder of the last pane you focused in the panel's tab. It follows you when you `cd` or move to another pane.
 - **Which site:** read from the repo's `origin` remote (or its first remote). A host name containing `github` uses `gh`, one containing `gitlab` uses `glab`, and any other host tries `gh`, then `glab`.
@@ -81,7 +81,7 @@ Once the profile is known, the panel:
 
 1. takes the action's custom prompt from the profiles file, if it has one;
 2. checks that the skill is installed for that agent: `issue-resolver` for an issue, `issue-pr-review` for a pull request (not with a custom prompt);
-3. finds where the new pane goes: below your agent, the one in the pane the panel follows, else one in another pane of the panel's tab, else below the pane the panel follows. It reads each pane's foreground program from Rex, and knows `claude`, `codex`, `gemini`, `opencode` and `pi`;
+3. finds where the new pane goes: to the right of your agent, side by side, the one in the pane the panel follows, else one in another pane of the panel's tab, else to the right of the pane the panel follows. It reads each pane's foreground program from Rex, and knows `claude`, `codex`, `gemini`, `opencode` and `pi`;
 4. opens a new pane there, in the repo's folder, labelled `resolve-N` or `review-N`, and starts the profile's agent in it with its model and thinking level, and the prompt as the last word of its command line: for Claude `/issue-resolver 12` or `/issue-pr-review 34`; other agents get "Use the issue-resolver skill on issue #12." With a custom prompt, it sends that prompt with the number filled in. Nothing from the title or description goes into the prompt;
 5. checks after 3 seconds that the agent is still running.
 
@@ -179,7 +179,7 @@ Rex runs `init.lua` and the panel as your user, with no sandbox. This one:
 
 - in Rex's server, when you press the key: reads the session's layout, the folder of the focused pane's program, and opens or closes one pane labelled `rex-github` running `node panel.js`;
 - in the panel: runs `git` in the repo's folder to find its remote, then `gh` or `glab` there to read the repo and its open pull requests (or merge requests) and issues;
-- runs `rex api call` every 2 seconds to find the focused pane of its tab and that pane's folder;
+- runs `rex api call` every 2 seconds to find the focused pane of its tab and that pane's folder, and `session.resize_pane` to set its own width when it opens and when the panes of its tab change;
 - when you click Resolve or Review, or press `a`: reads the profiles file, runs `rex` to read the foreground program of the panes in its tab and `rex split` to open a pane that runs the profile's agent with the skill and the number, or your custom prompt. For mcc, it first runs `mcc env` in the repo. It reads the skill folders listed under [Resolve and review with an agent](#resolve-and-review-with-an-agent). With a custom prompt it doesn't run `mcc env` or read the skill folders;
 - runs `open` (macOS) or `xdg-open` (Linux) when you open a row or the repo;
 - when you run `install.js`: runs `rex config check`, a `rex do` script that loads your `init.lua` to list the keys it binds, edits `init.lua` (see [Install](#install)), and runs `rex config reload`;
@@ -199,7 +199,7 @@ It sends nothing anywhere except through `gh` to GitHub, or `glab` to GitLab.
 - **Grey label dots on GitLab:** the label colors come from `glab label list`, which failed. Check `glab auth status`.
 - **A row doesn't open, and the panel shows its URL with a red reason:** `open` or `xdg-open` is missing or failed, most often because the session's server is another machine. See [Remote hosts](#remote-hosts).
 - **"The issue-resolver skill isn't installed" or "The issue-pr-review skill isn't installed":** install the skills from [luongnv.com/idd](https://luongnv.com/idd) for the agent named in the message, then try again.
-- **"No agent in this tab and no pane to start one next to":** the panel opens the new pane below your agent, or below the pane it follows. Click a pane in the panel's tab, then try again.
+- **"No agent in this tab and no pane to start one next to":** the panel opens the new pane to the right of your agent, or of the pane it follows. Click a pane in the panel's tab, then try again.
 - **"didn't start" or "closed right after it started":** the agent exited within 3 seconds. Its pane, if Rex kept it, shows why; otherwise run the command the notice shows yourself.
 - **"mcc isn't on your PATH":** the default profile starts Claude Code through `mcc run`. Install mcc on the machine of the Rex server, or assign another profile to Resolve or Review (`s`).
 - **"The issue-resolver skill isn't found for mcc":** `mcc env -q --shell bash`, run in the repo, didn't name a Claude Code folder. Run it there yourself to see why.

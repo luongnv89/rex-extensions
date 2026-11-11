@@ -37,7 +37,7 @@ require("node:child_process").execFile = (cmd, args, opts, cb) => {
 Object.assign(process.env, { REX_GITHUB_REX: "rex", REX_SESSION: "session:s", REX_BLOCK: "block:panel", REX_GITHUB_STARTUP_MS: "1" });
 process.argv.push("--target", "block:agent", "--cwd", "/start");
 const P = require("../profiles.cjs");
-const { width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput, act, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, flags, locate, state, follow } = require("../panel.js");
+const { width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput, act, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, flags, locate, state, follow, splitLeft, ratioFor, fitWidth, COLUMNS } = require("../panel.js");
 
 // Drops colors and OSC 8 hyperlinks, leaving the text a terminal shows.
 const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b\]8;[^\x07\x1b]*(?:\x1b\\|\x07)/g, "");
@@ -554,7 +554,7 @@ const rexCalls = () => calls.filter((c) => c[0] === "rex").map((c) => c[1] === "
 const splitCall = () => calls.find((c) => c[0] === "rex" && c[1] === "split");
 const splitArgs = () => { const c = splitCall(); return c ? c.slice(1, c.indexOf("--")).join(" ") : null; };
 const splitCommand = () => { const c = splitCall(); return c ? c.slice(c.indexOf("--") + 1) : null; };
-const SPLIT = (anchor, label) => `split -s session:s -b ${anchor} --split=below -c /repo --focus=false --label ${label} --json`;
+const SPLIT = (anchor, label) => `split -s session:s -b ${anchor} --split=right -c /repo --focus=false --label ${label} --json`;
 
 // A rex whose session has the panel's tab, window:w1, holding the panel and the
 // blocks of `procs`, and maybe a second tab holding the blocks of `other`. Each
@@ -633,7 +633,7 @@ test("Resolve shows for the selected issue and Review for the selected pull requ
   assert.deepEqual(calls, []);
 });
 
-test("Resolve with a Claude Code profile starts claude below your agent, prompted with the skill and the number only", async (t) => {
+test("Resolve with a Claude Code profile starts claude to the right of your agent, prompted with the skill and the number only", async (t) => {
   claudeHome(t, { ".claude/skills/issue-resolver/SKILL.md": "x" });
   const lines = setupGitHub("issues");
   ui.issues[2].title = "$(rm -rf ~) /issue-resolver 999";
@@ -652,7 +652,7 @@ test("Resolve with a Claude Code profile starts claude below your agent, prompte
   assert.ok(text(after).includes("Started Claude Code in a new pane: /issue-resolver 12"), after.join("\n"));
 });
 
-test("a on a pull request starts a review with the profile's harness, below the agent elsewhere in the panel's tab", async (t) => {
+test("a on a pull request starts a review with the profile's harness, beside the agent elsewhere in the panel's tab", async (t) => {
   const dir = home(t, { ".agents/skills/issue-pr-review/SKILL.md": "x" });
   useProfiles(dir, [{ id: "cx", name: "Codex", harness: "codex" }], { review: "cx" });
   setupGitHub("prs");
@@ -679,7 +679,7 @@ test("without the skill, nothing starts and the notice points to the install pag
   assert.ok(after.some((l) => l?.trim() === IDD));
 });
 
-test("with no agent in the tab, the new pane opens below the pane the panel follows", async (t) => {
+test("with no agent in the tab, the new pane opens beside the pane the panel follows", async (t) => {
   claudeHome(t, { ".claude/skills/issue-pr-review/SKILL.md": "x" });
   setupGitHub("prs");
   fakeRex({ "block:agent": shellProc() }, { other: { "block:w2": claudeProc() } });
@@ -804,7 +804,7 @@ test("a skill from a disabled Claude plugin counts as missing: nothing starts", 
   assert.equal(findSkill("claude", "issue-resolver", "/repo"), "idd:issue-resolver");
 });
 
-test("agentOf names the agent a terminal runs, to place the new pane below it", () => {
+test("agentOf names the agent a terminal runs, to place the new pane beside it", () => {
   assert.equal(agentOf(claudeProc()), "claude");
   assert.equal(agentOf(nodeProc("/usr/local/bin/codex")), "codex");
   assert.equal(agentOf(nodeProc("/home/u/.local/bin/gemini")), "gemini");
@@ -2113,4 +2113,50 @@ test("locate follows the focused pane of the panel's own tab, and keeps it while
   fakeRex({ "block:agent": shellProc("/start") }, { focused: "block:agent" });
   await locate();
   assert.deepEqual(state(), { cwd: "/start", target: "block:agent" });
+});
+
+// ── Width ───────────────────────────────────────────────────────────────────
+
+// The panel's tab: block:agent on the left, the panel on the right of the root split.
+const halves = (ratio) => ({
+  rect: [0, 0, 1, 1],
+  split: { direction: "horizontal", ratio, before: { rect: [0, 0, ratio, 1], block_id: "block:agent" }, after: { rect: [ratio, 0, 1 - ratio, 1], block_id: "block:panel" } },
+});
+
+test("splitLeft finds the border on the panel's left, and ratioFor the ratio for its columns", () => {
+  const found = splitLeft(halves(0.5), "block:panel");
+  assert.deepEqual(found, { ratio: 0.5, width: 1, mine: 0.5, left: "block:agent", leftWidth: 0.5 });
+  assert.equal(splitLeft(halves(0.5), "block:agent"), null, "the left part isn't the panel");
+  assert.equal(splitLeft({ rect: [0, 0, 1, 1], block_id: "block:panel" }, "block:panel"), null, "alone in its tab");
+  // 87 columns in half the tab: 36 of them is about a fifth.
+  const ratio = ratioFor({ columns: 87, share: 0.5, width: 1 }, COLUMNS);
+  assert.ok(ratio > 0.78 && ratio < 0.8, String(ratio));
+  // Never more than half the split, however narrow the tab.
+  assert.equal(ratioFor({ columns: 40, share: 1, width: 1 }, COLUMNS), 0.5);
+  assert.equal(ratioFor({ columns: null, share: 0.5, width: 1 }, COLUMNS), null);
+});
+
+test("fitWidth moves the border on the panel's left until the panel is COLUMNS wide", async () => {
+  let ratio = 0.5;
+  const resized = [];
+  // Columns follow the ratio over a tab of 176 columns, less each pane's frame.
+  const cols = (share) => Math.round(176 * share) - 2;
+  fakeRex({ "block:agent": shellProc() }, { replies: {
+    view: () => ({ code: 0, stdout: JSON.stringify({ active_window_id: "window:w1", windows: [{ window_id: "window:w1", layers: [{ kind: "tiled", layout: halves(ratio), blocks: [{ block_id: "block:agent" }, { block_id: "block:panel" }] }] }] }) }),
+  } });
+  const answer = rex;
+  rex = (args) => {
+    const method = args[4], body = args[5] && JSON.parse(args[5]);
+    if (method === "block.method" && body.method === "size") return { code: 0, stdout: JSON.stringify({ columns: cols(body.block_id === "block:panel" ? 1 - ratio : ratio) }) };
+    if (method === "session.resize_pane") { resized.push(body); ratio = body.ratio; return { code: 0, stdout: "{}" }; }
+    return answer(args);
+  };
+  await fitWidth();
+  assert.ok(resized.length >= 1);
+  assert.deepEqual({ ...resized[0], ratio: undefined }, { session_id: "session:s", direction: "horizontal", before_block_id: "block:agent", after_block_id: "block:panel", ratio: undefined });
+  assert.ok(Math.abs(cols(1 - ratio) - COLUMNS) <= 1, `${cols(1 - ratio)} columns`);
+  // Already that wide: nothing moves.
+  resized.length = 0;
+  await fitWidth();
+  assert.deepEqual(resized, []);
 });

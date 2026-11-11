@@ -21,6 +21,12 @@ const STATE = path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), ".
 const STALE = 120000;
 const LIMIT = 50;
 const POLL = 2000;
+// The panel's width in columns: about Rex's sidebar (291pt at 8pt a column). It
+// takes at most MAX_SHARE of its split, so the other side stays usable.
+const COLUMNS = 36;
+const MAX_SHARE = 0.5;
+// Columns each pane spends on its frame.
+const CHROME = 2;
 
 // ── Terminal ────────────────────────────────────────────────────────────────
 
@@ -370,7 +376,7 @@ function openUrl(url) {
 
 // ── Agent actions ───────────────────────────────────────────────────────────
 // An issue can be handed to the issue-resolver skill, a pull request to
-// issue-pr-review: a new pane below your agent (or the pane the panel follows)
+// issue-pr-review: a new pane right of your agent (or the pane the panel follows)
 // runs the agent of the action's profile, prompted with the skill and the bare
 // number, nothing else from the row. With no profile assigned, Claude Code
 // starts through `mcc run`.
@@ -540,7 +546,7 @@ const STARTUP_MS = Number(process.env.REX_GITHUB_STARTUP_MS) || 3000;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // The agents the panel recognizes in a pane, by the name you run them with: the
-// new pane goes below yours. Which agent starts is the profile's, not this list's.
+// new pane goes to the right of yours. Which agent starts is the profile's, not this list's.
 const AGENT_NAMES = ["claude", "codex", "gemini", "opencode", "pi"];
 
 // Which agent a terminal runs, from its foreground process: the name it was run
@@ -590,8 +596,9 @@ async function launch(action, root, profile, template = null) {
   if (view.error) return say("error", `Can't read this tab: ${view.error}`);
   const me = windowOf(view.result, SELF);
   if (!me) return say("error", "Can't find the panel's tab");
-  // The new pane goes below your agent: the one in the pane the panel follows, else
-  // one in the panel's tab; with no agent there, below the pane the panel follows.
+  // The new pane goes to the right of your agent, side by side: the one in the pane
+  // the panel follows, else one in the panel's tab; with no agent there, to the
+  // right of the pane the panel follows.
   const others = blocksOf(me).map((b) => b.block_id).filter((id) => id !== SELF);
   let agent = null;
   for (const id of [...others.filter((id) => id === target), ...others.filter((id) => id !== target)]) {
@@ -618,7 +625,7 @@ async function launch(action, root, profile, template = null) {
   const note = plan.warnings.length ? ` (${plan.warnings.join("; ")})` : "";
 
   say("info", `Starting ${shown} to ${action.key} ${what}…`);
-  const split = await run(REX, ["split", "-s", SESSION, "-b", anchor, "--split=below", "-c", root, "--focus=false",
+  const split = await run(REX, ["split", "-s", SESSION, "-b", anchor, "--split=right", "-c", root, "--focus=false",
     "--label", `${action.key}-${action.number}`, "--json", "--", ...agentArgv(plan, text, mcc)], { timeout: 10000 }).catch((e) =>
     ({ code: -1, stdout: "", stderr: e.code === "ENOENT" ? "rex isn't installed" : e.message }));
   let pane = null;
@@ -1388,6 +1395,100 @@ function onInput(data) {
   }
 }
 
+// ── Width ───────────────────────────────────────────────────────────────────
+// Rex's app can even out a tab's splits when a pane is added or closed, which
+// leaves the panel half the tab wide: it fits itself to COLUMNS when it opens and
+// whenever the panes of its tab change. A border you drag keeps its place.
+
+// The first leaf in a layout node, depth first.
+const firstLeaf = (node) => (node?.block_id ? node : node?.split ? firstLeaf(node.split.before) ?? firstLeaf(node.split.after) : null);
+
+// The left/right split whose right part is `block` alone, as { ratio, width, mine,
+// left, leftWidth }: the split's and the block's width as a share of the tab, and a
+// block left of the border with its width. Rex moves that border given any block on
+// each side of it.
+function splitLeft(node, block) {
+  const s = node?.split;
+  if (!s) return null;
+  if (s.direction === "horizontal" && s.after?.block_id === block) {
+    const left = firstLeaf(s.before);
+    return left ? { ratio: s.ratio, width: node.rect[2], mine: s.after.rect[2], left: left.block_id, leftWidth: left.rect[2] } : null;
+  }
+  return splitLeft(s.before, block) ?? splitLeft(s.after, block);
+}
+
+// The split ratio that gives the panel `want` columns in a split `width` of the tab
+// wide. `columns` and `share` measure one pane: its columns and its width as a share
+// of the tab. A wide pane measures best.
+function ratioFor({ columns, share, width: total }, want) {
+  if (!columns || !share || !total) return null;
+  const perColumn = share / (columns + CHROME);
+  const part = Math.min(MAX_SHARE, ((want + CHROME) * perColumn) / total);
+  return Math.max(1 - MAX_SHARE, Math.min(0.99, 1 - part));
+}
+
+// A terminal block's columns as Rex's client sized it, or null.
+async function columnsOf(block) {
+  const size = (await rexApi("block.method", { block_id: block, method: "size", args: {} })).result;
+  return size?.columns > 0 ? size.columns : null;
+}
+
+// A block's columns once they stop changing: the same three reads 100ms apart, or
+// the last read after 2s. Rex's client sizes a new or moved pane after the layout.
+async function settledColumns(block) {
+  let last = await columnsOf(block), same = 1;
+  for (let t = 0; t < 20 && same < 3; t++) {
+    await sleep(100);
+    const now = await columnsOf(block);
+    same = now === last ? same + 1 : 1;
+    last = now;
+  }
+  return last;
+}
+
+// Which panes the panel's tab holds: when that changes, the app evens out its splits.
+const panesOf = (window) => blocksOf(window).map((b) => b.block_id).sort().join(" ");
+let panes = null, fitting = false;
+
+// Fit the panel to COLUMNS by moving the border on its left. A panel that isn't the
+// right part of a left/right split is left as it is.
+async function fitWidth() {
+  if (!SELF || !SESSION || fitting) return;
+  fitting = true;
+  try {
+    // Aim off by what the last move missed: the frame is a guess, and columns round.
+    let aim = 0;
+    for (let i = 0; i < 3; i++) {
+      const window = windowOf((await rexApi("session.view")).result, SELF);
+      if (window) panes = panesOf(window);
+      const layer = window?.layers?.find((l) => l.kind === "tiled" && l.layout);
+      const found = layer && splitLeft(layer.layout, SELF);
+      if (!found) return;
+      const [columns, leftColumns] = await Promise.all([settledColumns(SELF), settledColumns(found.left)]);
+      if (!columns || columns === COLUMNS) return;
+      const measure = leftColumns > columns ? { columns: leftColumns, share: found.leftWidth } : { columns, share: found.mine };
+      const ratio = ratioFor({ ...measure, width: found.width }, COLUMNS + aim);
+      if (ratio == null || Math.abs(ratio - found.ratio) < 0.002) return;
+      if ((await rexApi("session.resize_pane", { direction: "horizontal", before_block_id: found.left, after_block_id: SELF, ratio })).error) return;
+      const now = await settledColumns(SELF);
+      if (!now || now === columns || now === COLUMNS) return;
+      aim = Math.max(-3, Math.min(3, aim + COLUMNS - now));
+    }
+  } finally { fitting = false; }
+}
+
+// A resize redraws; once it settles, a change in the tab's panes fits the width again.
+let settle = null;
+function onResize() {
+  draw();
+  clearTimeout(settle);
+  settle = setTimeout(async () => {
+    if (fitting || !SELF || !SESSION) return;
+    const window = windowOf((await rexApi("session.view")).result, SELF);
+    if (window && panes != null && panesOf(window) !== panes) await fitWidth();
+  }, 500);
+}
+
 // ── Main ────────────────────────────────────────────────────────────────────
 
 function main() {
@@ -1396,7 +1497,7 @@ function main() {
   process.stdout.write(`${ESC}?1049h${ESC}?25l${ESC}?1000h${ESC}?1006h${ESC}2J`);
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
   process.stdin.on("data", onInput);
-  process.stdout.on("resize", draw);
+  process.stdout.on("resize", onResize);
   for (const sig of ["SIGTERM", "SIGHUP", "SIGINT"]) process.on(sig, quit);
   // Keep a crash on screen: the pane closes as soon as the process exits.
   process.on("uncaughtException", (e) => {
@@ -1415,13 +1516,14 @@ function main() {
 
   draw();
   locate().then(refresh);
+  fitWidth();
 }
 
 if (require.main === module) main();
 else {
   module.exports = {
     width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput,
-    act, startChoice, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, AGENT_NAMES, flags, locate,
+    act, startChoice, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, AGENT_NAMES, flags, locate, splitLeft, ratioFor, fitWidth, COLUMNS,
     state: () => ({ cwd, target }),
     // Tests point the panel at another followed pane, or none.
     follow: (pane) => { target = pane; },

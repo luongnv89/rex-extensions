@@ -15,7 +15,10 @@ Brings the panel up to date with [herdr-github](https://github.com/luongnv89/her
 
 ### Changed
 
-- **Behavior change:** with no profile assigned, Resolve and Review start Claude Code through `mcc run`, instead of the same kind of agent as the one in your tab. Assign a profile to keep using another agent. The panel no longer needs an agent in the tab: with none, the new pane opens below the pane the panel follows. `pi` now counts as an agent when the panel looks for yours; `gemini` still does, but isn't a harness a profile can start.
+- Resolve and Review open the agent's pane to the right of your agent, side by side (a vertical split), instead of below it.
+- The panel is narrower: 36 columns, about the width of Rex's sidebar, instead of a third of the tab. It sets its width again when a pane opens or closes in its tab, since Rex then evens out the tab's splits.
+
+- **Behavior change:** with no profile assigned, Resolve and Review start Claude Code through `mcc run`, instead of the same kind of agent as the one in your tab. Assign a profile to keep using another agent. The panel no longer needs an agent in the tab: with none, the new pane opens beside the pane the panel follows. `pi` now counts as an agent when the panel looks for yours; `gemini` still does, but isn't a harness a profile can start.
 
 ## 0.1.0 (2026-11-05)
 
