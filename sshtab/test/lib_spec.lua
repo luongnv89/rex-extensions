@@ -202,6 +202,18 @@ eq(lib.keymap("bash", { EDITOR = "vim" }), "emacs", "keymap bash")
 eq(lib.keymap("fish"), "emacs", "keymap fish")
 eq(lib.keymap("ksh"), "unknown", "keymap ksh")
 
+-- restore_input: typed only when the line can be cleared first
+eq(lib.restore_input("emacs", "cd /w && claude --resume x"), "\5\21cd /w && claude --resume x\r", "restore_input emacs: Ctrl-E Ctrl-U, the line, Enter")
+eq(lib.restore_input("vi", "cd /w && claude --resume x"), nil, "restore_input vi: not typed")
+eq(select(2, lib.restore_input("vi", "cd /w && claude --resume x")), "its keymap is vi: the line can't be cleared first", "restore_input vi: why")
+eq(lib.restore_input("unknown", "cd /w && claude --resume x"), nil, "restore_input unknown: not typed")
+eq(select(2, lib.restore_input("unknown", "cd /w && claude --resume x")), "its keymap is unknown: the line can't be cleared first", "restore_input unknown: why")
+eq(lib.restore_input(lib.keymap("zsh", { EDITOR = "nvim" }), "cd /w && pi --session s"), nil, "restore_input: zsh with EDITOR=nvim isn't typed into")
+eq(lib.restore_input(lib.keymap("ksh"), "cd /w && pi --session s"), nil, "restore_input: ksh isn't typed into")
+eq(lib.restore_input(lib.keymap("mksh"), "cd /w && pi --session s"), nil, "restore_input: mksh isn't typed into")
+eq(lib.restore_input(lib.keymap("bash", { EDITOR = "vim" }), "x"), "\5\21x\r", "restore_input: bash is typed into")
+eq(lib.restore_input("emacs", nil), nil, "restore_input: no line")
+
 -- T3: resume_line quotes every value and takes the program from AGENTS
 local function entry(t)
   local e = { agent = "claude", session_id = A, cwd = "/w/p", instance_id = "i-1", last_seen_at = 1000, missing_sweeps = 0 }

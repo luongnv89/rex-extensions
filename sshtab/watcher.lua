@@ -453,11 +453,12 @@ local function restore_one(block_id, entry, deadline)
       return again()
     end
     if cursor ~= last_line then last_line = cursor return again() end
-    -- Ctrl-E Ctrl-U clears anything left on the line in an emacs keymap.
+    -- Only typed when Ctrl-E Ctrl-U can clear what is left on the line first:
+    -- leftover input must never run with the resume line.
     local keymap = lib.keymap(fg.name, env_of(fg.pid, { EDITOR = true, VISUAL = true }))
-    local clear = keymap == "emacs" and "\5\21" or ""
-    if clear == "" then log("restore: " .. block_id .. " has a " .. keymap .. " keymap: the line isn't cleared first") end
-    local ok = block_call(session_id, block_id, "write", { data = clear .. line .. "\r" }) ~= nil
+    local data, why = lib.restore_input(keymap, line)
+    if not data then return drop(block_id, why) end
+    local ok = block_call(session_id, block_id, "write", { data = data }) ~= nil
     if lib.mark_restored(state, block_id, instance, ok) then
       save_state()
       return log("restore: typed " .. line .. " into " .. block_id)

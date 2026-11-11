@@ -185,10 +185,12 @@ M.RESTORE_WINDOW = 120
 -- How often the watcher sweeps every pane, in seconds.
 M.SWEEP = 15
 
--- Shells a restore types into. Their line editors take the line the same way,
--- and every one reads a lib.quote word the same as long as it holds no
+-- Shells a restore may type into. Their line editors take the line the same
+-- way, and every one reads a lib.quote word the same as long as it holds no
 -- backslash, which resume_line never types. csh, tcsh, nu, xonsh and elvish
--- read quotes and `&&` differently, so they are skipped.
+-- read quotes and `&&` differently, so they are skipped. sh, dash, ksh and
+-- mksh pass this check but their keymap is unknown, so restore_input refuses
+-- them: in practice only zsh, bash and fish in an emacs keymap are typed into.
 M.RESTORE_SHELLS = { zsh = true, bash = true, sh = true, dash = true, ksh = true, mksh = true, fish = true }
 
 -- The agents that are resumed. Each one names the program the restored line
@@ -414,6 +416,17 @@ function M.keymap(shell, env)
   end
   if shell == "bash" or shell == "fish" then return "emacs" end
   return "unknown"
+end
+
+-- What a restore writes into a shell for a resume line, or nil and why.
+-- Ctrl-E Ctrl-U clears anything left on the line in an emacs keymap. With any
+-- other keymap ("vi", or "unknown" for sh, dash, ksh and mksh) the line can't
+-- be cleared first, and leftover input would run with the resume line, so
+-- nothing is typed. The reason names the keymap, never the line.
+function M.restore_input(keymap, line)
+  if type(line) ~= "string" then return nil, "it has no resume line" end
+  if keymap ~= "emacs" then return nil, "its keymap is " .. tostring(keymap) .. ": the line can't be cleared first" end
+  return "\5\21" .. line .. "\r"
 end
 
 -- Whether a process name is a shell a restore types into.
