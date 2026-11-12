@@ -2477,7 +2477,8 @@ test("a Merge press only asks: the button reads Confirm merge, the notice names 
     assert.deepEqual(mergeCalls(forge === "github" ? "gh" : "glab"), [], forge);
     assert.equal(ui.acting, null);
     assert.equal(ui.confirm?.number, 11);
-    assert.equal(ui.sel.prs, ui.prs.findIndex((p) => p.number === 11));
+    // The question leaves the selection where it was, so nothing above the button moves.
+    assert.equal(ui.sel.prs, 0);
     assert.ok(find(after, `Confirm merge ${ref}`)[1] > LIST.from, after.join("\n"));
     // One button asks; the notice under the list says so.
     assert.equal(after.filter((l) => l?.includes("Confirm merge") && !l.includes("Press")).length, 1, after.join("\n"));
@@ -2487,6 +2488,48 @@ test("a Merge press only asks: the button reads Confirm merge, the notice names 
     const raw = rawScreen(draw).find((l) => l?.includes(`Confirm merge ${ref}`));
     assert.match(raw, /\x1b\[31m Confirm merge/, raw);
   }
+});
+
+test("Confirm merge is drawn where Merge was pressed, so a second click on the same cell merges; the notice never hides it (#13)", async (t) => {
+  // #11 under the selected row, whose URL line a new selection would take away; and
+  // above it, with the selected row out of view, where following it would scroll.
+  for (const [cols, sel] of [[36, 0], [60, 0], [60, 4]]) {
+    const { lines } = await loadForge(t);
+    ui.sel.prs = sel;
+    const [x, y] = find(screenAt(cols, 24, draw), "Merge #11");
+    assert.ok(y > LIST.from, lines.join("\n"));
+    await quietly(async () => {
+      process.stdout.columns = cols;
+      onInput(Buffer.from(pressAt(x, y)));
+      assert.equal(ui.confirm?.number, 11);
+      // The asking button covers the cell that was pressed.
+      const asking = screenAt(cols, 24, draw);
+      assert.equal(find(asking, "Confirm merge #11")[1], y, asking.join("\n"));
+      assert.ok(ui.buttons.some((b) => b.merge === 11 && b.row === y && x >= b.from && x < b.to), asking.join("\n"));
+      onInput(Buffer.from(pressAt(x, y)));
+      await ui.acting;
+      await idle();
+    });
+    assert.deepEqual(mergeCalls(), [["pr", "merge", "11", "--squash", "--match-head-commit", headOf(11)]], `${cols} ${sel}`);
+    assert.deepEqual(opened, [], `${cols} ${sel}`);
+  }
+  // The last row in view: the notice would cover its button, so the list scrolls
+  // just enough to keep it in view, and a press on it merges.
+  await loadForge(t);
+  ui.top.prs = 1;
+  let lines = screen(draw);
+  const [, y] = find(lines, "Merge #13");
+  assert.equal(y, LIST.to, lines.join("\n"));
+  await quietly(async () => {
+    pressButton(lines, "Merge #13");
+    lines = screen(draw);
+    const [, cy] = find(lines, "Confirm merge #13");
+    assert.ok(cy > LIST.from && cy < lines.findIndex((l) => l?.startsWith(" Press Confirm merge")), lines.join("\n"));
+    pressButton(lines, "Confirm merge #13");
+    await ui.acting;
+    await idle();
+  });
+  assert.deepEqual(mergeCalls(), [["pr", "merge", "13", "--squash", "--match-head-commit", headOf(13)]]);
 });
 
 test("the second press merges that pull request, and only that one, by the method the repo allows (#13)", async (t) => {

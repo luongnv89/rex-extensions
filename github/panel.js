@@ -501,9 +501,9 @@ function pressMerge(number) {
   const index = ui.prs.findIndex((p) => p.number === number);
   const merge = index >= 0 ? mergeFor(index) : null;
   if (!merge) return null;
-  ui.sel.prs = index;
   if (ui.confirm?.number === number) {
     ui.confirm = null;
+    ui.sel.prs = index;
     return mergeNow(number);
   }
   const method = ui.forge.mergeMethod(ui.repo);
@@ -512,9 +512,15 @@ function pressMerge(number) {
     say("error", noMerge(merge.ref));
     return null;
   }
+  // The question leaves the selection and the scroll as they were, so Confirm merge
+  // is drawn where Merge was pressed; only when the notice would cover it does the
+  // list scroll, just enough to keep it in view.
+  const shown = ui.buttons.some((b) => b.merge === number);
   ui.confirm = { number, notice: null };
-  say("info", `Press Confirm merge ${merge.ref} to merge it (${method}). Any other key or click cancels.`);
+  ui.notice = { tone: "info", text: clean(`Press Confirm merge ${merge.ref} to merge it (${method}). Any other key or click cancels.`), url: null };
   ui.confirm.notice = ui.notice;
+  draw();
+  for (let i = 0; shown && i < 12 && !ui.buttons.some((b) => b.merge === number); i++) { ui.top.prs++; draw(); }
   return null;
 }
 
