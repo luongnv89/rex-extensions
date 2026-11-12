@@ -255,8 +255,8 @@ const ui = {
   // The profile menu of a Resolve or Review press, while it's open: { view, number,
   // key, entries, sel, top, anchor }, anchor being "row": under that row's button.
   menu: null,
-  // A Merge press that only asked (#13): { number, notice }, the pull request whose
-  // button now reads Confirm merge, and the notice that says so; null otherwise.
+  // A Merge press that only asked (#13): { number, notice, at }, the pull request whose
+  // button now reads Confirm merge, the notice that says so, and when it asked; null otherwise.
   confirm: null,
   // Between a paste's start and end marks, which can come in different chunks;
   // pasteCR when the last part ended in \r, so a \n starting the next is its \r\n.
@@ -492,6 +492,10 @@ function mergeFor(index) {
   return { number: item.number, ref: `${forge.mark}${item.number}`, armed: ui.confirm?.number === item.number };
 }
 
+// A second press sooner than this after the first is a double click, not a
+// confirmation: it does nothing, and the question stays (#13).
+const MERGE_GAP = 400;
+
 const noMerge = (ref) => `Can't merge ${ref}: the repo allows no squash, merge commit or rebase, or gh didn't say which.`;
 
 // A Merge button pressed. The pull request is found again by its number, so only
@@ -502,6 +506,7 @@ function pressMerge(number) {
   const merge = index >= 0 ? mergeFor(index) : null;
   if (!merge) return null;
   if (ui.confirm?.number === number) {
+    if (Date.now() - ui.confirm.at < MERGE_GAP) return null;
     ui.confirm = null;
     ui.sel.prs = index;
     return mergeNow(number);
@@ -516,7 +521,7 @@ function pressMerge(number) {
   // is drawn where Merge was pressed; only when the notice would cover it does the
   // list scroll, just enough to keep it in view.
   const shown = ui.buttons.some((b) => b.merge === number);
-  ui.confirm = { number, notice: null };
+  ui.confirm = { number, notice: null, at: Date.now() };
   ui.notice = { tone: "info", text: clean(`Press Confirm merge ${merge.ref} to merge it (${method}). Any other key or click cancels.`), url: null };
   ui.confirm.notice = ui.notice;
   draw();
@@ -1536,14 +1541,16 @@ function move(by) {
 }
 
 function click(x, y) {
+  // What was clicked is read off the frame the click was on: taking a question back
+  // draws a frame without its notice, whose rows can be other items (#13).
   const button = ui.buttons.find((b) => b.row === y && x >= b.from && x < b.to);
+  const i = ui.rows[y];
   // A click anywhere but on the Merge button that asked takes the question back (#13).
   if (ui.confirm && button?.merge !== ui.confirm.number) cancelMerge();
   if (button) return button.action();
   // Anywhere but on one of its profiles, a click closes the menu, and nothing else.
   if (ui.menu) return closeMenu();
   if (ui.settings) return;
-  const i = ui.rows[y];
   if (i == null || i < 0) return;
   ui.sel[ui.view] = i;
   draw();
@@ -1615,6 +1622,8 @@ function onInput(data) {
       else if (button === 0 && m[4] === "M") click(x, y);
       continue;
     }
+    // While a Merge press asks, esc and q take it back rather than close the panel (#13).
+    if (ui.confirm && (k === "q" || (k === "\x1b" && data.length === 1))) { cancelMerge(); continue; }
     if (k === "q" || k === "\x03" || (k === "\x1b" && data.length === 1)) return quit();
     // Any key clears a notice, except the progress of a launch or merge still under way.
     if (ui.notice && !(ui.acting && ui.notice.tone === "info")) { ui.notice = null; draw(); }
@@ -1769,7 +1778,7 @@ else {
     act, startChoice, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, AGENT_NAMES, flags, locate, splitLeft, ratioFor, fitWidth, COLUMNS,
     // A pull request's Merge button (#13): its press, the rules it builds the CLI's
     // arguments by, and the refresh a merge starts.
-    pressMerge, mergeStrategy, mergeArgs, mergeGuard, refresh,
+    pressMerge, MERGE_GAP, mergeStrategy, mergeArgs, mergeGuard, refresh,
     state: () => ({ cwd, target }),
     // Tests point the panel at another followed pane, or none.
     follow: (pane) => { target = pane; },

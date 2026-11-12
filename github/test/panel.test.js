@@ -46,7 +46,7 @@ require("node:child_process").execFile = (cmd, args, opts, cb) => {
 Object.assign(process.env, { REX_GITHUB_REX: "rex", REX_SESSION: "session:s", REX_BLOCK: "block:panel", REX_GITHUB_STARTUP_MS: "1" });
 process.argv.push("--target", "block:agent", "--cwd", "/start");
 const P = require("../profiles.cjs");
-const { width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput, MODES_ON, MODES_OFF, act, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, flags, locate, state, follow, splitLeft, ratioFor, fitWidth, COLUMNS, pressMerge, mergeStrategy, mergeArgs, mergeGuard, refresh } = require("../panel.js");
+const { width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput, MODES_ON, MODES_OFF, act, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, flags, locate, state, follow, splitLeft, ratioFor, fitWidth, COLUMNS, pressMerge, MERGE_GAP, mergeStrategy, mergeArgs, mergeGuard, refresh } = require("../panel.js");
 
 // Drops colors and OSC 8 hyperlinks, leaving the text a terminal shows.
 const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b\]8;[^\x07\x1b]*(?:\x1b\\|\x07)/g, "");
@@ -2415,10 +2415,15 @@ async function loadForge(t, options = {}) {
   return { state, lines: screen(draw) };
 }
 
-// Presses a pull request's Merge button, then the Confirm merge it turned into, and
-// waits for the merge.
+// A Merge press that asked, as if it asked MERGE_GAP ago: a second press now is a
+// confirmation, not the second half of a double click.
+const later = () => { if (ui.confirm) ui.confirm.at -= MERGE_GAP; };
+
+// Presses a pull request's Merge button, then, a moment later, the Confirm merge it
+// turned into, and waits for the merge.
 async function mergeVia(lines, ref) {
   pressButton(lines, `Merge ${ref}`);
+  later();
   pressButton(screen(draw), `Confirm merge ${ref}`);
   await ui.acting;
 }
@@ -2506,6 +2511,7 @@ test("Confirm merge is drawn where Merge was pressed, so a second click on the s
       const asking = screenAt(cols, 24, draw);
       assert.equal(find(asking, "Confirm merge #11")[1], y, asking.join("\n"));
       assert.ok(ui.buttons.some((b) => b.merge === 11 && b.row === y && x >= b.from && x < b.to), asking.join("\n"));
+      later();
       onInput(Buffer.from(pressAt(x, y)));
       await ui.acting;
       await idle();
@@ -2525,6 +2531,7 @@ test("Confirm merge is drawn where Merge was pressed, so a second click on the s
     lines = screen(draw);
     const [, cy] = find(lines, "Confirm merge #13");
     assert.ok(cy > LIST.from && cy < lines.findIndex((l) => l?.startsWith(" Press Confirm merge")), lines.join("\n"));
+    later();
     pressButton(lines, "Confirm merge #13");
     await ui.acting;
     await idle();
@@ -2682,6 +2689,76 @@ test("any other key or click takes back a Merge press that asked; a second press
   assert.deepEqual(mergeCalls(), []);
 });
 
+test("a click on a row while Merge asks opens the row that was clicked, though the list moves when the question goes (#13)", async (t) => {
+  await loadForge(t, { open: [10, 11, 12, 13, 14, 15] });
+  // Scrolled to the bottom: without the notice the list fits better, and scrolls back.
+  ui.top.prs = 99;
+  let lines = screen(draw);
+  await quietly(async () => {
+    pressButton(lines, "Merge #15");
+    assert.equal(ui.confirm?.number, 15);
+    lines = screen(draw);
+    const [, y] = find(lines, "Title 13");
+    assert.ok(y > LIST.from, lines.join("\n"));
+    onInput(Buffer.from(pressAt(10, y)));
+  });
+  assert.equal(ui.confirm, null);
+  assert.equal(ui.prs[ui.sel.prs].number, 13);
+  assert.deepEqual(opened, ["https://x/pull/13"]);
+  assert.deepEqual(mergeCalls(), []);
+});
+
+test("while Merge asks, esc and q take the question back and the panel stays; ctrl-c still quits (#13)", async (t) => {
+  for (const [what, key] of [["esc", "\x1b"], ["q", "q"]]) {
+    const { lines } = await loadForge(t);
+    await quietly(async () => {
+      pressButton(lines, "Merge #12");
+      assert.equal(ui.confirm?.number, 12, what);
+      const exit = noExit(() => screen(() => onInput(Buffer.from(key))));
+      assert.equal(exit, null, `${what} closed the panel`);
+    });
+    assert.equal(ui.confirm, null, what);
+    assert.ok(!ui.notice?.text?.startsWith("Press Confirm merge"), what);
+    assert.equal(find(screen(draw), "Confirm merge #12")[1], -1, what);
+    assert.deepEqual(mergeCalls(), [], what);
+    assert.deepEqual(opened, [], what);
+  }
+  // With nothing asked, they close the panel as before; so does ctrl-c while it asks.
+  await loadForge(t);
+  assert.equal(noExit(() => screen(() => onInput(Buffer.from("q")))), 0);
+  const { lines } = await loadForge(t);
+  await quietly(async () => { pressButton(lines, "Merge #12"); });
+  assert.equal(noExit(() => screen(() => onInput(Buffer.from("\x03")))), 0);
+  ui.confirm = null;
+});
+
+test("a double click on Merge only asks: a second press within MERGE_GAP keeps the question, and a later one merges (#13)", async (t) => {
+  const { lines } = await loadForge(t);
+  const [x, y] = find(lines, "Merge #12");
+  await quietly(async () => {
+    // Both clicks of a double click, in one chunk as a terminal may send them.
+    onInput(Buffer.from(pressAt(x, y) + pressAt(x, y)));
+    await tick();
+    assert.equal(ui.confirm?.number, 12);
+    assert.equal(ui.acting, null);
+    // And a second click that came in a chunk of its own, as quickly.
+    const asking = screen(draw);
+    pressButton(asking, "Confirm merge #12");
+    await tick();
+    assert.equal(ui.confirm?.number, 12);
+    assert.equal(ui.acting, null);
+    assert.ok(ui.notice?.text?.startsWith("Press Confirm merge #12"));
+    assert.deepEqual(mergeCalls(), []);
+    // A moment later, the press on Confirm merge merges.
+    later();
+    pressButton(screen(draw), "Confirm merge #12");
+    await ui.acting;
+    await idle();
+  });
+  assert.deepEqual(mergeCalls(), [["pr", "merge", "12", "--squash", "--match-head-commit", headOf(12)]]);
+  assert.equal(ui.notice?.text, "Merged #12");
+});
+
 test("a GitHub repo that allows no merge method, or doesn't say, keeps the Merge button, says why and runs no merge (#13)", async (t) => {
   for (const merges of [{ squash: false, merge: false, rebase: false }, { squash: undefined, merge: undefined, rebase: undefined }]) {
     const { lines } = await loadForge(t, { merges });
@@ -2708,6 +2785,7 @@ test("while a merge runs its progress stays up, and a, Review and another Merge 
   await quietly(async () => {
     hold = (name, args) => name === "gh" && args[1] === "merge";
     pressButton(lines, "Merge #12");
+    later();
     pressButton(screen(draw), "Confirm merge #12");
     assert.ok(ui.acting);
     assert.equal(ui.notice?.text, "Merging #12…");
