@@ -21,6 +21,19 @@ local WIDTH, MOST, LEAST = 0.33, 0.5, 0.15
 local here = debug.getinfo(1, "S").source:gsub("^@", ""):match("^(.*)/[^/]*$") or "."
 local PANEL = here .. "/panel.js"
 
+-- The start of the command that runs panel.js. Rex runs it on the machine of the
+-- server holding the session, which can be a remote host where PANEL, a path of
+-- this machine, doesn't exist (#12). So a PANEL under $HOME is found under that
+-- machine's $HOME: the extension must sit at the same $HOME-relative path there.
+-- The relative path goes to sh as an argument, never into its script.
+local function panel_command()
+  local home = (os.getenv("HOME") or ""):gsub("/+$", "")
+  if home ~= "" and PANEL:sub(1, #home + 1) == home .. "/" then
+    return { "sh", "-c", 'p=$1; shift; exec node "$HOME$p" "$@"', LABEL, PANEL:sub(#home + 1) }
+  end
+  return { "node", PANEL }
+end
+
 -- The window holding `block_id`, in tiled and floating layers alike, and its blocks.
 local function find_window(view, block_id)
   for _, window in ipairs(view.windows or {}) do
@@ -95,7 +108,9 @@ local function toggle(ctx)
   end
   if closed > 0 then return { closed = closed } end
 
-  local command = { "node", PANEL, "--target", ctx.block_id }
+  local command = panel_command()
+  table.insert(command, "--target")
+  table.insert(command, ctx.block_id)
   local cwd = cwd_of(ctx.session_id, ctx.block_id)
   if cwd then
     table.insert(command, "--cwd")
@@ -109,7 +124,7 @@ local function toggle(ctx)
     side = "after",
     ratio = ratio,
     focus = true,
-    layout = { block = { flavor = TERMINAL, label = LABEL, options = { command = command, cwd = here } } },
+    layout = { block = { flavor = TERMINAL, label = LABEL, options = { command = command, cwd = cwd or "" } } },
   })
   -- Rex's app may even out the tab's splits right after: panel.js then fits its
   -- own width.
