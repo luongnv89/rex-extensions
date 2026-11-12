@@ -5,7 +5,9 @@
 // panes above get the room back. A line under the title shows this machine's CPU,
 // memory and network, sampled every 5 seconds.
 //
-// rex-mcc.lua starts it as `node panel.js`. Rex sets REX_SESSION and REX_BLOCK.
+// rex-mcc.lua starts it as `node panel.js`. When panel.js is under $HOME, the path
+// is resolved under the $HOME of the machine the pane runs on, through `sh -c`.
+// Rex sets REX_SESSION and REX_BLOCK.
 "use strict";
 const { execFile } = require("node:child_process");
 const fs = require("node:fs");
