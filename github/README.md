@@ -15,7 +15,7 @@ On GitLab, merge requests show as `!123` and have no checks mark: the list doesn
 
 Click a pull request or issue, or select it and press enter, to open it in your browser.
 
-On GitHub, each issue has a **Resolve** button and each pull request a **Review** button, which start an agent on it. Which agent, model and thinking level is up to you: see [Agent profiles](#agent-profiles). So is the prompt it gets: see [Custom prompts](#custom-prompts).
+On GitHub, each issue has a **Resolve** button and each pull request a **Review** button, which start an agent on it. Which agent, model and thinking level is up to you: see [Agent profiles](#agent-profiles). So is the prompt it gets: see [Custom prompts](#custom-prompts). Each pull request, and each merge request on GitLab, also has a **Merge** button, which merges it once you press it a second time: see [Merge a pull request](#merge-a-pull-request).
 
 It is the Rex twin of [herdr-github](https://github.com/luongnv89/herdr-github), the same panel for herdr.
 
@@ -55,23 +55,23 @@ Press the key in any pane. The panel opens on the right of the tab, 36 columns w
   - enter opens the selected row in your browser;
   - tab or `←`/`→` switches between pull requests and issues, `1` and `2` choose one;
   - `r` refreshes, `o` opens the repo on GitHub or GitLab;
-  - `a` resolves the selected issue, or reviews the selected pull request, with an agent (see [Resolve and review with an agent](#resolve-and-review-with-an-agent)). With more than one profile it opens a menu of them: `↑`/`↓` or `j`/`k` choose, enter starts the one chosen, and esc or `q` closes the menu without starting anything;
+  - `a` resolves the selected issue, or reviews the selected pull request, with an agent, as the selected row's button does (see [Resolve and review with an agent](#resolve-and-review-with-an-agent)). With more than one profile it opens a menu of them: `↑`/`↓` or `j`/`k` choose, enter starts the one chosen, and esc or `q` closes the menu without starting anything;
   - `s` opens the agent profiles (see [Agent profiles](#agent-profiles));
   - `q` or esc closes the panel.
-- **Mouse:** click a row to open it, click the switch to change lists, click a row's `Resolve #N` or `Review #N` button, the same button in the header (for the selected row), `⚙`, `↻` or `↗` in the header, a profile in the menu those buttons open, and scroll with the wheel.
+- **Mouse:** click a row to open it, click the switch to change lists, click a row's `Resolve #N`, `Review #N` or `Merge #N` button, `⚙`, `↻` or `↗` in the header, a profile in the menu the Resolve and Review buttons open, and scroll with the wheel.
 - **When a row can't be opened:** the panel shows why in red, a hint to Cmd- or Ctrl-click the URL, and the whole URL above the key hints. The URL is a terminal hyperlink too. Any key, or the next open, clears it.
 - **Fetching:** when the repo changes, every 2 minutes while the panel's tab is the one its session shows, and on `r`.
 - **Lists:** the 50 most recently opened of each on GitHub, and the 50 most recently updated on GitLab. The panel remembers which list you chose.
 
 ## Resolve and review with an agent
 
-On GitHub, every issue row ends with a **Resolve #N** button and every pull request row with a **Review #N** button. The header shows the same button for the selected row, and `a` presses it. Resolve hands the issue to the `issue-resolver` skill, Review hands the pull request to `issue-pr-review`, unless you wrote your own prompt for the action (see [Custom prompts](#custom-prompts)). The agent that starts is the one in the profile you choose; with no profiles of your own, it's Claude Code started through `mcc run` (see [Agent profiles](#agent-profiles)).
+On GitHub, every issue row ends with a **Resolve #N** button and every pull request row with a **Review #N** button, next to its **Merge #N** button (see [Merge a pull request](#merge-a-pull-request)). `a` presses the selected row's Resolve or Review button; the header has none. Resolve hands the issue to the `issue-resolver` skill, Review hands the pull request to `issue-pr-review`, unless you wrote your own prompt for the action (see [Custom prompts](#custom-prompts)). The agent that starts is the one in the profile you choose; with no profiles of your own, it's Claude Code started through `mcc run` (see [Agent profiles](#agent-profiles)).
 
 ### Choose the profile
 
 With no profiles of your own, only the built-in one, a click or `a` starts it right away. With one or more of your own, a click or `a` first opens a menu that lists every profile, the built-in **Claude Code via mcc run** first, with the one assigned to the action highlighted (the built-in one when none is).
 
-The menu opens under the button you clicked: under a row's **Resolve #N** or **Review #N** for that row (and for `a`, under the selected row's), or under the header for the header's button and for a row whose button is out of view. When there's no room under the button, it opens above it, and a menu longer than the room scrolls, with `↑` or `↓` on its border when there are more profiles that way. `↑`/`↓` or `j`/`k` move the highlight, enter starts the highlighted profile, and a click on a profile starts that one. Esc, `q`, the mouse wheel or a click anywhere else closes the menu and starts nothing: a click on a row then doesn't open it in your browser.
+The menu opens under the row's **Resolve #N** or **Review #N** button: the one you clicked, or for `a`, the selected row's. When that button is out of view, as in a pane too short for the whole row, it opens under the header, at its right edge. When there's no room under the button, it opens above it, and a menu longer than the room scrolls, with `↑` or `↓` on its border when there are more profiles that way. `↑`/`↓` or `j`/`k` move the highlight, enter starts the highlighted profile, and a click on a profile starts that one. Esc, `q`, the mouse wheel or a click anywhere else closes the menu and starts nothing: a click on a row then doesn't open it in your browser.
 
 Whichever profile you choose, the action's custom prompt is sent, if it has one. The panel reads the profiles file again when you choose: if the profile was deleted meanwhile, or the row left the list in a refresh, nothing starts and the panel says why. Choosing doesn't change which profile is assigned to the action.
 
@@ -95,7 +95,25 @@ mcc can ask something before Claude Code starts, such as what to do about a usag
 
 If the skill isn't installed, nothing starts and the panel points you to [luongnv.com/idd](https://luongnv.com/idd) to install the skills. It looks for `<skill>/SKILL.md` in the `skills` folder of `~/.claude`, `~/.agents`, `~/.codex` and `~/.<agent>`, and of the same folders in the repo. For Claude it also looks in the plugins you have installed and not disabled (`~/.claude/plugins/installed_plugins.json`, `enabledPlugins` in `~/.claude/settings.json` and the repo's `.claude/settings*.json`), and in synced plugins, and sends a plugin's skill under the plugin's name, such as `/idd:issue-resolver 12`. For mcc, it runs `mcc env -q --shell bash` in the repo to find the Claude Code folder `mcc run` would use there, such as `~/.mcc/profiles/work`, and looks in that folder instead of `~/.claude`.
 
-The buttons don't show on GitLab, because both skills work through `gh`.
+The Resolve and Review buttons don't show on GitLab, because both skills work through `gh`. The Merge button does (see [Merge a pull request](#merge-a-pull-request)).
+
+## Merge a pull request
+
+Every pull request row has a **Merge #N** button. On GitHub it sits next to the row's **Review #N** button, or on a line of its own under it in a narrow pane; on GitLab, where rows have no Review button, every merge request has a **Merge !N** button on a line of its own under its meta line.
+
+- **Press it twice.** The first press only asks: the button turns red and reads **Confirm merge #N**, in the same place (the list scrolls only when the notice would cover it), and the notice says which merge method it will use. A second press on that button merges that pull request, and only that one; a second press that comes within 0.4 seconds of the first is taken for a double click and only keeps the question. Any other key or click, including esc and `q`, including a press on another row's Merge button, takes the question back and merges nothing. The scroll wheel doesn't. When the panel moves to another repo, the question is taken back too.
+- **The method.** On GitHub the panel reads which merge methods the repo allows (`gh repo view`) and uses squash when it's allowed, else a merge commit, else rebase. When the repo allows none of them, or `gh` doesn't say, the button stays, and a press says why and merges nothing. On GitLab the panel passes no method, so the project's own merge method applies.
+- **Only the commit you saw.** The merge passes the pull request's head commit, as the list read it, to `gh pr merge --match-head-commit` (`glab mr merge --sha` on GitLab), so the merge is refused if someone pushed to the branch since the list was read. Refresh, look again, and press Merge again.
+- **What you see.** The panel says `Merging #N…` (`!N` on GitLab) while the CLI runs. It then reads the pull request's state (`gh pr view`, `glab mr view`) and says:
+  - `Merged #N` when it's merged: the pull request leaves the list at once, and a refresh that was already running when the merge finished doesn't bring it back;
+  - `#N will merge when its checks pass or the queue reaches it` when it's still open: the merge was accepted, but GitHub put it in a merge queue or set it to merge once its required checks pass, or GitLab set it to merge when its pipeline succeeds. It stays in the list until it's merged;
+  - `Merge sent for #N; refreshing to see its state` when the state can't be read;
+  - `Can't merge #N:` and the first line of the CLI's reason, such as a required check or review that's missing, in red. The pull request stays in the list.
+
+  After a merge the CLI accepted, the panel reads the list again: at once, or on its next check, within 2 seconds, when a refresh is already running.
+- **One thing at a time.** While a merge runs, Resolve, Review, `a` and the other Merge buttons do nothing, and while an agent starts, Merge does nothing.
+
+The merge runs `gh pr merge <number> --squash` (or `--merge`, `--rebase`) `--match-head-commit <commit>`, or `glab mr merge <number> --yes --sha <commit>`, in the repo's folder. It never passes `--delete-branch` (`--remove-source-branch` on GitLab), `--auto` or `--admin`. The repo's own setting to delete head branches after a merge, or a merge request's **Delete source branch** box, still applies. It's built from the number, the method and the commit only, never from a title or a description. You need the rights to merge in the repo; the CLI says when you don't.
 
 ## Custom prompts
 
@@ -180,6 +198,7 @@ Rex runs `init.lua` and the panel as your user, with no sandbox. This one:
 - in Rex's server, when you press the key: reads the session's layout, the folder of the focused pane's program, and opens or closes one pane labelled `rex-github` running `node panel.js`;
 - in the panel: runs `git` in the repo's folder to find its remote, then `gh` or `glab` there to read the repo and its open pull requests (or merge requests) and issues;
 - runs `rex api call` every 2 seconds to find the focused pane of its tab and that pane's folder, and `session.resize_pane` to set its own width when it opens and when the panes of its tab change;
+- when you press a pull request's Merge button a second time: runs `gh pr merge` then `gh pr view` (`glab mr merge` then `glab mr view` on GitLab) in the repo's folder for that pull request (see [Merge a pull request](#merge-a-pull-request));
 - when you click Resolve or Review, or press `a`: reads the profiles file, runs `rex` to read the foreground program of the panes in its tab and `rex split` to open a pane that runs the profile's agent with the skill and the number, or your custom prompt. For mcc, it first runs `mcc env` in the repo. It reads the skill folders listed under [Resolve and review with an agent](#resolve-and-review-with-an-agent). With a custom prompt it doesn't run `mcc env` or read the skill folders;
 - runs `open` (macOS) or `xdg-open` (Linux) when you open a row or the repo;
 - when you run `install.js`: runs `rex config check`, a `rex do` script that loads your `init.lua` to list the keys it binds, edits `init.lua` (see [Install](#install)), and runs `rex config reload`;
@@ -198,6 +217,8 @@ It sends nothing anywhere except through `gh` to GitHub, or `glab` to GitLab.
 - **"No GitHub or GitLab remote":** the repo has no remote, or only a local-path one. Pull requests and issues live on a hosting site, so there is nothing to list.
 - **Grey label dots on GitLab:** the label colors come from `glab label list`, which failed. Check `glab auth status`.
 - **A row doesn't open, and the panel shows its URL with a red reason:** `open` or `xdg-open` is missing or failed, most often because the session's server is another machine. See [Remote hosts](#remote-hosts).
+- **"Can't merge #N:" in red:** the CLI's reason follows. Most often a required check or review is missing, you don't have the rights to merge, or the branch moved since the list was read: refresh, look again, and press Merge again. "The repo allows no squash, merge commit or rebase" means `gh repo view` reported none of them allowed.
+- **"#N will merge when its checks pass or the queue reaches it":** the merge was accepted but is waiting, in a merge queue or for required checks (on GitLab, for the pipeline). The pull request leaves the list once it's merged.
 - **"The issue-resolver skill isn't installed" or "The issue-pr-review skill isn't installed":** install the skills from [luongnv.com/idd](https://luongnv.com/idd) for the agent named in the message, then try again.
 - **"No agent in this tab and no pane to start one next to":** the panel opens the new pane to the right of your agent, or of the pane it follows. Click a pane in the panel's tab, then try again.
 - **"didn't start" or "closed right after it started":** the agent exited within 3 seconds. Its pane, if Rex kept it, shows why; otherwise run the command the notice shows yourself.
@@ -224,7 +245,7 @@ node --test
 - `panel.js`: the panel itself. Plain Node, no npm packages.
 - `profiles.cjs`: the agent profiles and custom prompts: their rules, the file's format, and how a profile becomes a command line. A copy of herdr-github's, with Rex's file path.
 - `install.js`: adds the panel and a key to `init.lua`, or takes them out.
-- `test/`: unit tests for the text and row rendering, for reading GitHub and GitLab JSON, for which row a click opens, for what a failed open shows and how URLs and links are drawn, for following the focused pane and what Resolve and Review run with each profile and custom prompt, with stand-ins for `rex` and `mcc`, for the profile menu and the profiles view, for the profiles' rules and file, and for which key `install.js` picks and how it edits `init.lua`.
+- `test/`: unit tests for the text and row rendering, for reading GitHub and GitLab JSON, for which row a click opens, for what a failed open shows and how URLs and links are drawn, for following the focused pane and what Resolve and Review run with each profile and custom prompt, with stand-ins for `rex` and `mcc`, for the profile menu and the profiles view, for the Merge button and what a merge runs, with stand-ins for `git`, `gh` and `glab`, for the profiles' rules and file, and for which key `install.js` picks and how it edits `init.lua`.
 
 ## License
 
