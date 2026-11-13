@@ -1731,16 +1731,19 @@ async function fitWidth() {
   } finally { fitting = false; }
 }
 
-// A resize redraws; once it settles, a change in the tab's panes fits the width again.
+// Once a resize settles, a change in the tab's panes fits the width again.
+async function settleResize() {
+  if (fitting || !SELF || !SESSION) return;
+  const window = windowOf((await rexApi("session.view")).result, SELF);
+  if (window && panes != null && panesOf(window) !== panes) await fitWidth();
+}
+
+// A resize redraws, and settles 500ms after the last one.
 let settle = null;
 function onResize() {
   draw();
   clearTimeout(settle);
-  settle = setTimeout(async () => {
-    if (fitting || !SELF || !SESSION) return;
-    const window = windowOf((await rexApi("session.view")).result, SELF);
-    if (window && panes != null && panesOf(window) !== panes) await fitWidth();
-  }, 500);
+  settle = setTimeout(settleResize, 500);
 }
 
 // ── Main ────────────────────────────────────────────────────────────────────
@@ -1778,6 +1781,8 @@ else {
   module.exports = {
     width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput, MODES_ON, MODES_OFF,
     act, startChoice, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, AGENT_NAMES, flags, locate, splitLeft, ratioFor, fitWidth, COLUMNS,
+    // The width the panel keeps (#16): the settle after a resize, and a fresh start for tests.
+    settleResize, resetWidth: () => { panes = null; fitting = false; },
     // A pull request's Merge button (#13): its press, the rules it builds the CLI's
     // arguments by, and the refresh a merge starts.
     pressMerge, MERGE_GAP, mergeStrategy, mergeArgs, mergeGuard, refresh,
