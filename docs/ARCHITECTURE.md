@@ -43,6 +43,7 @@ Every `install.js` is the same code with different constants (`ACTION`, `MODULE`
 - The action reads the tab with `session.view` and looks for a block labelled `rex-<name>` in the focused pane's tab.
   - If there is one, it closes it with `block.close`.
   - If not, it opens one with `session.new_split`, running `node panel.js`: github on the right, mcc along the bottom at a quarter of its height. github then fits its own width (36 columns) and mcc its own height with `session.resize_pane`.
+  - The action runs on the machine whose `init.lua` bound the key, but the pane runs on the machine of the server holding the session, which can be a remote host. So when `panel.js` is under `$HOME`, the command is `sh -c 'p=$1; shift; exec node "$HOME$p" "$@"'` with the path relative to `$HOME` as an argument, and the pane's machine finds its own copy at the same `$HOME`-relative path. Otherwise it's `node` with the full path. The pane starts in the focused pane's folder (github) or its machine's default folder, never in the extension's folder.
 - The label is the only state: nothing is kept on disk to find the panel again.
 - `panel.js` reads `REX_SESSION` and `REX_BLOCK` and talks to Rex with `rex api call -s <session>`. github polls every 2 seconds to follow the focused pane and its folder; mcc reloads usage every 30 seconds and samples the machine's CPU, memory and network every 5.
 - It shells out to `git` and `gh` or `glab` (github) or `mcc`, `vm_stat` and `netstat` (mcc), and keeps one small state file under `$XDG_STATE_HOME` (default `~/.local/state`).

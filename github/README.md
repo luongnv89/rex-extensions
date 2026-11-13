@@ -183,6 +183,10 @@ The panel reads the file when the profiles view opens and on every Resolve or Re
 
 The panel, and the `git`, `gh` and `glab` it runs, run on the machine of the Rex server that holds the session. So does the browser it opens: `open` (macOS) or `xdg-open` (Linux). When that server is another machine, a click opens nothing on yours, and the panel shows the reason and the URL instead. Cmd- or Ctrl-click the URL to open it where you sit, or select and copy it.
 
+The key runs the action from your own machine's `init.lua`, but the panel starts on that other machine, so the extension must be installed there too, at the same path under `$HOME` as on yours (for example `~/.config/rex/rex-extensions`). The action passes `panel.js`'s path relative to `$HOME`, and the other machine finds it under its own `$HOME`. When it isn't there, the panel's pane closes as soon as it opens. A clone outside `$HOME` is passed by its full path, which then has to exist on the other machine as it is.
+
+`node` has to be on the `PATH` that the other machine's login shell sets, too. A Node from nvm, fnm or a similar manager is often loaded only in `~/.zshrc` or `~/.bashrc`, which the panel's shell doesn't read. The pane then closes with `node: not found`. Load it in `~/.zprofile` or `~/.profile` on that machine, or link `node` into a folder already on that `PATH`, such as `~/.local/bin`.
+
 ## Needs
 
 - Rex on macOS or Linux, with a server that speaks API revision 8 or later (`rex version` shows it).
@@ -195,7 +199,7 @@ The panel, and the `git`, `gh` and `glab` it runs, run on the machine of the Rex
 
 Rex runs `init.lua` and the panel as your user, with no sandbox. This one:
 
-- in Rex's server, when you press the key: reads the session's layout, the folder of the focused pane's program, and opens or closes one pane labelled `rex-github` running `node panel.js`;
+- in Rex's server, when you press the key: reads the session's layout, the folder of the focused pane's program, and opens or closes one pane labelled `rex-github` running `node panel.js` (through `sh -c` when the extension sits under `$HOME`; see [Remote hosts](#remote-hosts));
 - in the panel: runs `git` in the repo's folder to find its remote, then `gh` or `glab` there to read the repo and its open pull requests (or merge requests) and issues;
 - runs `rex api call` every 2 seconds to find the focused pane of its tab and that pane's folder, and `session.resize_pane` to set its own width when it opens and when the panes of its tab change;
 - when you press a pull request's Merge button a second time: runs `gh pr merge` then `gh pr view` (`glab mr merge` then `glab mr view` on GitLab) in the repo's folder for that pull request (see [Merge a pull request](#merge-a-pull-request));

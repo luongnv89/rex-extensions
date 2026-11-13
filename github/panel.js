@@ -5,7 +5,9 @@
 // the browser.
 //
 // rex-github.lua starts it as `node panel.js --target BLOCK --cwd DIR`: the pane
-// it opened beside, and that pane's folder. Rex sets REX_SESSION and REX_BLOCK.
+// it opened beside, and that pane's folder. When panel.js is under $HOME, the path
+// is resolved under the $HOME of the machine the pane runs on, through `sh -c`.
+// Rex sets REX_SESSION and REX_BLOCK.
 "use strict";
 const { execFile, spawn } = require("node:child_process");
 const fs = require("node:fs");

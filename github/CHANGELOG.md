@@ -23,6 +23,10 @@ Brings the panel up to date with [herdr-github](https://github.com/luongnv89/her
 
 - **Behavior change:** with no profile assigned, Resolve and Review start Claude Code through `mcc run`, instead of the same kind of agent as the one in your tab. Assign a profile to keep using another agent. The panel no longer needs an agent in the tab: with none, the new pane opens beside the pane the panel follows. `pi` now counts as an agent when the panel looks for yours; `gemini` still does, but isn't a harness a profile can start.
 
+### Fixed
+
+- The panel works in a session on a remote host. The action ran `node` with this machine's full path to `panel.js`, which doesn't exist on the remote host, so the pane closed at once. It now passes the path relative to `$HOME`, and the remote host finds `panel.js` under its own `$HOME`: install the extension there at the same path under `$HOME` ([#12](https://github.com/luongnv89/rex-extensions/issues/12)). The pane starts in the folder of the pane it opens beside, or in its machine's default folder when that can't be read, instead of this machine's clone of the extension.
+
 ## 0.1.0 (2026-11-05)
 
 ### Added

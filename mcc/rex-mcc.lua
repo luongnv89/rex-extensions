@@ -20,6 +20,19 @@ local HEIGHT = 0.25
 local here = debug.getinfo(1, "S").source:gsub("^@", ""):match("^(.*)/[^/]*$") or "."
 local PANEL = here .. "/panel.js"
 
+-- The command that runs panel.js. Rex runs it on the machine of the server holding
+-- the session, which can be a remote host where PANEL, a path of this machine,
+-- doesn't exist (#12). So a PANEL under $HOME is found under that machine's $HOME:
+-- the extension must sit at the same $HOME-relative path there. The relative path
+-- goes to sh as an argument, never into its script.
+local function panel_command()
+  local home = (os.getenv("HOME") or ""):gsub("/+$", "")
+  if home ~= "" and PANEL:sub(1, #home + 1) == home .. "/" then
+    return { "sh", "-c", 'p=$1; shift; exec node "$HOME$p" "$@"', LABEL, PANEL:sub(#home + 1) }
+  end
+  return { "node", PANEL }
+end
+
 -- The window holding `block_id`, in tiled and floating layers alike, and its blocks.
 local function find_window(view, block_id)
   for _, window in ipairs(view.windows or {}) do
@@ -68,7 +81,7 @@ local function toggle(ctx)
     side = "after",
     ratio = 1 - HEIGHT,
     focus = false,
-    layout = { block = { flavor = TERMINAL, label = LABEL, options = { command = { "node", PANEL }, cwd = here } } },
+    layout = { block = { flavor = TERMINAL, label = LABEL, options = { command = panel_command(), cwd = "" } } },
   })
   return { opened = opened.block_ids and opened.block_ids[1] }
 end
