@@ -49,7 +49,7 @@ process.on("exit", () => fs.rmSync(stateHome, { recursive: true, force: true }))
 Object.assign(process.env, { REX_GITHUB_REX: "rex", REX_SESSION: "session:s", REX_BLOCK: "block:panel", REX_GITHUB_STARTUP_MS: "1", XDG_STATE_HOME: stateHome });
 process.argv.push("--target", "block:agent", "--cwd", "/start");
 const P = require("../profiles.cjs");
-const { width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput, MODES_ON, MODES_OFF, act, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, flags, locate, state, follow, splitLeft, ratioFor, fitWidth, COLUMNS, settleResize, savedWidth, resetWidth, pressMerge, MERGE_GAP, mergeStrategy, mergeArgs, mergeGuard, refresh } = require("../panel.js");
+const { width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput, MODES_ON, MODES_OFF, act, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, flags, locate, state, follow, splitLeft, ratioFor, fitWidth, COLUMNS, MAX_SHARE, settleResize, savedWidth, resetWidth, pressMerge, MERGE_GAP, mergeStrategy, mergeArgs, mergeGuard, refresh } = require("../panel.js");
 
 // Drops colors and OSC 8 hyperlinks, leaving the text a terminal shows.
 const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b\]8;[^\x07\x1b]*(?:\x1b\\|\x07)/g, "");
@@ -2409,6 +2409,78 @@ test("a resize of Rex's window saves no width, and keeps the one dragged to (#16
   await settleResize();
   assert.equal(savedWidth(), dragged);
   assert.deepEqual(tab.resized, []);
+});
+
+// fakeTab's pane runs in /repo: a look through locate follows it there, so the
+// panel goes back to /start, as the other tests expect, when the test ends.
+const backToStart = (t) => t.after(async () => { fakeRex({ "block:agent": shellProc("/start") }); await locate(); });
+
+test("a pane that leaves the border where it was is noted, so the next drag is kept (#16)", async (t) => {
+  const tab = fakeTab(t);
+  backToStart(t);
+  await fitWidth();
+  tab.resized.length = 0;
+  // A pane opens and the border on the panel's left stays put: no resize, no settle.
+  tab.blocks.push("block:new");
+  await locate();
+  await locate();
+  // The user drags the border: the drag is saved, not taken for a pane change.
+  tab.ratio = 0.7;
+  await settleResize();
+  assert.deepEqual(tab.resized, [], "nothing moves the border back");
+  near(tab.panel(), 51);
+  assert.equal(savedWidth(), tab.panel());
+});
+
+test("a pane whose splits Rex evens out between two looks still fits the panel again (#16)", async (t) => {
+  const tab = fakeTab(t);
+  backToStart(t);
+  await fitWidth();
+  tab.resized.length = 0;
+  // A pane opens, seen once with the border unmoved; then Rex evens out the splits.
+  tab.blocks.push("block:new");
+  await locate();
+  tab.ratio = 0.5;
+  await locate();
+  await settleResize();
+  assert.ok(tab.resized.length >= 1, "the settle fits the panel again");
+  near(tab.panel(), COLUMNS);
+  assert.equal(fs.existsSync(WIDTH), false, "evening out isn't a drag");
+});
+
+test("a drag past half the split saves the width a fit can reach, and a pane change brings it back (#16)", async (t) => {
+  const tab = fakeTab(t);
+  await fitWidth();
+  // The user drags the border far left: the panel is 139 columns, well past half.
+  tab.ratio = 0.2;
+  await settleResize();
+  near(tab.panel(), 139);
+  const kept = savedWidth();
+  near(kept, tab.cols(1 - MAX_SHARE));
+  // A pane opens and Rex moves the border: the panel fits back to the width saved.
+  tab.blocks.push("block:new");
+  tab.ratio = 0.6;
+  tab.resized.length = 0;
+  await settleResize();
+  near(tab.panel(), kept);
+  assert.equal(savedWidth(), kept, "the fit saves nothing");
+  // And after a restart, at the same width.
+  resetWidth();
+  tab.ratio = 0.7;
+  await fitWidth();
+  near(tab.panel(), kept);
+});
+
+test("fitWidth stops once the panel is at MAX_SHARE of its split, short of a wider saved width (#16)", async (t) => {
+  const tab = fakeTab(t);
+  saveWidth("139\n");
+  tab.ratio = 0.6;
+  const before = rexCalls().filter((c) => c === "view").length;
+  await fitWidth();
+  assert.equal(tab.resized.length, 1, JSON.stringify(tab.resized));
+  assert.equal(tab.ratio, 1 - MAX_SHARE);
+  // One look before the move and one after the fit, with no second try at it.
+  assert.equal(rexCalls().filter((c) => c === "view").length - before, 2);
 });
 
 test("savedWidth is COLUMNS until a sane width is saved (#16)", (t) => {
