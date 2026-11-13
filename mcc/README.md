@@ -73,7 +73,7 @@ Click the panel, or move focus to it, before using its keys.
 
 Rex runs `init.lua` and the panel as your user, with no sandbox. This one:
 
-- in Rex's server, when you press the key: reads the session's layout and opens or closes one pane labelled `rex-mcc` running `node panel.js`;
+- in Rex's server, when you press the key: reads the session's layout and opens or closes one pane labelled `rex-mcc` running `node panel.js` (through `sh -c` when the extension sits under `$HOME`, so the session's machine finds `panel.js` under its own `$HOME`);
 - in the panel: runs `mcc usage --json-v2` every 30 seconds, and `mcc usage --all --json-v2` when you refresh;
 - every 5 seconds, reads the machine's CPU, memory and network: `/usr/bin/vm_stat` and `/usr/sbin/netstat -ibn` on macOS, `/proc/meminfo`, `/proc/net/dev` and `/sys/devices/virtual/net` on Linux;
 - runs `rex api call` to read the tab's layout and its panes' sizes, and to move the border above the panel when it fits its height;
@@ -86,6 +86,7 @@ It sends nothing anywhere itself. A refresh makes mcc send each account's login 
 
 - **The key does nothing:** run `rex config check` and `rex keymap | grep mcc_usage`. If the Rex app has its own shortcut on that key, it may win: run `node mcc/install.js --remove`, then `node mcc/install.js` with another key. The palette entry **mcc Usage Panel** works either way.
 - **The pane opens and shows `node: command not found`:** Rex starts the panel through your login shell, so `node` has to be on the `PATH` it sets (in `~/.zprofile` or `~/.profile`, not only in `~/.zshrc`).
+- **The pane closes as soon as it opens, in a session on another machine:** the pane runs on the machine of the Rex server that holds the session, and finds `panel.js` there at the same path under `$HOME` as on yours. Install the extension on that machine too (for example at `~/.config/rex/rex-extensions`).
 - **"mcc not found":** install mcc, or set `MCC_BIN` to its full path where your login shell sets it.
 - **"unexpected mcc output (schema …)":** your mcc is too old for `--json-v2`. Update it.
 - **An account says "login expired" or "not logged in":** run the `mcc login` command the panel shows, then refresh.

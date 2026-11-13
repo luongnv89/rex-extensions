@@ -197,7 +197,7 @@ The key runs the action from your own machine's `init.lua`, but the panel starts
 
 Rex runs `init.lua` and the panel as your user, with no sandbox. This one:
 
-- in Rex's server, when you press the key: reads the session's layout, the folder of the focused pane's program, and opens or closes one pane labelled `rex-github` running `node panel.js`;
+- in Rex's server, when you press the key: reads the session's layout, the folder of the focused pane's program, and opens or closes one pane labelled `rex-github` running `node panel.js` (through `sh -c` when the extension sits under `$HOME`; see [Remote hosts](#remote-hosts));
 - in the panel: runs `git` in the repo's folder to find its remote, then `gh` or `glab` there to read the repo and its open pull requests (or merge requests) and issues;
 - runs `rex api call` every 2 seconds to find the focused pane of its tab and that pane's folder, and `session.resize_pane` to set its own width when it opens and when the panes of its tab change;
 - when you press a pull request's Merge button a second time: runs `gh pr merge` then `gh pr view` (`glab mr merge` then `glab mr view` on GitLab) in the repo's folder for that pull request (see [Merge a pull request](#merge-a-pull-request));
