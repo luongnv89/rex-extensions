@@ -23,9 +23,12 @@ const STATE = path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), ".
 const STALE = 120000;
 const LIMIT = 50;
 const POLL = 2000;
-// The panel's width in columns: about Rex's sidebar (291pt at 8pt a column). It
-// takes at most MAX_SHARE of its split, so the other side stays usable.
+// The panel's width in columns until the user drags it to another (#16): about
+// Rex's sidebar (291pt at 8pt a column). It takes at most MAX_SHARE of its split,
+// so the other side stays usable. A saved width outside MIN_COLUMNS..MAX_COLUMNS
+// is ignored.
 const COLUMNS = 36;
+const MIN_COLUMNS = 10, MAX_COLUMNS = 400;
 const MAX_SHARE = 0.5;
 // Columns each pane spends on its frame.
 const CHROME = 2;
@@ -303,6 +306,7 @@ async function locate() {
     const { result: view } = await rexApi("session.view");
     const me = windowOf(view, SELF);
     if (!me) return;
+    notePanes(me);
     ui.tab = me.window_id;
     ui.visible = view.active_window_id === me.window_id;
     const blocks = blocksOf(me);
@@ -1651,8 +1655,10 @@ function onInput(data) {
 
 // ── Width ───────────────────────────────────────────────────────────────────
 // Rex's app can even out a tab's splits when a pane is added or closed, which
-// leaves the panel half the tab wide: it fits itself to COLUMNS when it opens and
-// whenever the panes of its tab change. A border you drag keeps its place.
+// leaves the panel half the tab wide: it fits itself to its width when it opens and
+// whenever the panes of its tab change. Its width is COLUMNS until you drag the
+// border on its left: then it's the width you dragged it to, kept in STATE so it
+// outlasts a restart of Rex. A resize of Rex's window saves no width.
 
 // The first leaf in a layout node, depth first.
 const firstLeaf = (node) => (node?.block_id ? node : node?.split ? firstLeaf(node.split.before) ?? firstLeaf(node.split.after) : null);
@@ -1700,46 +1706,116 @@ async function settledColumns(block) {
   return last;
 }
 
+// The width the user last dragged the panel to, or COLUMNS.
+function savedWidth() {
+  try {
+    const n = Number(fs.readFileSync(path.join(STATE, "width"), "utf8").trim());
+    if (Number.isInteger(n) && n >= MIN_COLUMNS && n <= MAX_COLUMNS) return n;
+  } catch {}
+  return COLUMNS;
+}
+
+// Keep `columns` as the panel's width, on the machine panel.js runs on.
+function saveWidth(columns) {
+  if (!Number.isInteger(columns) || columns < MIN_COLUMNS || columns > MAX_COLUMNS) return;
+  try { fs.mkdirSync(STATE, { recursive: true }); fs.writeFileSync(path.join(STATE, "width"), String(columns)); } catch {}
+}
+
 // Which panes the panel's tab holds: when that changes, the app evens out its splits.
 const panesOf = (window) => blocksOf(window).map((b) => b.block_id).sort().join(" ");
-let panes = null, fitting = false;
+// The border on the panel's left in its tab, as splitLeft finds it, or null.
+const borderOf = (window) => {
+  const layer = window?.layers?.find((l) => l.kind === "tiled" && l.layout);
+  return (layer && splitLeft(layer.layout, SELF)) || null;
+};
+// What the panel last saw of its tab: its panes, and the ratio of the border on its
+// left. A settle that finds the same panes but the border moved saw a drag.
+let panes = null, border = null, fitting = false;
+// A new set of panes seen once with the border unmoved, waiting for a second look.
+let pending = null;
 
-// Fit the panel to COLUMNS by moving the border on its left. A panel that isn't the
-// right part of a left/right split is left as it is.
+// The most columns the panel can have in its split: MAX_SHARE of it, measured by the
+// panel's own columns and share. A drag past that saves this, the width a fit reaches.
+const maxColumns = ({ columns, share, width: total }) =>
+  columns && share && total ? Math.floor((MAX_SHARE * total * (columns + CHROME)) / share) - CHROME : null;
+
+// On each look at the tab (locate, every POLL): a pane opened or closed that leaves
+// the border on the panel's left where it was fires no resize, so no settle sees it.
+// The new panes are kept once two looks in a row find them with the border unmoved;
+// a border that moved, as when Rex evens out the splits just after, stays the
+// settle's to fit. Without this, the next drag would be taken for a pane change.
+function notePanes(window) {
+  if (fitting || panes == null || border == null) return;
+  const now = panesOf(window);
+  const found = borderOf(window);
+  if (now === panes || !found || Math.abs(found.ratio - border) >= 0.002) { pending = null; return; }
+  if (pending === now) { panes = now; pending = null; }
+  else pending = now;
+}
+
+// Fit the panel to its width by moving the border on its left. A panel that isn't
+// the right part of a left/right split is left as it is.
 async function fitWidth() {
   if (!SELF || !SESSION || fitting) return;
   fitting = true;
+  const target = savedWidth();
   try {
     // Aim off by what the last move missed: the frame is a guess, and columns round.
     let aim = 0;
     for (let i = 0; i < 3; i++) {
       const window = windowOf((await rexApi("session.view")).result, SELF);
-      if (window) panes = panesOf(window);
-      const layer = window?.layers?.find((l) => l.kind === "tiled" && l.layout);
-      const found = layer && splitLeft(layer.layout, SELF);
+      if (window) { panes = panesOf(window); pending = null; }
+      const found = borderOf(window);
       if (!found) return;
       const [columns, leftColumns] = await Promise.all([settledColumns(SELF), settledColumns(found.left)]);
-      if (!columns || columns === COLUMNS) return;
+      if (!columns || columns === target) return;
       const measure = leftColumns > columns ? { columns: leftColumns, share: found.leftWidth } : { columns, share: found.mine };
-      const ratio = ratioFor({ ...measure, width: found.width }, COLUMNS + aim);
-      if (ratio == null || Math.abs(ratio - found.ratio) < 0.002) return;
-      if ((await rexApi("session.resize_pane", { direction: "horizontal", before_block_id: found.left, after_block_id: SELF, ratio })).error) return;
+      const want = ratioFor({ ...measure, width: found.width }, target + aim);
+      if (want == null || Math.abs(want - found.ratio) < 0.002) return;
+      if ((await rexApi("session.resize_pane", { direction: "horizontal", before_block_id: found.left, after_block_id: SELF, ratio: want })).error) return;
       const now = await settledColumns(SELF);
-      if (!now || now === columns || now === COLUMNS) return;
-      aim = Math.max(-3, Math.min(3, aim + COLUMNS - now));
+      if (!now || now === columns || now === target) return;
+      // At MAX_SHARE of its split and still short: no move makes the panel wider.
+      if (want === 1 - MAX_SHARE && now < target) return;
+      aim = Math.max(-3, Math.min(3, aim + target - now));
     }
-  } finally { fitting = false; }
+  } finally {
+    // The border as the fit left it: the next drag is measured from here. The panes
+    // stay those the fit saw, so a pane opened meanwhile still fits the panel again.
+    border = borderOf(windowOf((await rexApi("session.view")).result, SELF))?.ratio ?? null;
+    fitting = false;
+  }
 }
 
-// A resize redraws; once it settles, a change in the tab's panes fits the width again.
+// Once a resize settles: a change in the tab's panes fits the width again, and
+// otherwise a border on the panel's left that moved was dragged, so the panel keeps
+// the width it has now. The panes come first, as Rex evening out its splits moves
+// the border too. A resize of Rex's window moves no border and saves nothing.
+async function settleResize() {
+  if (fitting || !SELF || !SESSION) return;
+  const window = windowOf((await rexApi("session.view")).result, SELF);
+  if (!window || panes == null) return;
+  if (panesOf(window) !== panes) return fitWidth();
+  const found = borderOf(window);
+  if (!found) return;
+  const dragged = border != null && Math.abs(found.ratio - border) >= 0.002;
+  border = found.ratio;
+  if (!dragged) return;
+  const columns = await settledColumns(SELF);
+  if (!columns) return;
+  // A drag past MAX_SHARE of the split saves the width a fit can bring back.
+  const most = maxColumns({ columns, share: found.mine, width: found.width });
+  saveWidth(most == null ? columns : Math.min(columns, most));
+}
+
+// A resize redraws, and settles 500ms after the last one, or after a fit running then.
 let settle = null;
 function onResize() {
   draw();
   clearTimeout(settle);
-  settle = setTimeout(async () => {
-    if (fitting || !SELF || !SESSION) return;
-    const window = windowOf((await rexApi("session.view")).result, SELF);
-    if (window && panes != null && panesOf(window) !== panes) await fitWidth();
+  settle = setTimeout(function again() {
+    if (fitting) settle = setTimeout(again, 500);
+    else settleResize();
   }, 500);
 }
 
@@ -1777,7 +1853,9 @@ if (require.main === module) main();
 else {
   module.exports = {
     width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput, MODES_ON, MODES_OFF,
-    act, startChoice, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, AGENT_NAMES, flags, locate, splitLeft, ratioFor, fitWidth, COLUMNS,
+    act, startChoice, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, AGENT_NAMES, flags, locate, splitLeft, ratioFor, fitWidth, COLUMNS, MAX_SHARE,
+    // The width the panel keeps (#16): the settle after a resize, and a fresh start for tests.
+    settleResize, savedWidth, resetWidth: () => { panes = null; border = null; fitting = false; pending = null; },
     // A pull request's Merge button (#13): its press, the rules it builds the CLI's
     // arguments by, and the refresh a merge starts.
     pressMerge, MERGE_GAP, mergeStrategy, mergeArgs, mergeGuard, refresh,

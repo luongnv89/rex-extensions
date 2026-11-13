@@ -43,10 +43,13 @@ require("node:child_process").execFile = (cmd, args, opts, cb) => {
   const r = name === "rex" ? rex(args) : name === "mcc" ? mcc(args) : name === "git" ? git(args) : name === "gh" ? gh(args) : name === "glab" ? glab(args) : { code: 1, stderr: `no ${name} in tests` };
   setImmediate(() => answer(cb, r));
 };
-Object.assign(process.env, { REX_GITHUB_REX: "rex", REX_SESSION: "session:s", REX_BLOCK: "block:panel", REX_GITHUB_STARTUP_MS: "1" });
+// The panel keeps its state (its view, its width) in a folder of its own, for the run.
+const stateHome = fs.mkdtempSync(path.join(os.tmpdir(), "rex-github-state-"));
+process.on("exit", () => fs.rmSync(stateHome, { recursive: true, force: true }));
+Object.assign(process.env, { REX_GITHUB_REX: "rex", REX_SESSION: "session:s", REX_BLOCK: "block:panel", REX_GITHUB_STARTUP_MS: "1", XDG_STATE_HOME: stateHome });
 process.argv.push("--target", "block:agent", "--cwd", "/start");
 const P = require("../profiles.cjs");
-const { width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput, MODES_ON, MODES_OFF, act, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, flags, locate, state, follow, splitLeft, ratioFor, fitWidth, COLUMNS, pressMerge, MERGE_GAP, mergeStrategy, mergeArgs, mergeGuard, refresh } = require("../panel.js");
+const { width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput, MODES_ON, MODES_OFF, act, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, flags, locate, state, follow, splitLeft, ratioFor, fitWidth, COLUMNS, MAX_SHARE, settleResize, savedWidth, resetWidth, pressMerge, MERGE_GAP, mergeStrategy, mergeArgs, mergeGuard, refresh } = require("../panel.js");
 
 // Drops colors and OSC 8 hyperlinks, leaving the text a terminal shows.
 const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b\]8;[^\x07\x1b]*(?:\x1b\\|\x07)/g, "");
@@ -2289,29 +2292,206 @@ test("splitLeft finds the border on the panel's left, and ratioFor the ratio for
   assert.equal(ratioFor({ columns: null, share: 0.5, width: 1 }, COLUMNS), null);
 });
 
-test("fitWidth moves the border on the panel's left until the panel is COLUMNS wide", async () => {
-  let ratio = 0.5;
-  const resized = [];
-  // Columns follow the ratio over a tab of 176 columns, less each pane's frame.
-  const cols = (share) => Math.round(176 * share) - 2;
+// A tab of `total` columns holding block:agent and the panel, split at `ratio`, as
+// session.view, the `size` method and session.resize_pane see it. Adding to `blocks`
+// opens a pane, a new `total` resizes Rex's window, and a resize_pane, recorded in
+// `resized`, moves the border. Each test starts with no saved width.
+const WIDTH = path.join(stateHome, "rex-github", "width");
+function fakeTab(t) {
+  resetWidth();
+  fs.rmSync(WIDTH, { force: true });
+  t.after(() => fs.rmSync(WIDTH, { force: true }));
+  const tab = { ratio: 0.5, total: 176, blocks: ["block:agent", "block:panel"], resized: [] };
+  // Columns follow the ratio over the tab, less each pane's frame.
+  tab.cols = (share) => Math.round(tab.total * share) - 2;
+  tab.panel = () => tab.cols(1 - tab.ratio);
   fakeRex({ "block:agent": shellProc() }, { replies: {
-    view: () => ({ code: 0, stdout: JSON.stringify({ active_window_id: "window:w1", windows: [{ window_id: "window:w1", layers: [{ kind: "tiled", layout: halves(ratio), blocks: [{ block_id: "block:agent" }, { block_id: "block:panel" }] }] }] }) }),
+    view: () => ({ code: 0, stdout: JSON.stringify({ active_window_id: "window:w1", windows: [{ window_id: "window:w1", layers: [{ kind: "tiled", layout: halves(tab.ratio), blocks: tab.blocks.map((b) => ({ block_id: b })) }] }] }) }),
   } });
   const answer = rex;
   rex = (args) => {
     const method = args[4], body = args[5] && JSON.parse(args[5]);
-    if (method === "block.method" && body.method === "size") return { code: 0, stdout: JSON.stringify({ columns: cols(body.block_id === "block:panel" ? 1 - ratio : ratio) }) };
-    if (method === "session.resize_pane") { resized.push(body); ratio = body.ratio; return { code: 0, stdout: "{}" }; }
+    if (method === "block.method" && body.method === "size") return { code: 0, stdout: JSON.stringify({ columns: tab.cols(body.block_id === "block:panel" ? 1 - tab.ratio : tab.ratio) }) };
+    if (method === "session.resize_pane") { tab.resized.push(body); tab.ratio = body.ratio; return { code: 0, stdout: "{}" }; }
     return answer(args);
   };
+  return tab;
+}
+const near = (columns, want) => assert.ok(Math.abs(columns - want) <= 1, `${columns} columns, not ${want}`);
+
+test("fitWidth moves the border on the panel's left until the panel is COLUMNS wide", async (t) => {
+  // No width saved: the user never resized the panel.
+  const tab = fakeTab(t);
   await fitWidth();
-  assert.ok(resized.length >= 1);
-  assert.deepEqual({ ...resized[0], ratio: undefined }, { session_id: "session:s", direction: "horizontal", before_block_id: "block:agent", after_block_id: "block:panel", ratio: undefined });
-  assert.ok(Math.abs(cols(1 - ratio) - COLUMNS) <= 1, `${cols(1 - ratio)} columns`);
+  assert.ok(tab.resized.length >= 1);
+  assert.deepEqual({ ...tab.resized[0], ratio: undefined }, { session_id: "session:s", direction: "horizontal", before_block_id: "block:agent", after_block_id: "block:panel", ratio: undefined });
+  near(tab.panel(), COLUMNS);
   // Already that wide: nothing moves.
-  resized.length = 0;
+  tab.resized.length = 0;
   await fitWidth();
-  assert.deepEqual(resized, []);
+  assert.deepEqual(tab.resized, []);
+});
+
+test("a pane change after a drag fits the panel back to the dragged width, not COLUMNS (#16)", async (t) => {
+  const tab = fakeTab(t);
+  await fitWidth();
+  near(tab.panel(), COLUMNS);
+  // The user drags the border: the panel is 51 columns wide.
+  tab.ratio = 0.7;
+  await settleResize();
+  // A pane opens and Rex evens out the splits: the panel comes back to 51, not 36.
+  tab.blocks.push("block:new");
+  tab.ratio = 0.5;
+  await settleResize();
+  near(tab.panel(), 51);
+});
+
+// Writes the width a user dragged the panel to in an earlier run.
+const saveWidth = (text) => { fs.mkdirSync(path.dirname(WIDTH), { recursive: true }); fs.writeFileSync(WIDTH, text); };
+
+test("a drag of the border on the panel's left is kept, and saved as the panel's width (#16)", async (t) => {
+  const tab = fakeTab(t);
+  await fitWidth();
+  tab.resized.length = 0;
+  tab.ratio = 0.7;
+  await settleResize();
+  assert.deepEqual(tab.resized, [], "nothing moves the border back");
+  near(tab.panel(), 51);
+  assert.equal(fs.readFileSync(WIDTH, "utf8"), "51");
+  assert.equal(savedWidth(), 51);
+});
+
+test("a settle that finds the tab as it was moves nothing and saves nothing, as when the list reloads (#16)", async (t) => {
+  const tab = fakeTab(t);
+  await fitWidth();
+  tab.resized.length = 0;
+  await settleResize();
+  await settleResize();
+  assert.deepEqual(tab.resized, []);
+  assert.equal(fs.existsSync(WIDTH), false);
+  // After a drag too: the panel stays as wide as it was dragged.
+  tab.ratio = 0.7;
+  await settleResize();
+  await settleResize();
+  await settleResize();
+  assert.deepEqual(tab.resized, []);
+  near(tab.panel(), 51);
+  assert.equal(savedWidth(), 51);
+});
+
+test("a saved width outlasts a restart: the panel opens at it, not at COLUMNS (#16)", async (t) => {
+  const tab = fakeTab(t);
+  saveWidth("60\n");
+  await fitWidth();
+  assert.ok(tab.resized.length >= 1);
+  near(tab.panel(), 60);
+  // Already that wide: nothing moves.
+  tab.resized.length = 0;
+  await fitWidth();
+  assert.deepEqual(tab.resized, []);
+});
+
+test("a resize of Rex's window saves no width, and keeps the one dragged to (#16)", async (t) => {
+  const tab = fakeTab(t);
+  await fitWidth();
+  tab.resized.length = 0;
+  // A wider window, with the border where it was.
+  tab.total = 220;
+  await settleResize();
+  assert.equal(fs.existsSync(WIDTH), false);
+  assert.equal(savedWidth(), COLUMNS);
+  // A drag, then the window back as it was: the dragged width stays saved.
+  tab.ratio = 0.7;
+  await settleResize();
+  const dragged = tab.panel();
+  assert.equal(savedWidth(), dragged);
+  tab.total = 176;
+  await settleResize();
+  assert.equal(savedWidth(), dragged);
+  assert.deepEqual(tab.resized, []);
+});
+
+// fakeTab's pane runs in /repo: a look through locate follows it there, so the
+// panel goes back to /start, as the other tests expect, when the test ends.
+const backToStart = (t) => t.after(async () => { fakeRex({ "block:agent": shellProc("/start") }); await locate(); });
+
+test("a pane that leaves the border where it was is noted, so the next drag is kept (#16)", async (t) => {
+  const tab = fakeTab(t);
+  backToStart(t);
+  await fitWidth();
+  tab.resized.length = 0;
+  // A pane opens and the border on the panel's left stays put: no resize, no settle.
+  tab.blocks.push("block:new");
+  await locate();
+  await locate();
+  // The user drags the border: the drag is saved, not taken for a pane change.
+  tab.ratio = 0.7;
+  await settleResize();
+  assert.deepEqual(tab.resized, [], "nothing moves the border back");
+  near(tab.panel(), 51);
+  assert.equal(savedWidth(), tab.panel());
+});
+
+test("a pane whose splits Rex evens out between two looks still fits the panel again (#16)", async (t) => {
+  const tab = fakeTab(t);
+  backToStart(t);
+  await fitWidth();
+  tab.resized.length = 0;
+  // A pane opens, seen once with the border unmoved; then Rex evens out the splits.
+  tab.blocks.push("block:new");
+  await locate();
+  tab.ratio = 0.5;
+  await locate();
+  await settleResize();
+  assert.ok(tab.resized.length >= 1, "the settle fits the panel again");
+  near(tab.panel(), COLUMNS);
+  assert.equal(fs.existsSync(WIDTH), false, "evening out isn't a drag");
+});
+
+test("a drag past half the split saves the width a fit can reach, and a pane change brings it back (#16)", async (t) => {
+  const tab = fakeTab(t);
+  await fitWidth();
+  // The user drags the border far left: the panel is 139 columns, well past half.
+  tab.ratio = 0.2;
+  await settleResize();
+  near(tab.panel(), 139);
+  const kept = savedWidth();
+  near(kept, tab.cols(1 - MAX_SHARE));
+  // A pane opens and Rex moves the border: the panel fits back to the width saved.
+  tab.blocks.push("block:new");
+  tab.ratio = 0.6;
+  tab.resized.length = 0;
+  await settleResize();
+  near(tab.panel(), kept);
+  assert.equal(savedWidth(), kept, "the fit saves nothing");
+  // And after a restart, at the same width.
+  resetWidth();
+  tab.ratio = 0.7;
+  await fitWidth();
+  near(tab.panel(), kept);
+});
+
+test("fitWidth stops once the panel is at MAX_SHARE of its split, short of a wider saved width (#16)", async (t) => {
+  const tab = fakeTab(t);
+  saveWidth("139\n");
+  tab.ratio = 0.6;
+  const before = rexCalls().filter((c) => c === "view").length;
+  await fitWidth();
+  assert.equal(tab.resized.length, 1, JSON.stringify(tab.resized));
+  assert.equal(tab.ratio, 1 - MAX_SHARE);
+  // One look before the move and one after the fit, with no second try at it.
+  assert.equal(rexCalls().filter((c) => c === "view").length - before, 2);
+});
+
+test("savedWidth is COLUMNS until a sane width is saved (#16)", (t) => {
+  fakeTab(t);
+  assert.equal(savedWidth(), COLUMNS, "never resized");
+  for (const bad of ["", "abc", "5", "9999", "40.5", "-40", "Infinity"]) {
+    saveWidth(bad);
+    assert.equal(savedWidth(), COLUMNS, JSON.stringify(bad));
+  }
+  saveWidth("48\n");
+  assert.equal(savedWidth(), 48);
 });
 
 // ── Merging a pull request (#13) ────────────────────────────────────────────

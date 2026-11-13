@@ -46,7 +46,7 @@ To update, `git pull` in the folder you cloned. To remove it, run `node github/i
 
 ## Use
 
-Press the key in any pane. The panel opens on the right of the tab, 36 columns wide: about the width of Rex's sidebar. It takes at most half the tab. When a pane opens or closes in the tab, and Rex evens out the tab's splits, the panel sets its width back; a border you drag keeps its place until then. Press the key again in that tab, from any pane, to close it.
+Press the key in any pane. The panel opens on the right of the tab, 36 columns wide: about the width of Rex's sidebar. It takes at most half the tab. Drag the border on its left to make it wider or narrower: the panel keeps that width from then on, also when a pane opens or closes in the tab and Rex evens out the tab's splits, and when you open it again, after Rex restarts too. Resizing Rex's window doesn't change the width it keeps. Press the key again in that tab, from any pane, to close it.
 
 - **Which repo:** the folder of the last pane you focused in the panel's tab. It follows you when you `cd` or move to another pane.
 - **Which site:** read from the repo's `origin` remote (or its first remote). A host name containing `github` uses `gh`, one containing `gitlab` uses `glab`, and any other host tries `gh`, then `glab`.
@@ -201,13 +201,13 @@ Rex runs `init.lua` and the panel as your user, with no sandbox. This one:
 
 - in Rex's server, when you press the key: reads the session's layout, the folder of the focused pane's program, and opens or closes one pane labelled `rex-github` running `node panel.js` (through `sh -c` when the extension sits under `$HOME`; see [Remote hosts](#remote-hosts));
 - in the panel: runs `git` in the repo's folder to find its remote, then `gh` or `glab` there to read the repo and its open pull requests (or merge requests) and issues;
-- runs `rex api call` every 2 seconds to find the focused pane of its tab and that pane's folder, and `session.resize_pane` to set its own width when it opens and when the panes of its tab change;
+- runs `rex api call` every 2 seconds to find the focused pane of its tab and that pane's folder, and `session.resize_pane` to set its own width (36 columns, or the width you last dragged it to) when it opens and when the panes of its tab change;
 - when you press a pull request's Merge button a second time: runs `gh pr merge` then `gh pr view` (`glab mr merge` then `glab mr view` on GitLab) in the repo's folder for that pull request (see [Merge a pull request](#merge-a-pull-request));
 - when you click Resolve or Review, or press `a`: reads the profiles file, runs `rex` to read the foreground program of the panes in its tab and `rex split` to open a pane that runs the profile's agent with the skill and the number, or your custom prompt. For mcc, it first runs `mcc env` in the repo. It reads the skill folders listed under [Resolve and review with an agent](#resolve-and-review-with-an-agent). With a custom prompt it doesn't run `mcc env` or read the skill folders;
 - runs `open` (macOS) or `xdg-open` (Linux) when you open a row or the repo;
 - when you run `install.js`: runs `rex config check`, a `rex do` script that loads your `init.lua` to list the keys it binds, edits `init.lua` (see [Install](#install)), and runs `rex config reload`;
 - when you save in the profiles view: writes `~/.config/rex-github/profiles.json` (see [Where they're kept](#where-theyre-kept));
-- otherwise writes only `~/.local/state/rex-github/view` (`$XDG_STATE_HOME/rex-github/view` when that's set): which list you chose.
+- otherwise writes only `~/.local/state/rex-github/view` and `~/.local/state/rex-github/width` (under `$XDG_STATE_HOME/rex-github/` when that's set): which list you chose, and the width in columns you last dragged the panel to. Delete `width` to go back to 36 columns.
 
 It sends nothing anywhere except through `gh` to GitHub, or `glab` to GitLab.
 

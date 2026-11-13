@@ -17,6 +17,7 @@ Brings the panel up to date with [herdr-github](https://github.com/luongnv89/her
 
 ### Changed
 
+- The panel keeps the width you drag it to ([#16](https://github.com/luongnv89/rex-extensions/issues/16)). It no longer sets its width back to 36 columns when a pane opens or closes in its tab, and it opens at that width again, also after Rex restarts. The width is kept in `~/.local/state/rex-github/width` on the machine the panel runs on, at most half the panel's split. Resizing Rex's window saves no width. Until you drag it, the panel opens 36 columns wide as before.
 - The header no longer shows a Resolve or Review button for the selected row: each row has its own, and `a` still presses the selected row's. The profile menu `a` opens goes under the selected row's button, or under the header at its right edge when that button is out of view ([#13](https://github.com/luongnv89/rex-extensions/issues/13)).
 - Resolve and Review open the agent's pane to the right of your agent, side by side (a vertical split), instead of below it.
 - The panel is narrower: 36 columns, about the width of Rex's sidebar, instead of a third of the tab. It sets its width again when a pane opens or closes in its tab, since Rex then evens out the tab's splits.
