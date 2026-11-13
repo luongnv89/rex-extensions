@@ -75,7 +75,7 @@ cd github && node --test --experimental-test-coverage
 | --- | --- | --- |
 | `REX_CONFIG` | every `install.js` | The `init.lua` to edit. Else `$XDG_CONFIG_HOME/rex/init.lua`, else `~/.config/rex/init.lua`. |
 | `XDG_CONFIG_HOME` | every `install.js` | See `REX_CONFIG`. |
-| `XDG_STATE_HOME` | github and mcc `panel.js` | Where the panel keeps its state file. Default `~/.local/state`. |
+| `XDG_STATE_HOME` | github and mcc `panel.js` | Where the panel keeps its state files. Default `~/.local/state`. |
 | `REX_GITHUB_REX`, `REX_MCC_REX`, `REX_TABS_REX`, `REX_SSHTAB_REX` | `install.js`, and `panel.js` for github and mcc | The `rex` binary to call. The tests point it at a stand-in script. |
 | `REX_GITHUB_NO_RELOAD`, `REX_MCC_NO_RELOAD`, `REX_TABS_NO_RELOAD`, `REX_SSHTAB_NO_RELOAD` | `install.js` | When set, skip `rex config reload`. |
 | `REX_TABS_STATE`, `REX_SSHTAB_STATE` | tabs and sshtab `install.js`, and `rex-sshtab.lua` | The watcher's state folder (pid and `off` file, and sshtab's `agents.json`). Default `~/.cache/rex-tabs` or `~/.cache/rex-sshtab`. |

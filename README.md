@@ -113,7 +113,7 @@ Each extension is configured by its key, which you pass to `install.js`, and by 
 | Variable | Used by | What it does |
 | --- | --- | --- |
 | `REX_CONFIG` | every `install.js` | The `init.lua` to edit. Else `$XDG_CONFIG_HOME/rex/init.lua`, else `~/.config/rex/init.lua`. |
-| `XDG_STATE_HOME` | github and mcc panels | Where the panel keeps its state file. Default `~/.local/state`. |
+| `XDG_STATE_HOME` | github and mcc panels | Where the panel keeps its state files. Default `~/.local/state`. |
 | `MCC_BIN` | mcc panel | The full path to `mcc`, when it isn't on `PATH` or in the usual install folders. |
 | `REX_GITHUB_STARTUP_MS` | github panel | How long Resolve/Review waits for the agent to start, in ms. Default 3000. |
 

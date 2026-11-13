@@ -42,11 +42,11 @@ Every `install.js` is the same code with different constants (`ACTION`, `MODULE`
 
 - The action reads the tab with `session.view` and looks for a block labelled `rex-<name>` in the focused pane's tab.
   - If there is one, it closes it with `block.close`.
-  - If not, it opens one with `session.new_split`, running `node panel.js`: github on the right, mcc along the bottom at a quarter of its height. github then fits its own width (36 columns) and mcc its own height with `session.resize_pane`.
+  - If not, it opens one with `session.new_split`, running `node panel.js`: github on the right, mcc along the bottom at a quarter of its height. github then fits its own width (36 columns, or the width the user last dragged it to) and mcc its own height with `session.resize_pane`.
   - The action runs on the machine whose `init.lua` bound the key, but the pane runs on the machine of the server holding the session, which can be a remote host. So when `panel.js` is under `$HOME`, the command is `sh -c 'p=$1; shift; exec node "$HOME$p" "$@"'` with the path relative to `$HOME` as an argument, and the pane's machine finds its own copy at the same `$HOME`-relative path. Otherwise it's `node` with the full path. The pane starts in the focused pane's folder (github) or its machine's default folder, never in the extension's folder.
 - The label is the only state: nothing is kept on disk to find the panel again.
 - `panel.js` reads `REX_SESSION` and `REX_BLOCK` and talks to Rex with `rex api call -s <session>`. github polls every 2 seconds to follow the focused pane and its folder; mcc reloads usage every 30 seconds and samples the machine's CPU, memory and network every 5.
-- It shells out to `git` and `gh` or `glab` (github) or `mcc`, `vm_stat` and `netstat` (mcc), and keeps one small state file under `$XDG_STATE_HOME` (default `~/.local/state`).
+- It shells out to `git` and `gh` or `glab` (github) or `mcc`, `vm_stat` and `netstat` (mcc), and keeps small state files under `$XDG_STATE_HOME` (default `~/.local/state`).
 - github's Resolve and Review run `rex split` to start the chosen profile's agent in a pane to the right of yours (or of the pane the panel follows), and read and write `~/.config/rex-github/profiles.json`.
 
 The full list of what each panel runs is in its README's "What it runs": [github](../github/README.md#what-it-runs), [mcc](../mcc/README.md#what-it-runs).
