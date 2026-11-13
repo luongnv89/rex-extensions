@@ -86,7 +86,7 @@ It sends nothing anywhere itself. A refresh makes mcc send each account's login 
 
 - **The key does nothing:** run `rex config check` and `rex keymap | grep mcc_usage`. If the Rex app has its own shortcut on that key, it may win: run `node mcc/install.js --remove`, then `node mcc/install.js` with another key. The palette entry **mcc Usage Panel** works either way.
 - **The pane opens and shows `node: command not found`:** Rex starts the panel through your login shell, so `node` has to be on the `PATH` it sets (in `~/.zprofile` or `~/.profile`, not only in `~/.zshrc`).
-- **The pane closes as soon as it opens, in a session on another machine:** the pane runs on the machine of the Rex server that holds the session, and finds `panel.js` there at the same path under `$HOME` as on yours. Install the extension on that machine too (for example at `~/.config/rex/rex-extensions`).
+- **The pane closes as soon as it opens, in a session on another machine:** the pane runs on the machine of the Rex server that holds the session, and finds `panel.js` there at the same path under `$HOME` as on yours. Install the extension on that machine too (for example at `~/.config/rex/rex-extensions`). `node` has to be on the `PATH` that machine's login shell sets, too. A Node from nvm or fnm is often loaded only in `~/.zshrc` or `~/.bashrc`, so load it in `~/.zprofile` or `~/.profile` there, or link `node` into a folder already on that `PATH`, such as `~/.local/bin`.
 - **"mcc not found":** install mcc, or set `MCC_BIN` to its full path where your login shell sets it.
 - **"unexpected mcc output (schema …)":** your mcc is too old for `--json-v2`. Update it.
 - **An account says "login expired" or "not logged in":** run the `mcc login` command the panel shows, then refresh.

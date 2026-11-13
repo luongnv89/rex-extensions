@@ -185,6 +185,8 @@ The panel, and the `git`, `gh` and `glab` it runs, run on the machine of the Rex
 
 The key runs the action from your own machine's `init.lua`, but the panel starts on that other machine, so the extension must be installed there too, at the same path under `$HOME` as on yours (for example `~/.config/rex/rex-extensions`). The action passes `panel.js`'s path relative to `$HOME`, and the other machine finds it under its own `$HOME`. When it isn't there, the panel's pane closes as soon as it opens. A clone outside `$HOME` is passed by its full path, which then has to exist on the other machine as it is.
 
+`node` has to be on the `PATH` that the other machine's login shell sets, too. A Node from nvm, fnm or a similar manager is often loaded only in `~/.zshrc` or `~/.bashrc`, which the panel's shell doesn't read. The pane then closes with `node: not found`. Load it in `~/.zprofile` or `~/.profile` on that machine, or link `node` into a folder already on that `PATH`, such as `~/.local/bin`.
+
 ## Needs
 
 - Rex on macOS or Linux, with a server that speaks API revision 8 or later (`rex version` shows it).
