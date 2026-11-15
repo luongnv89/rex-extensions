@@ -33,6 +33,10 @@ const STALE = 3600000;
 // and no command that reads them may run into the next sample.
 const STATS = 5000;
 const STATS_TIMEOUT = 4000;
+// A refresh spins at least this long, so a quick one is still seen, and then says
+// how it went on its button for FLASH.
+const MIN_SPIN = 700;
+const FLASH = 2500;
 
 // ── Terminal ────────────────────────────────────────────────────────────────
 
@@ -454,8 +458,10 @@ const ui = {
   profiles: [],
   issues: {},        // name → live lookup failure (reason), from the last refresh
   error: null,       // mcc missing, or its output unreadable
+  liveError: null,   // why the last refresh failed, until one succeeds
   loaded: false,
   refreshing: false,
+  flash: null,       // { ok, until }: how the last refresh went, shown on its button for a moment
   lastLive: null,
   collapsed: false,
   top: 0,
@@ -496,20 +502,35 @@ async function refresh() {
   if (!mcc) mcc = findMcc();
   if (!mcc) return load();
   ui.refreshing = true;
+  ui.flash = null;
   draw();
+  const started = Date.now();
   const r = await run(mcc, ["usage", "--all", "--json-v2"], LIVE_TIMEOUT);
+  await sleep(Math.max(0, MIN_SPIN - (Date.now() - started)));
+  let ok = false;
   try {
     if (r.error) throw new Error(r.error.killed ? "live lookup timed out" : `can't run ${mcc}`);
     const live = parse(r.stdout);
     ui.issues = {};
     for (const p of live) if (p.status !== "ok") ui.issues[p.name] = p.reason;
     ui.lastLive = Date.now();
-    ui.error = null;
+    ui.liveError = null;
+    ok = true;
   } catch (e) {
-    ui.error = r.error ? e.message : firstError(r.stderr) || e.message;
+    // Kept apart from ui.error: the cache read in load() clears that one.
+    ui.liveError = r.error ? e.message : firstError(r.stderr) || e.message;
   }
   ui.refreshing = false;
+  ui.flash = { ok, until: Date.now() + FLASH };
+  setTimeout(draw, FLASH + 50);
   await load();
+}
+
+// The refresh button's text and color: spinning while it runs, then ✓ or ✗ for a moment.
+function refreshButton(now = Date.now()) {
+  if (ui.refreshing) return { text: `${SPIN[ui.frame % SPIN.length]} refreshing`, color: yellow };
+  if (ui.flash && now < ui.flash.until) return ui.flash.ok ? { text: "✓ updated", color: sgr("30;42") } : { text: "✗ failed", color: sgr("97;41") };
+  return { text: "↻ refresh", color: invert };
 }
 
 function saveCollapsed() {
@@ -651,6 +672,7 @@ async function toggleCollapsed() {
 function noticeLines(now = Date.now()) {
   const out = [];
   if (ui.error) out.push({ text: ui.error, color: red });
+  if (ui.liveError) out.push({ text: `refresh failed: ${ui.liveError}`, color: red });
   for (const p of ui.profiles) {
     const reason = ui.issues[p.name] ?? (p.status !== "ok" ? p.reason : null);
     if (reason) out.push({ text: `${p.name}: ${reasonText(reason)}${NEEDS_LOGIN.has(reason) ? ` · ${loginCommand(p)}` : ""}`, color: yellow });
@@ -663,7 +685,8 @@ function header(cols) {
   ui.buttons = [];
   const now = Date.now();
   const caret = ui.collapsed ? "▸" : "▾";
-  const refreshLabel = ui.refreshing ? ` ${SPIN[ui.frame % SPIN.length]} refreshing ` : " ↻ refresh ";
+  const { text: refreshText, color: refreshColor } = refreshButton(now);
+  let refreshLabel = ` ${refreshText} `;
   const title = ` ${caret} mcc usage`;
   const room = cols - width(title) - width(refreshLabel) - 2;
   let info = "";
@@ -686,11 +709,31 @@ function header(cols) {
     else if (times.length) info = `updated ${ago(new Date(Math.max(...times)).toISOString(), now)}`;
   }
   const infoText = room > 6 ? fit(info, room) : "";
+  // A roomier button when the line has the space for it.
+  if (room - width(infoText) >= 2) refreshLabel = `  ${refreshText}  `;
   const gap = Math.max(1, cols - width(title) - width(infoText) - width(refreshLabel) - 1);
   ui.buttons.push({ row: 0, from: 0, to: width(title) + 1, action: toggleCollapsed });
+  // Expanded, the button, the "updated …" text before it and the rest of the row all
+  // refresh: a one-row button is an easy target to miss. Collapsed, it starts at the
+  // label, so a click on the summary expands the panel instead.
   const at = width(title) + gap + width(infoText);
-  ui.buttons.push({ row: 0, from: at, to: at + width(refreshLabel) + 1, action: refresh });
-  return bold(title) + " ".repeat(Math.max(0, gap - 1)) + " " + dim(infoText) + (ui.refreshing ? yellow(refreshLabel) : invert(refreshLabel));
+  const from = ui.collapsed ? at : Math.max(width(title) + 2, at - width(infoText) - 2);
+  ui.buttons.push({ row: 0, from, to: Math.max(cols, at + width(refreshLabel)), action: refresh });
+  return bold(title) + " ".repeat(Math.max(0, gap - 1)) + " " + dim(infoText) + refreshColor(refreshLabel);
+}
+
+const FOOTER = [{ text: " r refresh", action: () => refresh() }, { text: "c collapse", action: () => toggleCollapsed() }, { text: "q close", action: () => quit() }];
+
+// The footer's hints as buttons on `row`; a collapsed panel has no footer.
+function footerButtons(row, collapsed = ui.collapsed) {
+  if (collapsed) return [];
+  const out = [];
+  let x = 0;
+  for (const f of FOOTER) {
+    out.push({ row, from: x, to: x + width(f.text) + 1, action: f.action });
+    x += width(f.text) + width(" · ");
+  }
+  return out;
 }
 
 function draw() {
@@ -698,7 +741,7 @@ function draw() {
   const now = Date.now();
   const out = [header(cols)];
   const notices = noticeLines(now);
-  const footer = ui.collapsed ? [] : [dim(fit(" r refresh · c collapse · q close", cols))];
+  const footer = ui.collapsed ? [] : [dim(fit(FOOTER.map((f) => f.text).join(" · "), cols))];
   if (!ui.collapsed) out.push(statsRow(cols), dim("─".repeat(cols)));
 
   const nameWidth = Math.min(16, Math.max(4, ...ui.profiles.map((p) => width(p.name))));
@@ -715,6 +758,8 @@ function draw() {
   out.push(...body.slice(ui.top, ui.top + height));
   while (out.length < rows - footer.length) out.push("");
   out.push(...footer);
+  // The footer's hints are buttons too.
+  if (out.length <= rows) ui.buttons.push(...footerButtons(out.length - 1));
 
   let frame = `${ESC}?2026h`;
   out.slice(0, rows).forEach((l, i) => { frame += `${ESC}${i + 1};1H${clip(l, cols)}${ESC}0m${ESC}K`; });
@@ -785,5 +830,5 @@ if (require.main === module) main();
 else module.exports = {
   width, fit, clip, until, ago, flag, parse, firstError, columns, row, cell, cellWidthFor, peak, splitAbove, firstLeaf, ratioFor, reasonText, findMcc, noticeLines, wantedRows, ui,
   parseProcStat, cpuPercent, parseMeminfo, parseVmStat, parseNetDev, parseNetstat, rate, step, formatBytes, formatRate, shortBytes, formatPair, memPercent, readout, label,
-  cpuTimes, readStats, applyStats, resetStats, statsRow, header,
+  cpuTimes, readStats, applyStats, resetStats, statsRow, header, refreshButton, footerButtons,
 };
