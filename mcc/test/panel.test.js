@@ -349,3 +349,33 @@ test("the refresh button spins, then says how the refresh went for a moment", (t
     assert.ok(p.width(strip(p.header(cols))) <= cols, `failed label fits ${cols} cols`);
   }
 });
+
+test("the footer's hints are buttons, and a collapsed panel has none", () => {
+  const ranges = p.footerButtons(7, false).map(({ row, from, to }) => [row, from, to]);
+  assert.deepEqual(ranges, [[7, 0, 11], [7, 13, 24], [7, 26, 34]]);
+  assert.ok(p.footerButtons(7, false).every((b) => typeof b.action === "function"));
+  assert.deepEqual(p.footerButtons(7, true), []);
+});
+
+test("collapsed, a click on the summary isn't refresh: it falls through to expand", (t) => {
+  withUi(t, { collapsed: true, profiles: p.parse(DOC), stats: STATES.read, refreshing: false, flash: null });
+  for (const cols of [60, 120]) {
+    const text = strip(p.header(cols));
+    const label = text.indexOf("↻ refresh");
+    const refresh = p.ui.buttons.find((b) => b.row === 0 && label >= b.from && label < b.to);
+    assert.ok(refresh, `${cols} cols: the label is clickable`);
+    assert.ok(refresh.from <= label && refresh.to >= cols, `${cols} cols: the button runs from its label to the end of the row`);
+    for (const word of ["5h", "wk", "cpu", "mem"]) {
+      const x = text.indexOf(word);
+      assert.ok(x > 0, `${cols} cols: "${word}" is shown`);
+      assert.ok(!p.ui.buttons.some((b) => b.row === 0 && x >= b.from && x < b.to), `${cols} cols: "${word}" isn't on a button`);
+    }
+  }
+});
+
+test("a failed refresh says why under the table until one succeeds", (t) => {
+  withUi(t, { profiles: [], issues: {}, error: null, liveError: "live lookup timed out" });
+  assert.deepEqual(p.noticeLines().map((n) => n.text), ["refresh failed: live lookup timed out"]);
+  p.ui.liveError = null;
+  assert.deepEqual(p.noticeLines(), []);
+});
