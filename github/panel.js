@@ -263,6 +263,10 @@ const ui = {
   // A Merge press that only asked (#13): { number, notice, at }, the pull request whose
   // button now reads Confirm merge, the notice that says so, and when it asked; null otherwise.
   confirm: null,
+  // The merge under way (#20): { root, number }, the pull request whose button reads
+  // Merging #N… until the CLI has answered and the forge has said what became of it;
+  // null otherwise. ui.acting says that something runs, not which pull request.
+  merging: null,
   // Between a paste's start and end marks, which can come in different chunks;
   // pasteCR when the last part ended in \r, so a \n starting the next is its \r\n.
   pasting: false, pasteCR: false,
@@ -491,11 +495,14 @@ function mergeGuard() {
 const merges = mergeGuard();
 
 // The Merge button of pull request `index`, on any forge that can merge: its
-// number, how it is shown (#12, or !12 on GitLab), and `armed` once a press asked.
+// number, how it is shown (#12, or !12 on GitLab), `armed` once a press asked, and
+// `merging` while its merge runs (#20): only in the repo it was pressed in, since
+// another repo can have a pull request with the same number.
 function mergeFor(index) {
   const forge = ui.forge, item = ui.prs[index];
   if (!forge?.mergeArgs || !item || !isNumber(item.number)) return null;
-  return { number: item.number, ref: `${forge.mark}${item.number}`, armed: ui.confirm?.number === item.number };
+  const merging = ui.merging?.number === item.number && ui.merging.root === ui.root;
+  return { number: item.number, ref: `${forge.mark}${item.number}`, armed: ui.confirm?.number === item.number, merging };
 }
 
 // A second press sooner than this after the first is a double click, not a
@@ -543,11 +550,12 @@ function cancelMerge() {
 }
 
 // The second press: like a launch, it holds ui.acting while the CLI runs, so its
-// progress stays up and nothing else starts meanwhile.
+// progress stays up and nothing else starts meanwhile. A merge that fails on the
+// way gives its button back before the notice saying so is drawn (#20).
 function mergeNow(number) {
   ui.acting = mergePr(number)
-    .catch((e) => say("error", `Can't merge ${ui.forge?.mark ?? "#"}${number}: ${e.message}`))
-    .finally(() => { ui.acting = null; });
+    .catch((e) => { ui.merging = null; say("error", `Can't merge ${ui.forge?.mark ?? "#"}${number}: ${e.message}`); })
+    .finally(() => { ui.acting = null; if (ui.merging) { ui.merging = null; draw(); } });
   return ui.acting;
 }
 
@@ -559,12 +567,20 @@ async function mergePr(number) {
   const args = forge.mergeArgs(number, repo, pr.head);
   const sh = (a) => run(forge.cli, a, { cwd: root }).catch((e) =>
     ({ code: -1, stdout: "", stderr: e.code === "ENOENT" ? `${forge.cli} isn't installed` : e.message }));
+  // Its button reads Merging #N… from the first frame on, and takes no press (#20).
+  // It's given back before the frame that says how the merge went, which is the
+  // last one drawn when nothing more happens.
+  ui.merging = { root, number };
   say("info", `Merging ${ref}…`);
   const r = await sh(args);
-  if (r.code !== 0) return say("error", `Can't merge ${ref}: ${firstLine(r.stderr) || firstLine(r.stdout) || `${forge.cli} exited ${r.code}`}`);
+  if (r.code !== 0) {
+    ui.merging = null;
+    return say("error", `Can't merge ${ref}: ${firstLine(r.stderr) || firstLine(r.stdout) || `${forge.cli} exited ${r.code}`}`);
+  }
   // A merge the CLI accepted can still be waiting: for checks (auto-merge) or in a
   // merge queue. Only a pull request the forge says is merged leaves the list.
   const view = await sh(forge.viewArgs(number));
+  ui.merging = null;
   let merged = null;
   if (view.code === 0) try { merged = forge.merged(JSON.parse(view.stdout)); } catch {}
   if (merged === true) {
@@ -837,8 +853,9 @@ async function launch(action, root, profile, template = null) {
 // (3 lines) and the meta line, left text cut so the right-hand parts always fit.
 // With an action, a Resolve or Review button follows on a line of its own; the
 // lines then carry `hit`: { line, from, to }, where the button is. With `merge`
-// ({ number, ref, armed }), a pull request's Merge button (#13) follows it, and the
-// lines carry `mergeHit` too.
+// ({ number, ref, armed, merging }), a pull request's Merge button (#13) follows it,
+// and the lines carry `mergeHit` too. While its merge runs it reads Merging #N…, in
+// yellow like the header's spinner and not inverted, as a button no press acts on (#20).
 function rowLines(item, selected, cols, icon, meta, trailing, action = null, merge = null) {
   const inner = Math.max(10, cols - 5);
   const bar = selected ? accent("▌") : " ";
@@ -862,11 +879,12 @@ function rowLines(item, selected, cols, icon, meta, trailing, action = null, mer
     // too, so the second press finds the button where the first one did; on a line
     // of its own in a narrower pane, and on GitLab, whose rows have no Review.
     const asking = ` Confirm merge ${merge.ref} `;
-    const text = ` ${fit(merge.armed ? `Confirm merge ${merge.ref}` : `Merge ${merge.ref}`, cols - 6)} `;
+    const label = merge.merging ? `Merging ${merge.ref}…` : merge.armed ? `Confirm merge ${merge.ref}` : `Merge ${merge.ref}`;
+    const text = ` ${fit(label, cols - 6)} `;
     const beside = lines.hit && lines.hit.to + 1 + width(asking) <= cols;
     const from = beside ? lines.hit.to + 1 : 4;
     lines.mergeHit = { line: beside ? lines.length - 1 : lines.length, from, to: from + width(text) };
-    const button = merge.armed ? invert(red(text)) : invert(text);
+    const button = merge.merging ? yellow(text) : merge.armed ? invert(red(text)) : invert(text);
     if (beside) lines[lines.length - 1] += ` ${button}`;
     else lines.push(`${bar}   ${button}`);
   }
