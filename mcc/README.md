@@ -50,7 +50,7 @@ Press the key in any pane. The panel opens across the bottom of the tab, under a
 
 | Key or click | Does |
 | --- | --- |
-| `r`, or click **↻ refresh** | Look every account's usage up live |
+| `r`, or click **↻ refresh** (or anywhere right of the title) | Look every account's usage up live; the button then reads ✓ updated or ✗ failed |
 | `c`, enter, or click the title | Collapse or expand |
 | `↑` `↓`, `j` `k`, or the wheel | Scroll when the accounts don't fit |
 | `q` | Close the panel |

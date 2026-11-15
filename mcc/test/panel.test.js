@@ -318,3 +318,34 @@ test("readStats reads this machine without failing", async () => {
   assert.ok(r.mem === null || (r.mem.total > 0 && r.mem.used >= 0 && r.mem.used <= r.mem.total));
   assert.ok(r.net === null || (r.net.rx >= 0 && r.net.tx >= 0));
 });
+
+test("the refresh button is a wide target: the right of the title line, not just its label", (t) => {
+  withUi(t, { collapsed: false, profiles: p.parse(DOC), stats: {} });
+  for (const cols of [40, 60, 120]) {
+    const text = strip(p.header(cols));
+    const at = text.indexOf("↻ refresh");
+    const button = p.ui.buttons.find((b) => b.row === 0 && at >= b.from && at < b.to);
+    assert.ok(button, `${cols} cols: the label is clickable`);
+    assert.ok(button.to >= cols, `${cols} cols: the button runs to the end of the row`);
+    assert.ok(button.to - button.from >= p.width("  ↻ refresh  "), `${cols} cols: wider than its label`);
+    const toggle = p.ui.buttons.find((b) => b.row === 0 && b.from === 0);
+    assert.ok(toggle.to <= button.from, `${cols} cols: the caret still collapses`);
+    assert.ok(p.width(text) <= cols, `${cols} cols: "${text}" fits`);
+  }
+});
+
+test("the refresh button spins, then says how the refresh went for a moment", (t) => {
+  withUi(t, { refreshing: true, flash: null });
+  assert.match(p.refreshButton().text, /refreshing/);
+  p.ui.refreshing = false;
+  p.ui.flash = { ok: true, until: 2000 };
+  assert.match(p.refreshButton(1000).text, /✓ updated/);
+  p.ui.flash = { ok: false, until: 2000 };
+  assert.match(p.refreshButton(1000).text, /✗ failed/);
+  assert.match(p.refreshButton(3000).text, /↻ refresh/, "then back to refresh");
+  p.ui.flash = null;
+  for (const cols of [24, 32, 60]) {
+    p.ui.flash = { ok: false, until: Infinity };
+    assert.ok(p.width(strip(p.header(cols))) <= cols, `failed label fits ${cols} cols`);
+  }
+});
