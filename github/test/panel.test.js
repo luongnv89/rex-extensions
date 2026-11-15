@@ -251,7 +251,7 @@ function setup(view) {
   Object.assign(ui, {
     view, prs: items("pull"), issues: items("issues"), errors: {}, error: null, repo: { name: "o/p", url: "https://x/o/p" },
     loading: false, fetched: true, follow: false, sel: { prs: 0, issues: 0 }, top: { prs: 0, issues: 0 }, notice: null,
-    forge: null, root: null, settings: null, acting: null, menu: null, confirm: null, pasting: false, pasteCR: false,
+    forge: null, root: null, settings: null, acting: null, menu: null, confirm: null, merging: null, pasting: false, pasteCR: false,
   });
   follow("block:agent");
   opened.length = 0;
@@ -520,7 +520,7 @@ test("a Ctrl-click on a title is left to the terminal", () => {
 function setupGitHub(view) {
   setup(view);
   for (const v of ["prs", "issues"]) ui[v].forEach((x, i) => Object.assign(x, { ref: `#${10 + i}`, number: 10 + i }));
-  Object.assign(ui, { forge: FORGES.github, root: "/repo", tab: "window:w1", sel: { prs: 2, issues: 2 }, acting: null });
+  Object.assign(ui, { forge: FORGES.github, root: "/repo", tab: "window:w1", sel: { prs: 2, issues: 2 }, acting: null, merging: null });
   calls.length = 0;
   callOpts.length = 0;
   return screen(draw);
@@ -2987,6 +2987,108 @@ test("while a merge runs its progress stays up, and a, Review and another Merge 
   });
   assert.equal(ui.notice?.text, "Merged #12");
   assert.deepEqual(mergeCalls(), [["pr", "merge", "12", "--squash", "--match-head-commit", headOf(12)]]);
+});
+
+// A pull request's Merge button as the frame `lines` drew it, read off the buttons
+// that frame registered: its place, and the label on it (#20). Not found by its
+// text, since the notice says Merging #N… too.
+const mergeButtonOf = (lines, number) => {
+  const b = ui.buttons.find((x) => x.merge === number);
+  assert.ok(b, `no Merge button for #${number}\n${lines.join("\n")}`);
+  return { ...b, label: lines[b.row]?.slice(b.from, b.to) };
+};
+
+test("while a merge runs its button reads Merging #N… until the forge says what became of it, and a press on it does nothing (#20)", { timeout: 5000 }, async (t) => {
+  const { lines } = await loadForge(t);
+  await quietly(async () => {
+    hold = (name, args) => name === "gh" && args[0] === "pr" && (args[1] === "merge" || args[1] === "view");
+    pressButton(lines, "Merge #12");
+    later();
+    // The frame the second press itself drew already shows it.
+    let now = screen(() => pressButton(screen(draw), "Confirm merge #12"));
+    assert.equal(mergeButtonOf(now, 12).label, " Merging #12… ", now.join("\n"));
+    assert.equal(find(now, "Merge #12")[1], -1, now.join("\n"));
+    assert.deepEqual(ui.merging, { root: "/repo", number: 12 });
+    // A key redraws it the same; the other rows keep their Merge button.
+    now = screen(() => onInput(Buffer.from("j")));
+    assert.equal(mergeButtonOf(now, 12).label, " Merging #12… ", now.join("\n"));
+    // A press on it merges nothing more, and opens nothing.
+    for (let i = 0; i < 2; i++) {
+      now = screen(draw);
+      const b = mergeButtonOf(now, 12);
+      now = screen(() => onInput(Buffer.from(pressAt(b.from, b.row))));
+      later();
+    }
+    assert.equal(mergeCalls().length, 1);
+    assert.deepEqual(opened, []);
+    assert.equal(ui.confirm, null);
+    assert.equal(mergeButtonOf(screen(draw), 12).label, " Merging #12… ");
+    // gh accepts the merge; while the panel reads what became of it, it's still merging.
+    const merging = held.find((h) => h.args[1] === "merge");
+    merging.answer(gh(merging.args));
+    for (let i = 0; i < 50 && !held.some((h) => h.args[1] === "view"); i++) await tick();
+    const viewing = held.find((h) => h.args[1] === "view");
+    assert.ok(viewing, "the panel reads the pull request's state");
+    now = screen(draw);
+    assert.equal(mergeButtonOf(now, 12).label, " Merging #12… ", now.join("\n"));
+    hold = () => false;
+    viewing.answer(gh(viewing.args));
+    await ui.acting;
+    await idle();
+  });
+  // Merged: the row, and its button, are gone.
+  assert.equal(ui.notice?.text, "Merged #12");
+  assert.equal(ui.merging, null);
+  assert.ok(!ui.prs.some((p) => p.number === 12));
+  assert.ok(!ui.buttons.some((b) => b.merge === 12));
+  assert.equal(mergeCalls().length, 1);
+});
+
+test("a merge that fails gives its button back: the last frame drawn shows Merge #N with the red reason (#20)", async (t) => {
+  const { lines } = await loadForge(t, { reply: { code: 1, stderr: "GraphQL: Pull request is not mergeable\n" } });
+  screen(() => pressButton(lines, "Merge #12"));
+  later();
+  const asking = screen(draw);
+  // Merging while gh runs; then what the panel drew last, by itself, with nothing
+  // redrawn after the merge.
+  const merging = () => assert.equal(mergeButtonOf(screen(draw), 12).label, " Merging #12… ");
+  let last = await screenAsync(() => { pressButton(asking, "Confirm merge #12"); merging(); });
+  assert.equal(ui.notice?.tone, "error");
+  assert.equal(ui.notice.text, "Can't merge #12: GraphQL: Pull request is not mergeable");
+  assert.ok(last.some((l) => l?.includes("Can't merge #12")), last.join("\n"));
+  assert.equal(mergeButtonOf(last, 12).label, " Merge #12 ", last.join("\n"));
+  assert.ok(!last.some((l) => l?.includes("Merging #12…")), last.join("\n"));
+  assert.equal(ui.merging, null);
+  // A merge that throws on the way says so the same, and gives the button back too.
+  const { viewArgs } = FORGES.github;
+  t.after(() => { FORGES.github.viewArgs = viewArgs; });
+  FORGES.github.viewArgs = () => { throw new Error("can't read it"); };
+  gh = ((reply) => (args) => args[1] === "merge" ? { code: 0, stdout: "" } : reply(args))(gh);
+  screen(() => pressButton(screen(draw), "Merge #12"));
+  later();
+  const again = screen(draw);
+  last = await screenAsync(() => { pressButton(again, "Confirm merge #12"); merging(); });
+  assert.equal(ui.notice?.text, "Can't merge #12: can't read it");
+  assert.equal(mergeButtonOf(last, 12).label, " Merge #12 ", last.join("\n"));
+  assert.ok(!last.some((l) => l?.includes("Merging #12…")), last.join("\n"));
+  assert.equal(ui.merging, null);
+});
+
+test("a merge under way marks its own repo's pull request, not one with the same number in another repo (#20)", () => {
+  setupGitHub("prs");
+  const shown = () => { ui.follow = true; return screen(draw); };
+  ui.merging = { root: "/other", number: 12 };
+  let lines = shown();
+  assert.equal(mergeButtonOf(lines, 12).label, " Merge #12 ", lines.join("\n"));
+  ui.merging = { root: "/repo", number: 12 };
+  lines = shown();
+  assert.equal(mergeButtonOf(lines, 12).label, " Merging #12… ", lines.join("\n"));
+  assert.equal(mergeButtonOf(lines, 11).label, " Merge #11 ", lines.join("\n"));
+  // Not drawn as a button to press: no inverse video, in the spinner's yellow.
+  const raw = prRow(ui.prs[2], false, 60, null, { number: 12, ref: "#12", armed: false, merging: true }).join("\n");
+  assert.match(raw, /\x1b\[33m Merging #12… \x1b\[0m/);
+  assert.doesNotMatch(raw, /\x1b\[7m/);
+  ui.merging = null;
 });
 
 test("beside Merge, a pull request's Review button and a still start a review of that row (#13)", async (t) => {
