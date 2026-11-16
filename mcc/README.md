@@ -13,7 +13,7 @@ The 5-hour and weekly Claude Code usage of every account [mcc](https://github.co
  r refresh · c collapse · q close
 ```
 
-Each row shows a bar, the percent used and the time until the window resets. As in `mcc usage`, `!` marks 80% or more and `!!` marks 95% or more. The default account's name is in cyan. A ⚠ marks an account whose last live lookup failed or whose login ends soon, with a line under the table naming the `mcc login` command that fixes it. When an account's numbers are more than an hour old, its row says how old they are.
+Each row starts with the account's number, in mcc's order, and shows a bar, the percent used and the time until the window resets. As in `mcc usage`, `!` marks 80% or more and `!!` marks 95% or more. The default account's name is in cyan. A ⚠ marks an account whose last live lookup failed or whose login ends soon, with a line under the table naming the `mcc login` command that fixes it. When an account's numbers are more than an hour old, its row says how old they are.
 
 The line under the title shows this machine's CPU and memory use (green, yellow from 80%, red from 95%) and how fast it's receiving (↓) and sending (↑) over the network. A value it can't read says `unavailable`; the usage rows still show. A narrow panel drops the network, then the memory totals.
 

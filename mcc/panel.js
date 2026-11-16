@@ -113,7 +113,8 @@ const usageWindow = (w) => (w && typeof w.percent === "number" ? { percent: w.pe
 function parse(stdout) {
   const doc = JSON.parse(stdout);
   if (doc?.schema !== 2 || !Array.isArray(doc.profiles)) throw new Error(`unexpected mcc output (schema ${doc?.schema ?? "?"}); update mcc`);
-  return doc.profiles.map((p) => ({
+  return doc.profiles.map((p, i) => ({
+    index: i + 1, // the account's number in the table, from 1
     name: clean(p.name),
     isDefault: Boolean(p.is_default),
     status: p.usage?.status ?? "unavailable",
@@ -402,24 +403,27 @@ function cell(label, w, bw, reset, now) {
 const cellWidthFor = (bw, reset) => 3 + (bw ? bw + 1 : 0) + 6 + (reset ? 7 : 0);
 
 // How a row is laid out at `cols`: the widest that fits, dropping bars, then the countdown.
-function columns(cols, nameWidth) {
-  const fixed = 1 + nameWidth + 2 + 2 + 2; // indent, name, gap, gap between windows, marker
+// `indexWidth` is the width of the widest account number.
+function columns(cols, nameWidth, indexWidth = 1) {
+  const lead = indexWidth + 1; // the account number and the space after it
+  const fixed = 1 + lead + nameWidth + 2 + 2 + 2; // indent, number, name, gap, gap between windows, marker
   for (const reset of [true, false]) {
     const room = cols - fixed - 2 * cellWidthFor(0, reset);
     const bw = Math.min(20, Math.floor(room / 2) - 1);
-    if (bw >= 4) return { nameWidth, bw, reset };
-    if (room >= 0 && reset) return { nameWidth, bw: 0, reset };
+    if (bw >= 4) return { indexWidth, nameWidth, bw, reset };
+    if (room >= 0 && reset) return { indexWidth, nameWidth, bw: 0, reset };
   }
   const room = cols - fixed - 2 * cellWidthFor(0, false);
-  if (nameWidth + room >= 4) return { nameWidth: nameWidth + Math.min(0, room), bw: 0, reset: false };
-  // Too narrow for two cells: "name 12/81%!" (the 5-hour, then the weekly percent).
-  return { nameWidth: Math.max(1, Math.min(nameWidth, cols - 14)), compact: true };
+  if (nameWidth + room >= 4) return { indexWidth, nameWidth: nameWidth + Math.min(0, room), bw: 0, reset: false };
+  // Too narrow for two cells: "1 name 12/81%!" (the 5-hour, then the weekly percent).
+  return { indexWidth, nameWidth: Math.max(1, Math.min(nameWidth, cols - 14 - lead)), compact: true };
 }
 
 function row(p, layout, issue, now = Date.now()) {
   const name = padEnd(fit(p.name, layout.nameWidth), layout.nameWidth);
   const marker = issue || p.loginWarning ? yellow(" ⚠") : "  ";
-  const label = p.isDefault ? accent(name) : name;
+  const number = dim(padStart(String(p.index ?? ""), layout.indexWidth ?? 1)) + " ";
+  const label = number + (p.isDefault ? accent(name) : name);
   if (layout.compact) {
     const pct = (w) => (w ? String(Math.round(w.percent)) : "—");
     const worst = Math.max(p.five?.percent ?? 0, p.week?.percent ?? 0);
@@ -688,7 +692,9 @@ function header(cols) {
   const { text: refreshText, color: refreshColor } = refreshButton(now);
   let refreshLabel = ` ${refreshText} `;
   const title = ` ${caret} mcc usage`;
-  const room = cols - width(title) - width(refreshLabel) - 2;
+  // The info text's room: a space after the title, one plain space before the button
+  // so its highlight never touches the text, and the last column left free.
+  const room = cols - width(title) - width(refreshLabel) - 3;
   let info = "";
   if (ui.collapsed) {
     // Collapsed, the title line carries the peaks and the machine's CPU and memory,
@@ -711,15 +717,16 @@ function header(cols) {
   const infoText = room > 6 ? fit(info, room) : "";
   // A roomier button when the line has the space for it.
   if (room - width(infoText) >= 2) refreshLabel = `  ${refreshText}  `;
-  const gap = Math.max(1, cols - width(title) - width(infoText) - width(refreshLabel) - 1);
+  const sep = infoText ? " " : "";
+  const gap = Math.max(1, cols - width(title) - width(infoText) - sep.length - width(refreshLabel) - 1);
   ui.buttons.push({ row: 0, from: 0, to: width(title) + 1, action: toggleCollapsed });
   // Expanded, the button, the "updated …" text before it and the rest of the row all
   // refresh: a one-row button is an easy target to miss. Collapsed, it starts at the
   // label, so a click on the summary expands the panel instead.
-  const at = width(title) + gap + width(infoText);
-  const from = ui.collapsed ? at : Math.max(width(title) + 2, at - width(infoText) - 2);
+  const at = width(title) + gap + width(infoText) + sep.length;
+  const from = ui.collapsed ? at : Math.max(width(title) + 2, at - width(infoText) - sep.length - 2);
   ui.buttons.push({ row: 0, from, to: Math.max(cols, at + width(refreshLabel)), action: refresh });
-  return bold(title) + " ".repeat(Math.max(0, gap - 1)) + " " + dim(infoText) + refreshColor(refreshLabel);
+  return bold(title) + " ".repeat(gap) + dim(infoText) + sep + refreshColor(refreshLabel);
 }
 
 const FOOTER = [{ text: " r refresh", action: () => refresh() }, { text: "c collapse", action: () => toggleCollapsed() }, { text: "q close", action: () => quit() }];
@@ -745,7 +752,7 @@ function draw() {
   if (!ui.collapsed) out.push(statsRow(cols), dim("─".repeat(cols)));
 
   const nameWidth = Math.min(16, Math.max(4, ...ui.profiles.map((p) => width(p.name))));
-  const layout = columns(cols, nameWidth);
+  const layout = columns(cols, nameWidth, String(ui.profiles.length).length);
   const body = [];
   if (!ui.loaded) body.push(dim(" Loading…"));
   else if (!ui.profiles.length && !ui.error) body.push(dim(" No mcc profiles"));

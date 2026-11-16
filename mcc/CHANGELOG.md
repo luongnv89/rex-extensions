@@ -5,10 +5,12 @@
 ### Added
 
 - **Opens under the GitHub panel.** When the tab already has a [rex-github](../github/) panel, the usage panel opens right under it, sharing its column, instead of across the bottom of the whole tab. Without one, it opens across the bottom of the tab as before.
+- **Account numbers.** Each row of the usage table starts with the account's number (1, 2, 3, …), in mcc's order, right-aligned once there are ten accounts or more.
 - **Machine stats**, ported from [mcc-herdr-plugin](https://github.com/luongnv89/mcc-herdr-plugin) 0.2.0: a line under the title shows this machine's CPU and memory use and its network download/upload rate, updated every 5 seconds. Linux reads `/proc`; macOS reads `vm_stat` and `netstat` (memory as Activity Monitor's "Memory Used"), and CPU comes from `os.cpus()`. Only physical network interfaces count. A value that can't be read shows `unavailable` and the usage rows still show. Collapsed, the title row adds the CPU and memory percent, and the network when there's room.
 
 ### Fixed
 
+- The refresh button no longer touches the "updated … ago" text before it: a plain space always separates them, and the text is shortened by a cell when the row is tight.
 - The refresh button is easier to hit and always answers a click. The whole right side of the title row, from the "updated …" text to the edge, now refreshes, and the button is wider when the row has room. A refresh spins for at least 0.7 s, then the button reads **✓ updated** or **✗ failed** for a moment, so a quick refresh, or one that fails while the panel is collapsed, no longer looks like nothing happened. The footer's `r refresh · c collapse · q close` hints are clickable too. Collapsed, only the button itself refreshes, so a click on the summary still expands the panel, and a failed refresh leaves a line under the table saying why until the next one succeeds.
 - The panel works in a session on a remote host. The action ran `node` with this machine's full path to `panel.js`, which doesn't exist on the remote host, so the pane closed at once. It now passes the path relative to `$HOME`, and the remote host finds `panel.js` under its own `$HOME`: install the extension there at the same path under `$HOME` ([#12](https://github.com/luongnv89/rex-extensions/issues/12)). The pane starts in its machine's default folder instead of this machine's clone of the extension.
 
