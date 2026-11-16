@@ -13,7 +13,7 @@ The 5-hour and weekly Claude Code usage of every account [mcc](https://github.co
  r refresh · c collapse · q close
 ```
 
-Each row shows a bar, the percent used and the time until the window resets. As in `mcc usage`, `!` marks 80% or more and `!!` marks 95% or more. The default account's name is in cyan. A ⚠ marks an account whose last live lookup failed or whose login ends soon, with a line under the table naming the `mcc login` command that fixes it. When an account's numbers are more than an hour old, its row says how old they are.
+Each row starts with the account's number, in mcc's order, and shows a bar, the percent used and the time until the window resets. As in `mcc usage`, `!` marks 80% or more and `!!` marks 95% or more. The default account's name is in cyan. A ⚠ marks an account whose last live lookup failed or whose login ends soon, with a line under the table naming the `mcc login` command that fixes it. When an account's numbers are more than an hour old, its row says how old they are.
 
 The line under the title shows this machine's CPU and memory use (green, yellow from 80%, red from 95%) and how fast it's receiving (↓) and sending (↑) over the network. A value it can't read says `unavailable`; the usage rows still show. A narrow panel drops the network, then the memory totals.
 
@@ -46,7 +46,7 @@ To update, `git pull` in the folder you cloned. To remove it, run `node mcc/inst
 
 ## Use
 
-Press the key in any pane. The panel opens across the bottom of the tab, under all its panes, without taking focus, and fits its height to the accounts. Press the key again in that tab, from any pane, to close it.
+Press the key in any pane. The panel opens across the bottom of the tab, under all its panes, without taking focus, and fits its height to the accounts. If the tab has a [rex-github](../github/) panel, it opens right under that panel instead, so the two share the right-hand column. Press the key again in that tab, from any pane, to close it.
 
 | Key or click | Does |
 | --- | --- |
@@ -91,7 +91,7 @@ It sends nothing anywhere itself. A refresh makes mcc send each account's login 
 - **"unexpected mcc output (schema …)":** your mcc is too old for `--json-v2`. Update it.
 - **An account says "login expired" or "not logged in":** run the `mcc login` command the panel shows, then refresh.
 - **"rate limited":** Anthropic's usage endpoint refused the lookup. The panel keeps the last numbers it had; refresh again later.
-- **The panel isn't at the bottom of the tab's full width:** it fits its height only when it's the bottom part of a top/bottom split, as the key opens it. If you moved it, close it and press the key again.
+- **The panel isn't at the bottom of the tab's full width:** if the tab has a rex-github panel, the usage panel sits under it on purpose. Otherwise, it fits its height only when it's the bottom part of a top/bottom split, as the key opens it. If you moved it, close it and press the key again.
 
 ## Develop
 
@@ -103,7 +103,7 @@ node --test
 
 `rex do ./rex-mcc.lua --action mcc_usage` runs the action from your clone without installing it. A change to `panel.js` shows the next time the panel opens; a change to `rex-mcc.lua` needs `rex config reload`. `node panel.js` also runs the panel in any terminal.
 
-- `rex-mcc.lua`: the `mcc_usage` action, which opens the panel across the bottom of the tab or closes it.
+- `rex-mcc.lua`: the `mcc_usage` action, which opens the panel under the tab's rex-github panel, or across the bottom of the tab, or closes it.
 - `panel.js`: the panel itself. Plain Node, no npm packages.
 - `install.js`: adds the panel and a key to `init.lua`, or takes them out.
 - `test/`: unit tests for reading mcc's JSON, the rows at every width, the notices, the machine stats parsers and their line at every width (fixtures in `test/system-fixtures.js`), finding the split above the panel and the ratio that fits it, and for which key `install.js` picks and how it edits `init.lua`.

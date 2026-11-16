@@ -67,6 +67,24 @@ test("wide rows carry bars and countdowns, narrow ones drop them", () => {
   assert.match(narrow, /12%.*81%!/);
 });
 
+test("each row starts with the account's number", () => {
+  const rows = p.parse(DOC);
+  assert.deepEqual(rows.map((r) => r.index), [1, 2, 3]);
+  for (const cols of [22, 34, 80]) {
+    const layout = p.columns(cols, 7);
+    assert.deepEqual(rows.map((r) => strip(p.row(r, layout, null, NOW)).slice(0, 3)), [" 1 ", " 2 ", " 3 "], `${cols} cols`);
+  }
+  // Ten accounts or more: numbers are right-aligned, and rows still fit.
+  const many = Array.from({ length: 12 }, (_, i) => ({ ...rows[0], index: i + 1 }));
+  for (const cols of [16, 22, 34, 80]) {
+    const layout = p.columns(cols, 7, 2);
+    const text = many.map((r) => strip(p.row(r, layout, null, NOW)));
+    assert.equal(text[0].slice(0, 4), "  1 ", `${cols} cols`);
+    assert.equal(text[11].slice(0, 4), " 12 ", `${cols} cols`);
+    for (const t of text) assert.ok(p.width(t) <= cols, `${cols} cols: "${t}" is ${p.width(t)} wide`);
+  }
+});
+
 test("an unreadable account shows why", () => {
   const rows = p.parse(DOC);
   assert.match(strip(p.row(rows[2], p.columns(80, 7), null, NOW)), /old +login expired/);
@@ -147,10 +165,10 @@ test("wantedRows fits the accounts and notices, or only the header when collapse
 
 test("a very narrow pane gets compact rows", () => {
   const rows = p.parse(DOC);
-  const layout = p.columns(22, 7);
+  const layout = p.columns(24, 7);
   assert.ok(layout.compact);
-  assert.equal(strip(p.row(rows[0], layout, null, NOW)), " default 12/81%!");
-  assert.equal(strip(p.row(rows[2], layout, null, NOW)), " old     ✗");
+  assert.equal(strip(p.row(rows[0], layout, null, NOW)), " 1 default 12/81%!");
+  assert.equal(strip(p.row(rows[2], layout, null, NOW)), " 3 old     ✗");
 });
 
 test("clip cuts by cells and keeps colour codes", () => {
@@ -300,7 +318,7 @@ test("collapse and expand start the CPU and network over from a new base", (t) =
 test("collapsed, the title line adds CPU and memory, and the network when there's room", (t) => {
   withUi(t, { collapsed: true, profiles: p.parse(DOC), stats: STATES.read });
   assert.match(strip(p.header(120)), /5h 12% · wk 96% · cpu 17% · mem 80% · net ↓1\.2M ↑40K/);
-  const mid = strip(p.header(60));
+  const mid = strip(p.header(62));
   assert.match(mid, /5h 12% · wk 96% · cpu 17% · mem 80%/);
   assert.doesNotMatch(mid, /net/);
   for (const [name, s] of Object.entries(STATES)) {
@@ -308,6 +326,23 @@ test("collapsed, the title line adds CPU and memory, and the network when there'
     for (const cols of [24, 28, 32, 40, 50, 60, 80, 120, 200]) {
       const text = strip(p.header(cols));
       assert.ok(p.width(text) <= cols, `${name} at ${cols} cols: "${text}" is ${p.width(text)} wide`);
+    }
+  }
+});
+
+test("a plain space always sits between the info text and the refresh button", (t) => {
+  withUi(t, { collapsed: false, profiles: p.parse(DOC), stats: STATES.read });
+  for (const collapsed of [false, true]) {
+    p.ui.collapsed = collapsed;
+    for (const cols of [24, 28, 32, 40, 50, 60, 80, 120]) {
+      const line = p.header(cols);
+      // The button's highlight starts at its colour code: the cell before it is a plain space.
+      const at = line.lastIndexOf("\x1b[7m");
+      assert.ok(at > 0, `${cols} cols: the button is drawn`);
+      const before = strip(line.slice(0, at));
+      assert.equal(before.slice(-1), " ", `${cols} cols${collapsed ? ", collapsed" : ""}: "${strip(line)}"`);
+      assert.notEqual(before.slice(-2, -1), "", `${cols} cols: text before the button`);
+      assert.ok(p.width(strip(line)) <= cols, `${cols} cols: "${strip(line)}" is ${p.width(strip(line))} wide`);
     }
   }
 });
