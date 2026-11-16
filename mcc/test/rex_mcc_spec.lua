@@ -31,18 +31,20 @@ os.getenv = function(name)
   return getenv(name)
 end
 
--- A stub of Rex: one tab holding the focused block "blk-1".
+-- A stub of Rex: one tab holding the focused block "blk-1", or the tab VIEW.
+local ALONE = { windows = { { layers = { {
+  kind = "tiled",
+  layout = { block_id = "blk-1", rect = { 0, 0, 1, 1 } },
+  blocks = { { block_id = "blk-1", label = "" } },
+} } } } }
+local VIEW = ALONE
 local run, split
 rex = {
   bind = function() end,
   action = function(spec) run = spec.run end,
   call = function(method, params)
     if method == "session.view" then
-      return { windows = { { layers = { {
-        kind = "tiled",
-        layout = { block_id = "blk-1", rect = { 0, 0, 1, 1 } },
-        blocks = { { block_id = "blk-1", label = "" } },
-      } } } } }
+      return VIEW
     elseif method == "session.new_split" then
       split = params
       return { block_ids = { "blk-2" } }
@@ -124,6 +126,43 @@ load_as('/home/me/my "ext" $HOME `x` dir/mcc/rex-mcc.lua')
 command = open("/home/me")
 eq(list(command), under_home('/my "ext" $HOME `x` dir/mcc/panel.js'), "a path with quotes, $ and spaces")
 eq(command[3], SCRIPT, "the script is the same for every path")
+
+-- Where the panel goes: across the tab's bottom, or right under a rex-github panel.
+load_as("/tmp/ext/mcc/rex-mcc.lua")
+open("/home/me")
+eq(split.anchor_id, "blk-1", "alone: the panel splits the tab's root")
+eq(split.direction, "vertical", "alone: the panel goes under")
+eq(split.side, "after", "alone: the panel goes after")
+
+VIEW = { windows = { { layers = { {
+  kind = "tiled",
+  layout = { split = { split_id = "split-1", direction = "horizontal", ratio = 0.67,
+    before = { block_id = "blk-1" }, after = { block_id = "gh-1" } } },
+  blocks = { { block_id = "blk-1", label = "" }, { block_id = "gh-1", label = "notes" } },
+} } } } }
+open("/home/me")
+eq(split.anchor_id, "split-1", "no rex-github panel: the panel splits the tab's root")
+
+VIEW.windows[1].layers[1].blocks[2].label = "rex-github"
+open("/home/me")
+eq(split.anchor_id, "gh-1", "a rex-github panel: the panel splits it")
+eq(split.direction, "vertical", "a rex-github panel: the panel goes under it")
+eq(split.side, "after", "a rex-github panel: the panel goes after it")
+
+-- A rex-github panel in another tab, or floating, changes nothing.
+VIEW = { windows = {
+  { layers = { { kind = "tiled", layout = { block_id = "gh-2" }, blocks = { { block_id = "gh-2", label = "rex-github" } } } } },
+  ALONE.windows[1],
+} }
+open("/home/me")
+eq(split.anchor_id, "blk-1", "a rex-github panel in another tab")
+VIEW = { windows = { { layers = {
+  ALONE.windows[1].layers[1],
+  { kind = "floating", blocks = { { block_id = "gh-3", label = "rex-github" } } },
+} } } }
+open("/home/me")
+eq(split.anchor_id, "blk-1", "a floating rex-github panel")
+VIEW = ALONE
 
 -- The real module, loaded from where it is.
 dofile(MODULE)

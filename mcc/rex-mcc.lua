@@ -6,12 +6,15 @@
 --   dofile("/path/to/rex-extensions/mcc/rex-mcc.lua")
 --   rex.bind("cmd+shift+u", "mcc_usage")
 --
--- The action opens the panel across the bottom of the focused pane's tab, or
--- closes it when that tab already has one. A panel is the block labelled
+-- The action opens the panel under the tab's rex-github panel when it has one,
+-- else across the bottom of the focused pane's tab, or closes it when that tab
+-- already has one. A panel is the block labelled
 -- "rex-mcc", so no state is kept anywhere to find it again. The panel fits its
 -- own height to the accounts once it starts.
 
 local LABEL = "rex-mcc"
+-- The rex-github panel: when the tab has one, the panel goes right under it.
+local GITHUB = "rex-github"
 local TERMINAL = "com.superlogical.terminal.shell"
 -- The panel's share of the tab's height until it fits itself.
 local HEIGHT = 0.25
@@ -60,6 +63,18 @@ local function root_of(window)
   return nil
 end
 
+-- The block labelled `label` in `window`'s tiled layer, or nil.
+local function tiled_block(window, label)
+  for _, layer in ipairs(window.layers or {}) do
+    if layer.kind == "tiled" then
+      for _, block in ipairs(layer.blocks or {}) do
+        if block.label == label then return block.block_id end
+      end
+    end
+  end
+  return nil
+end
+
 local function toggle(ctx)
   local view = rex.call("session.view", { session_id = ctx.session_id })
   local window, blocks = find_window(view, ctx.block_id)
@@ -76,7 +91,7 @@ local function toggle(ctx)
 
   local opened = rex.call("session.new_split", {
     session_id = ctx.session_id,
-    anchor_id = root_of(window) or ctx.block_id,
+    anchor_id = tiled_block(window, GITHUB) or root_of(window) or ctx.block_id,
     direction = "vertical",
     side = "after",
     ratio = 1 - HEIGHT,
