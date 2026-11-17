@@ -6,6 +6,10 @@
 // Ahead of herdr-github (luongnv89/herdr-github#54): the built-in model lists
 // (MODELS), and the custom models of store version 3 (customModels, modelChoices,
 // addCustomModel, removeCustomModel). Copy them there as they are.
+// Ahead of herdr-github too (#31): the Auto-pilot prompt, run on several issues at
+// once, and store version 4 that holds it (PROMPT_KEYS, PROMPT_TOKENS, the
+// {numbers} token, expandNumbers, and validatePromptTemplate taking the key).
+// Profiles are still assigned to Resolve and Review only (ACTION_KEYS).
 "use strict";
 
 // Agent profiles for the Resolve and Review actions: which harness starts, with
@@ -56,15 +60,19 @@ const NO_MODEL = ["opencode"];
 
 // The two actions a profile can be assigned to.
 const ACTION_KEYS = ["resolve", "review"];
+// The prompts the store can hold a custom one for: each action's, and Auto-pilot's,
+// which runs on several issues at once and starts the profile Resolve would (#31).
+const PROMPT_KEYS = [...ACTION_KEYS, "autopilot"];
 
 // What an action starts when no profile is assigned to it, or its profile is gone.
 const DEFAULT_PROFILE = Object.freeze({ id: "default", name: "Claude Code via mcc run", harness: "mcc" });
 
 // The newest store version this reads and writes. A store is written in the
 // lowest version that holds it: 1 without custom prompts or models, 2 with custom
-// prompts, 3 with custom models. So an older panel keeps using it until then.
-const STORE_VERSION = 3;
-const READS = [1, 2, 3];
+// prompts, 3 with custom models, 4 with a custom Auto-pilot prompt. So an older
+// panel keeps using it until then.
+const STORE_VERSION = 4;
+const READS = [1, 2, 3, 4];
 
 const ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const NAME = /^[^\x00-\x1f\x7f-\x9f\u2028\u2029]{1,40}$/;
@@ -81,8 +89,12 @@ const PROMPT_BAD = /[\p{C}\u2028\u2029\\]/u;
 const PROMPT_MAX = 500;
 // Where a custom prompt takes the issue's or pull request's number.
 const PROMPT_TOKEN = "{number}";
+// Where the Auto-pilot prompt takes the checked issues' numbers: 12,15 (#31).
+const PROMPT_LIST_TOKEN = "{numbers}";
+// The token each prompt must hold.
+const PROMPT_TOKENS = { resolve: PROMPT_TOKEN, review: PROMPT_TOKEN, autopilot: PROMPT_LIST_TOKEN };
 // A custom prompt's field, as the views name it and its reasons start ("Resolve prompt: …").
-const PROMPT_LABELS = { resolve: "Resolve prompt", review: "Review prompt" };
+const PROMPT_LABELS = { resolve: "Resolve prompt", review: "Review prompt", autopilot: "Auto-pilot prompt" };
 const ALL_LEVELS = [...new Set(Object.values(THINKING).flat())];
 
 const blank = (v) => v === undefined || v === null || v === "";
@@ -135,9 +147,15 @@ function validatePrompt(text) {
 }
 
 // Why a custom prompt can't be saved: it needs {number}, and must still be a valid
-// prompt with the longest number filled in. Empty when it can.
-function validatePromptTemplate(template) {
+// prompt with the longest number filled in. Empty when it can. The Auto-pilot
+// prompt (`key` "autopilot") needs {numbers} instead, and is checked here with one
+// longest number in it; with the issues checked, it is checked again when it starts.
+function validatePromptTemplate(template, key = "resolve") {
   if (typeof template !== "string") return ["must be text"];
+  if (key === "autopilot") {
+    const errors = template.includes(PROMPT_LIST_TOKEN) ? [] : [`must contain ${PROMPT_LIST_TOKEN}, where the issues' numbers go`];
+    return [...errors, ...validatePrompt(expandNumbers(template, [Number.MAX_SAFE_INTEGER]))];
+  }
   const errors = template.includes(PROMPT_TOKEN) ? [] : [`must contain ${PROMPT_TOKEN}, where the number goes`];
   return [...errors, ...validatePrompt(expandPrompt(template, Number.MAX_SAFE_INTEGER))];
 }
@@ -148,6 +166,15 @@ function expandPrompt(template, number) {
   if (typeof template !== "string") throw new Error("No prompt");
   if (!Number.isSafeInteger(number) || number <= 0) throw new Error("not a number");
   return template.replaceAll(PROMPT_TOKEN, String(number));
+}
+
+// The Auto-pilot prompt for several issues: each {numbers} in `template` becomes
+// `numbers`, a list of positive integers, joined by commas with no spaces, in the
+// order given: 12,15 (#31).
+function expandNumbers(template, numbers) {
+  if (typeof template !== "string") throw new Error("No prompt");
+  if (!Array.isArray(numbers) || !numbers.length || !numbers.every((n) => Number.isSafeInteger(n) && n > 0)) throw new Error("not a list of numbers");
+  return template.replaceAll(PROMPT_LIST_TOKEN, numbers.join(","));
 }
 
 // How to start a profile's agent with `prompt`. Checks its input again, so an
@@ -190,7 +217,9 @@ function buildLaunch(profile, prompt) {
 //   "prompts": { "resolve": template | null, "review": template | null }
 // With a model you added for a harness, it is version 3, and also holds
 //   "customModels": { harness: [model, …], … }
-// A panel from before version 2 (or 3) shows such a file read only, so never loses them.
+// With a custom Auto-pilot prompt, it is version 4: as version 3, its prompts also
+// holding "autopilot": template | null (#31).
+// A panel from before version 2 (or 3, or 4) shows such a file read only, so never loses them.
 
 // Rex's own file, on the machine where the Rex server runs. One fixed path under
 // home, whatever the environment says, so it is always the same file.
@@ -200,7 +229,7 @@ function storePath(home) {
 }
 
 function emptyStore() {
-  return { version: STORE_VERSION, profiles: [], assign: { resolve: null, review: null }, prompts: { resolve: null, review: null }, customModels: {} };
+  return { version: STORE_VERSION, profiles: [], assign: { resolve: null, review: null }, prompts: { resolve: null, review: null, autopilot: null }, customModels: {} };
 }
 
 // The store in a file's text, read leniently: a bad profile, prompt or custom
@@ -244,10 +273,10 @@ function parseStore(text) {
   // A prompt that can't be used is skipped: its action sends the default prompt.
   let badPrompt = data.prompts !== undefined && data.prompts !== null && (typeof data.prompts !== "object" || Array.isArray(data.prompts));
   if (badPrompt) warnings.push("The profiles file's prompts aren't an object");
-  else for (const action of ACTION_KEYS) {
+  else for (const action of PROMPT_KEYS) {
     const raw = data.prompts?.[action];
     if (raw === null || raw === undefined || (typeof raw === "string" && !raw.trim())) continue;
-    const why = typeof raw === "string" ? validatePromptTemplate(raw.trim()) : ["must be text"];
+    const why = typeof raw === "string" ? validatePromptTemplate(raw.trim(), action) : ["must be text"];
     if (!why.length) store.prompts[action] = raw.trim();
     else { badPrompt = true; warnings.push(`Skipped the ${PROMPT_LABELS[action]}: ${why[0]}`); }
   }
@@ -286,7 +315,9 @@ function parseStore(text) {
 
 // Version 1, as before custom prompts, unless the store holds one: then version 2,
 // with its prompts. With a custom model, version 3, with its prompts and custom
-// models (each harness that has some, in HARNESSES order).
+// models (each harness that has some, in HARNESSES order). With a custom Auto-pilot
+// prompt, version 4, as version 3 with it among the prompts: no lower version ever
+// holds one, so a panel that can't run it never drops it by saving (#31).
 function serializeStore(store) {
   const profiles = (store?.profiles ?? []).map(normalizeProfile);
   const assign = {}, prompts = {}, customModels = {};
@@ -298,7 +329,9 @@ function serializeStore(store) {
     const names = addedModels(store, harness);
     if (names.length) customModels[harness] = names;
   }
-  const data = Object.keys(customModels).length ? { version: 3, profiles, assign, prompts, customModels }
+  const autopilot = resolvePrompt(store, "autopilot");
+  const data = autopilot !== null ? { version: 4, profiles, assign, prompts: { ...prompts, autopilot }, customModels }
+    : Object.keys(customModels).length ? { version: 3, profiles, assign, prompts, customModels }
     : ACTION_KEYS.some((a) => prompts[a] !== null) ? { version: 2, profiles, assign, prompts } : { version: 1, profiles, assign };
   return `${JSON.stringify(data, null, 2)}\n`;
 }
@@ -359,22 +392,22 @@ function findChoice(store, id) {
   return store?.profiles?.find((p) => p.id === id) ?? null;
 }
 
-// Sets the custom prompt of "resolve" or "review", trimmed; empty text or null
-// goes back to the default (the IDD skill). Returns a new store; throws, with the
-// field's name first ("Resolve prompt: …"), when the prompt can't be used.
+// Sets the custom prompt of "resolve", "review" or "autopilot", trimmed; empty text
+// or null goes back to the default (the IDD skill). Returns a new store; throws, with
+// the field's name first ("Resolve prompt: …"), when the prompt can't be used.
 function setPrompt(store, action, text) {
-  if (!ACTION_KEYS.includes(action)) throw new Error(`No action ${action}`);
+  if (!PROMPT_KEYS.includes(action)) throw new Error(`No action ${action}`);
   const t = typeof text === "string" ? text.trim() : text;
   let value = null;
   if (t !== null && t !== undefined && t !== "") {
-    const errors = validatePromptTemplate(t);
+    const errors = validatePromptTemplate(t, action);
     if (errors.length) throw new Error(errors.map((e) => `${PROMPT_LABELS[action]}: ${e}`).join("; "));
     value = t;
   }
-  return { ...store, prompts: { resolve: null, review: null, ...store.prompts, [action]: value } };
+  return { ...store, prompts: { resolve: null, review: null, autopilot: null, ...store.prompts, [action]: value } };
 }
 
-// An action's custom prompt template, or null when it sends the default.
+// An action's (or Auto-pilot's) custom prompt template, or null when it sends the default.
 function resolvePrompt(store, action) {
   const v = store?.prompts?.[action];
   return typeof v === "string" && v ? v : null;
@@ -452,4 +485,4 @@ function parseMccEnv(text, home) {
   return null;
 }
 
-module.exports = { HARNESSES, HARNESS_NAMES, THINKING, MODELS, NO_MODEL, ACTION_KEYS, DEFAULT_PROFILE, STORE_VERSION, PROMPT_MAX, PROMPT_TOKEN, PROMPT_LABELS, validateProfile, normalizeProfile, validatePrompt, validatePromptTemplate, expandPrompt, buildLaunch, storePath, emptyStore, parseStore, serializeStore, upsertProfile, removeProfile, assignProfile, resolveProfile, profileChoices, findChoice, setPrompt, resolvePrompt, modelChoices, addCustomModel, removeCustomModel, shellQuote, shellJoin, parseMccEnv };
+module.exports = { HARNESSES, HARNESS_NAMES, THINKING, MODELS, NO_MODEL, ACTION_KEYS, PROMPT_KEYS, DEFAULT_PROFILE, STORE_VERSION, PROMPT_MAX, PROMPT_TOKEN, PROMPT_LIST_TOKEN, PROMPT_TOKENS, PROMPT_LABELS, validateProfile, normalizeProfile, validatePrompt, validatePromptTemplate, expandPrompt, expandNumbers, buildLaunch, storePath, emptyStore, parseStore, serializeStore, upsertProfile, removeProfile, assignProfile, resolveProfile, profileChoices, findChoice, setPrompt, resolvePrompt, modelChoices, addCustomModel, removeCustomModel, shellQuote, shellJoin, parseMccEnv };
