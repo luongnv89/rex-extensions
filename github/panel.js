@@ -346,7 +346,7 @@ async function refresh() {
     // Another repo: a Merge or Close press that asked was about an item of the old one (#13, #27).
     if (ui.confirm) cancelMerge();
     // And the issues checked for Auto-pilot were the old repo's (#31).
-    leaveAutopilot();
+    dropAutopilot();
     Object.assign(ui, { context, prs: [], issues: [], errors: {}, repo: null, root: null, forge: null, error: null, fetched: false, sel: { prs: 0, issues: 0 }, top: { prs: 0, issues: 0 } });
   }
   ui.fetchedAt = Date.now();
@@ -465,13 +465,21 @@ function leaveAutopilot() {
   ui.autopilot.checked.clear();
 }
 
+// Out of the mode without the user asking (another list, forge or repo): say so when
+// that unchecked anything, so a stray tab or arrow doesn't lose a selection unseen.
+function dropAutopilot() {
+  const n = ui.autopilot.on ? ui.autopilot.checked.size : 0;
+  leaveAutopilot();
+  if (n) ui.notice = { tone: "info", text: `Left Auto-pilot: ${n} checked issue${n === 1 ? "" : "s"} unchecked.`, url: null };
+}
+
 // Whether the mode is on. Every look at it keeps it true to the list: off where it
 // isn't offered (the pull requests, another forge, another repo), and an issue gone
 // from the list (closed, or not in a refresh's answer) no longer checked.
 function autopilotOn() {
   const ap = ui.autopilot;
   if (!ap.on) return false;
-  if (!autopilotOffered()) { leaveAutopilot(); return false; }
+  if (!autopilotOffered()) { dropAutopilot(); return false; }
   const open = new Set(ui.issues.map((i) => i.number));
   for (const n of ap.checked) if (!open.has(n)) ap.checked.delete(n);
   return true;
@@ -1207,10 +1215,11 @@ const MENU_KEYS = [" ↑↓/jk choose · ⏎ start · esc/q cancel", " ↑↓ ·
 
 // Auto-pilot's bar, in place of the key hints while the mode is on (#31): Start, with
 // how many issues are checked, dimmed and doing nothing while there are none; Cancel;
-// then the keys, as far as they fit. Start comes first, so it stays whole however
-// narrow the pane. Returns { text, hits: [{ from, to, action }] }, each hit a whole
-// button as drawn.
-const AUTOPILOT_KEYS = " ␣ check · ↑↓ select · ⏎ start · esc cancel";
+// then the keys, as far as they fit, ⏎ first: in the mode it starts rather than opens,
+// so it is the hint a default 36-column pane must keep. Start comes first, so it stays
+// whole however narrow the pane. Returns { text, hits: [{ from, to, action }] }, each
+// hit a whole button as drawn.
+const AUTOPILOT_KEYS = " ⏎ start · ␣ check · ↑↓ select · esc cancel";
 function autopilotBar(cols, count) {
   const hits = [];
   const start = ` ${fit(count ? `▶ Start ${count}` : "▶ Start", Math.max(1, cols - 3))} `;

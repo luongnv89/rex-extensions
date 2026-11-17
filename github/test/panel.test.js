@@ -3905,7 +3905,7 @@ test("Start is shown only in Auto-pilot mode, in place of the key hints (#31)", 
   assert.match(lines[FOOTER], /^ a resolve #12 · ↑↓ select · ⏎ open · p auto-pilot · ⇥ swit/);
   assert.ok(!ui.buttons.some((b) => b.row === FOOTER), "no button on the key hints");
   lines = screen(() => onInput(mouse(...toggleAt(lines))));
-  assert.match(lines[FOOTER], /^ {2}▶ Start {3}✕ Cancel {2}␣ check · ↑↓ select/);
+  assert.match(lines[FOOTER], /^ {2}▶ Start {3}✕ Cancel {2}⏎ start · ␣ check · ↑↓ select/);
   assert.deepEqual(startAt(lines), [2, FOOTER]);
   // Cancel leaves the mode, and Start goes with it.
   lines = screen(() => onInput(mouse(...find(lines, "✕ Cancel"))));
@@ -4134,10 +4134,12 @@ test("what is checked follows the list: a refresh or close drops the issues gone
   await quietly(() => closing);
   await idle();
   assert.deepEqual(checkedNumbers(), [21]);
-  // The pull requests leave the mode, nothing checked.
-  screen(() => onInput(Buffer.from("\t")));
+  // The pull requests leave the mode, nothing checked, and a notice says what was unchecked.
+  lines = screen(() => onInput(Buffer.from("\t")));
   assert.equal(ui.autopilot.on, false);
   assert.equal(ui.autopilot.checked.size, 0);
+  assert.equal(ui.notice?.text, "Left Auto-pilot: 1 checked issue unchecked.");
+  assert.ok(lines.some((l) => /Left Auto-pilot: 1 checked issue unchecked\./.test(l ?? "")), lines.join("\n"));
   // So does another repo.
   screen(() => onInput(Buffer.from("\t")));
   checkRows(screen(draw), "Issue 21");
@@ -4147,6 +4149,47 @@ test("what is checked follows the list: a refresh or close drops the issues gone
   await quietly(() => refresh());
   assert.equal(ui.autopilot.on, false);
   assert.equal(ui.autopilot.checked.size, 0);
+});
+
+test("leaving Auto-pilot by switching lists says how many issues were unchecked, and says nothing when none were (#31)", (t) => {
+  claudeHome(t);
+  let lines = checkRows(setupGitHub("issues"), "Title 0", "Title 1");
+  assert.equal(ui.autopilot.checked.size, 2);
+  // → to the pull requests: out of the mode, with a notice naming the count.
+  lines = screen(() => onInput(Buffer.from("\x1b[C")));
+  assert.equal(ui.view, "prs");
+  assert.equal(ui.autopilot.on, false);
+  assert.equal(ui.notice?.text, "Left Auto-pilot: 2 checked issues unchecked.");
+  // The next key clears it, as any notice.
+  screen(() => onInput(Buffer.from("j")));
+  assert.equal(ui.notice, null);
+  // Into the mode with nothing checked, then a click on the switch: no notice.
+  lines = screen(() => onInput(Buffer.from("\t")));
+  lines = screen(() => onInput(mouse(...toggleAt(lines))));
+  assert.equal(ui.autopilot.on, true);
+  lines = screen(() => onInput(mouse(2, 2)));
+  assert.equal(ui.view, "prs");
+  assert.equal(ui.autopilot.on, false);
+  assert.equal(ui.notice, null);
+  // Cancel, esc and q are the user's own leaving: no notice either.
+  screen(() => onInput(Buffer.from("\t")));
+  for (const key of ["\x1b", "q"]) {
+    checkRows(screen(draw), "Title 0");
+    screen(() => onInput(Buffer.from(key)));
+    assert.equal(ui.autopilot.on, false, JSON.stringify(key));
+    assert.equal(ui.notice, null, JSON.stringify(key));
+  }
+});
+
+test("at the panel's default 36 cells, the bar keeps ⏎ start in view (#31)", (t) => {
+  claudeHome(t);
+  setupGitHub("issues");
+  screenAt(36, 24, () => onInput(Buffer.from("p")));
+  for (const n of [0, 2]) {
+    if (n) { ui.autopilot.checked.add(12); ui.autopilot.checked.add(15); }
+    const lines = screenAt(36, 24, draw);
+    assert.match(lines[FOOTER], /✕ Cancel {2}⏎ start/, lines[FOOTER]);
+  }
 });
 
 test("at 28, 30, 40 and 60 cells, with the mode on or off, nothing is wider than the pane, no buttons overlap, and Start stays whole and clickable (#31)", (t) => {
