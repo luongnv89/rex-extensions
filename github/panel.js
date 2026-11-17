@@ -277,6 +277,9 @@ const ui = {
   // The close under way (#27): { root, number }, the issue whose button reads
   // Closing #N… until the CLI has answered; null otherwise.
   closing: null,
+  // Auto-pilot mode (#31): `on` while the issue rows show checkboxes, and `checked`,
+  // the numbers (never the row indices) of the issues checked for Start.
+  autopilot: { on: false, checked: new Set() },
   // Between a paste's start and end marks, which can come in different chunks;
   // pasteCR when the last part ended in \r, so a \n starting the next is its \r\n.
   pasting: false, pasteCR: false,
@@ -342,6 +345,8 @@ async function refresh() {
   if (context !== ui.context) {
     // Another repo: a Merge or Close press that asked was about an item of the old one (#13, #27).
     if (ui.confirm) cancelMerge();
+    // And the issues checked for Auto-pilot were the old repo's (#31).
+    leaveAutopilot();
     Object.assign(ui, { context, prs: [], issues: [], errors: {}, repo: null, root: null, forge: null, error: null, fetched: false, sel: { prs: 0, issues: 0 }, top: { prs: 0, issues: 0 } });
   }
   ui.fetchedAt = Date.now();
@@ -442,6 +447,89 @@ function actionFor(view, index = ui.sel[view]) {
   if (ui.forge !== FORGES.github) return null;
   const item = ui[view]?.[index];
   return item && isNumber(item.number) ? { ...ACTIONS[view], number: item.number } : null;
+}
+
+// ── Auto-pilot (#31) ────────────────────────────────────────────────────────
+// The header's ☑ (or p) turns the issue rows into checkboxes; Start runs one agent
+// on every issue checked: with no custom prompt, the IDD auto-pilot skill with
+// --issues 12,15, in the list's order. It starts the profile Resolve would, so
+// profiles stay assigned to Resolve and Review only. Like Resolve, on GitHub's
+// issues only; leaving them leaves the mode.
+
+const AUTOPILOT = { label: "Auto-pilot", key: "autopilot", verb: "auto-pilot", skill: "auto-pilot", noun: "issues", button: "Start", profiles: "Resolve" };
+const autopilotOffered = () => ui.view === "issues" && ui.forge === FORGES.github;
+
+// Out of the mode, nothing checked.
+function leaveAutopilot() {
+  ui.autopilot.on = false;
+  ui.autopilot.checked.clear();
+}
+
+// Whether the mode is on. Every look at it keeps it true to the list: off where it
+// isn't offered (the pull requests, another forge, another repo), and an issue gone
+// from the list (closed, or not in a refresh's answer) no longer checked.
+function autopilotOn() {
+  const ap = ui.autopilot;
+  if (!ap.on) return false;
+  if (!autopilotOffered()) { leaveAutopilot(); return false; }
+  const open = new Set(ui.issues.map((i) => i.number));
+  for (const n of ap.checked) if (!open.has(n)) ap.checked.delete(n);
+  return true;
+}
+
+// The checked issues' numbers, in the list's order, not the order they were checked in.
+const checkedNumbers = () => (autopilotOn() ? ui.issues.filter((i) => isNumber(i.number) && ui.autopilot.checked.has(i.number)).map((i) => i.number) : []);
+
+// The header's ☑ and p: into the mode, with nothing checked, or out of it.
+function toggleAutopilot() {
+  if (autopilotOn()) leaveAutopilot();
+  else if (autopilotOffered() && !ui.menu) ui.autopilot.on = true;
+  else return;
+  if (ui.confirm) cancelMerge();
+  draw();
+}
+
+// A row's checkbox, by the row's number: a click on the row, space or x.
+function toggleCheck(index) {
+  const item = ui.issues[index];
+  if (!autopilotOn() || !item || !isNumber(item.number)) return;
+  const { checked } = ui.autopilot;
+  if (checked.has(item.number)) checked.delete(item.number);
+  else checked.add(item.number);
+  draw();
+}
+
+const autopilotAction = (numbers) => ({ ...AUTOPILOT, numbers });
+
+// Start, or enter in the mode: nothing while no issue is checked. With only the
+// default profile it starts at once; with more, the profile menu opens at the
+// bottom, as for a, and the one chosen starts. One launch, or one menu, at a time.
+function startAutopilot() {
+  const numbers = checkedNumbers();
+  if (!numbers.length || ui.acting || ui.menu) return ui.acting;
+  const { store } = readStore();
+  const { entries, sel } = P.profileChoices(store, "resolve");
+  if (entries.length === 1) return start(autopilotAction(numbers), entries[0], P.resolvePrompt(store, "autopilot"));
+  ui.menu = { view: "issues", autopilot: true, count: numbers.length, key: "autopilot", entries, sel, top: 0, anchor: "keys" };
+  ui.follow = true;
+  draw();
+  return ui.acting;
+}
+
+// The issues an Auto-pilot works on, for its notices: every one up to four, then how
+// many more.
+function issueList(numbers) {
+  const shown = numbers.length > 4 ? numbers.slice(0, 3) : numbers;
+  const refs = shown.map((n) => `#${n}`).join(", ");
+  return `issue${numbers.length === 1 ? "" : "s"} ${refs}${shown.length < numbers.length ? ` and ${numbers.length - shown.length} more` : ""}`;
+}
+
+// The new pane's label: the action and its number, or Auto-pilot's numbers, up to
+// three, else the first and how many more (autopilot-12+4): digits, - and + only.
+function paneLabel(action) {
+  if (!action.numbers) return `${action.key}-${action.number}`;
+  const n = action.numbers;
+  return n.length <= 3 ? `${action.key}-${n.join("-")}` : `${action.key}-${n[0]}+${n.length - 1}`;
 }
 
 // ── Merging a pull request (#13) ────────────────────────────────────────────
@@ -726,8 +814,15 @@ function findSkill(kind, skill, root, claudeDir = null) {
 }
 
 // Built from the skill name and an integer only, or from your custom prompt
-// (`template`) with its {number} filled in: never from a title or body.
+// (`template`) with its {number} filled in: never from a title or body. For
+// Auto-pilot (#31), from the checked issues' numbers: the skill with --issues
+// 12,15, or your prompt with its {numbers} filled in.
 function promptFor(kind, skill, action, template = null) {
+  if (action.numbers !== undefined) {
+    if (template !== null) return P.expandNumbers(template, action.numbers);
+    const list = P.expandNumbers(P.PROMPT_LIST_TOKEN, action.numbers);
+    return claudeStyle(kind) ? `/${skill} --issues ${list}` : `Use the ${skill} skill with --issues ${list}.`;
+  }
   if (!isNumber(action.number)) throw new Error("not a number");
   if (template !== null) return P.expandPrompt(template, action.number);
   return claudeStyle(kind) ? `/${skill} ${action.number}` : `Use the ${skill} skill on ${action.noun} #${action.number}.`;
@@ -779,6 +874,8 @@ function act(view = ui.view, index = ui.sel[view], anchor = "row") {
 
 function start(action, profile, template) {
   ui.acting = launch(action, ui.root || cwd, profile, template)
+    // An Auto-pilot that started leaves the mode, nothing checked (#31).
+    .then((started) => { if (started && action.numbers) { leaveAutopilot(); draw(); } })
     .catch((e) => say("error", `Can't start an agent: ${e.message}`))
     .finally(() => { ui.acting = null; });
   return ui.acting;
@@ -793,6 +890,16 @@ function startChoice(i) {
   ui.menu = null;
   const { store } = readStore();
   const chosen = m.entries[i], profile = chosen ? P.findChoice(store, chosen.id) : null;
+  // Auto-pilot's: the issues checked now, so one closed meanwhile isn't sent (#31).
+  if (m.autopilot) {
+    const numbers = checkedNumbers();
+    if (!numbers.length) { gone(m); return null; }
+    if (!profile) {
+      say("error", `The profile ${chosen?.name ?? ""} isn't there any more, so nothing started: press Start to choose another.`);
+      return null;
+    }
+    return start(autopilotAction(numbers), profile, P.resolvePrompt(store, "autopilot"));
+  }
   const index = ui[m.view].findIndex((x) => x.number === m.number);
   const action = index >= 0 ? actionFor(m.view, index) : null;
   if (!action) { gone(m); return null; }
@@ -805,6 +912,7 @@ function startChoice(i) {
 
 // The menu's row left the list, in a refresh: nothing starts.
 function gone(m) {
+  if (m.autopilot) return say("error", "None of the checked issues is in the list any more, so nothing started.");
   const { noun } = ACTIONS[m.view];
   say("error", `The ${noun} #${m.number} isn't in the list any more, so nothing started.`);
 }
@@ -874,23 +982,31 @@ function agentArgv(plan, prompt, mcc = "mcc") {
 }
 
 // `template` is the action's custom prompt, or null for the IDD skill's. A custom
-// prompt is sent as written, so it needs no skill: nothing looks for one.
+// prompt is sent as written, so it needs no skill: nothing looks for one. `action`
+// has a `number`, or for Auto-pilot (#31) the checked issues' `numbers`. Resolves
+// true once the agent's pane has started, so Start can leave the mode.
 async function launch(action, root, profile, template = null) {
   // The profile is checked before anything runs: an unchecked one never reaches a command line.
   const invalid = P.validateProfile(profile);
   if (invalid.length) throw new Error(`Invalid profile: ${invalid.join("; ")}`);
   const harness = profile.harness, shown = P.HARNESS_NAMES[harness];
-  // So is a custom prompt, with the number in it.
+  // So is a custom prompt, with the number in it. Auto-pilot's grows with each issue
+  // checked, so one that only fits with fewer says so.
   const custom = template === null ? null : promptFor(harness, null, action, template);
   const bad = custom === null ? [] : P.validatePrompt(custom);
+  if (bad.length && action.numbers && [...custom].length > P.PROMPT_MAX) {
+    const n = action.numbers.length;
+    throw new Error(`The ${P.PROMPT_LABELS[action.key]} is ${[...custom].length} characters with ${n} issue${n === 1 ? "" : "s"} in it, more than ${P.PROMPT_MAX}: check fewer issues, or shorten it`);
+  }
   if (bad.length) throw new Error(`Invalid prompt: ${bad.join("; ")}`);
-  const what = `${action.noun} #${action.number}`;
-  if (!SESSION || !SELF) return say("error", `Open this panel in Rex to ${action.key} ${what} with an agent.`);
+  const what = action.numbers ? issueList(action.numbers) : `${action.noun} #${action.number}`, verb = action.verb ?? action.key;
+  const again = action.button ?? action.label;
+  if (!SESSION || !SELF) return say("error", `Open this panel in Rex to ${verb} ${what} with an agent.`);
   const mcc = harness === "mcc" ? which("mcc") : null;
   if (harness === "mcc" && !mcc) {
-    return say("error", `mcc isn't on your PATH: press s to pick another profile for ${action.label}, or install mcc.`);
+    return say("error", `mcc isn't on your PATH: press s to pick another profile for ${action.profiles ?? action.label}, or install mcc.`);
   }
-  say("info", `Finding where to ${action.key} ${what}…`);
+  say("info", `Finding where to ${verb} ${what}…`);
   const view = await rexApi("session.view");
   if (view.error) return say("error", `Can't read this tab: ${view.error}`);
   const me = windowOf(view.result, SELF);
@@ -904,7 +1020,7 @@ async function launch(action, root, profile, template = null) {
     if (agentOf(await processOf(id))) { agent = id; break; }
   }
   const anchor = agent ?? (others.includes(target) ? target : null);
-  if (!anchor) return say("error", `No agent in this tab and no pane to start one next to. Click a pane here, then ${action.label} again.`);
+  if (!anchor) return say("error", `No agent in this tab and no pane to start one next to. Click a pane here, then ${again} again.`);
 
   let claudeDir = null;
   if (harness === "mcc" && custom === null) {
@@ -923,9 +1039,9 @@ async function launch(action, root, profile, template = null) {
   const plan = P.buildLaunch(profile, text);
   const note = plan.warnings.length ? ` (${plan.warnings.join("; ")})` : "";
 
-  say("info", `Starting ${shown} to ${action.key} ${what}…`);
+  say("info", `Starting ${shown} to ${verb} ${what}…`);
   const split = await run(REX, ["split", "-s", SESSION, "-b", anchor, "--split=right", "-c", root, "--focus=false",
-    "--label", `${action.key}-${action.number}`, "--json", "--", ...agentArgv(plan, text, mcc)], { timeout: 10000 }).catch((e) =>
+    "--label", paneLabel(action), "--json", "--", ...agentArgv(plan, text, mcc)], { timeout: 10000 }).catch((e) =>
     ({ code: -1, stdout: "", stderr: e.code === "ENOENT" ? "rex isn't installed" : e.message }));
   let pane = null;
   try { pane = JSON.parse(split.stdout).block_ids?.[0] ?? null; } catch {}
@@ -939,8 +1055,9 @@ async function launch(action, root, profile, template = null) {
   if (exit) return say("error", `${shown} didn't start (${exit.error || `exit ${exit.exit_code}`}). The new pane shows why.`);
   // mcc can ask something before Claude Code starts, such as about a usage limit,
   // and Rex can't tell which of the two is running: the panel says what it knows.
-  if (harness === "mcc") return say("ok", `Opened mcc in a new pane. If it asks something first, such as about a usage limit, answer it there; Claude Code then works on: ${text}`);
-  say("ok", `Started ${shown} in a new pane: ${text}${note}`);
+  if (harness === "mcc") say("ok", `Opened mcc in a new pane. If it asks something first, such as about a usage limit, answer it there; Claude Code then works on: ${text}`);
+  else say("ok", `Started ${shown} in a new pane: ${text}${note}`);
+  return true;
 }
 
 // ── Rendering ───────────────────────────────────────────────────────────────
@@ -1018,13 +1135,16 @@ function prRow(p, selected, cols, action = null, merge = null) {
     [p.ref, p.author ?? "?", p.branch].filter(Boolean).join(" · "), trailing, action, merge);
 }
 
-function issueRow(i, selected, cols, action = null, close = null) {
+// In Auto-pilot mode (#31) `check` is whether the issue is checked: its icon is then
+// a checkbox, ☑ or ☐.
+function issueRow(i, selected, cols, action = null, close = null, check = null) {
   const trailing = (i.labels ?? []).slice(0, 3).map((l) => {
     const name = fit(clean(l.name), 14);
     return { w: width(name) + 2, s: `${rgb(l.color)("●")} ${dim(name)}` };
   });
   trailing.push(part(ago(i.updatedAt)));
-  return rowLines(i, selected, cols, green("◉"), `${i.ref} · ${i.author ?? "?"}`, trailing, action, close);
+  const icon = check === null ? green("◉") : check ? accent("☑") : "☐";
+  return rowLines(i, selected, cols, icon, `${i.ref} · ${i.author ?? "?"}`, trailing, action, close);
 }
 
 const SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
@@ -1059,7 +1179,7 @@ function noticeLines(notice, cols, room) {
 // Each profile is its name, and what it starts when that fits beside it; the chosen
 // one is marked ▸. At most `cols` cells wide. Returns { width, lines: [{ text, entry }] }.
 function menuLines(m, cols, shown) {
-  const title = `${ACTIONS[m.view].label} #${m.number} with`;
+  const title = m.autopilot ? `Auto-pilot ${m.count} issue${m.count === 1 ? "" : "s"} with` : `${ACTIONS[m.view].label} #${m.number} with`;
   const hint = (p) => {
     const h = p.id === P.DEFAULT_PROFILE.id ? "default" : describe(p);
     return h && h !== p.name ? h : "";
@@ -1085,24 +1205,50 @@ function menuLines(m, cols, shown) {
 // phone's keyboard, which may have no arrows or esc (#28).
 const MENU_KEYS = [" ↑↓/jk choose · ⏎ start · esc/q cancel", " ↑↓ · ⏎ start · esc/q cancel", " ⏎ start · q cancel"];
 
+// Auto-pilot's bar, in place of the key hints while the mode is on (#31): Start, with
+// how many issues are checked, dimmed and doing nothing while there are none; Cancel;
+// then the keys, as far as they fit. Start comes first, so it stays whole however
+// narrow the pane. Returns { text, hits: [{ from, to, action }] }, each hit a whole
+// button as drawn.
+const AUTOPILOT_KEYS = " ␣ check · ↑↓ select · ⏎ start · esc cancel";
+function autopilotBar(cols, count) {
+  const hits = [];
+  const start = ` ${fit(count ? `▶ Start ${count}` : "▶ Start", Math.max(1, cols - 3))} `;
+  let text = " " + (count ? invert(bold(start)) : dim(start)), x = 1 + width(start);
+  hits.push({ from: 1, to: x, action: () => startAutopilot() });
+  const cancel = " ✕ Cancel ";
+  if (x + 1 + width(cancel) <= cols) {
+    hits.push({ from: x + 1, to: x + 1 + width(cancel), action: () => { leaveAutopilot(); draw(); } });
+    text += " " + invert(cancel);
+    x += 1 + width(cancel);
+  }
+  if (cols - x >= 8) text += dim(fit(AUTOPILOT_KEYS, cols - x));
+  return { text, hits };
+}
+
 function draw() {
   const cols = process.stdout.columns || 60, rows = process.stdout.rows || 24;
   if (ui.settings) return paint(settingsLines(cols, rows), rows);
   const out = [];
   ui.buttons = [];
+  const autopilot = autopilotOn();
 
   // Header: repo, spinner, then the profiles, refresh and open-on-the-forge buttons.
   // Resolve and Review are the rows' own buttons (#13); a presses the selected row's.
-  const right = ui.repo?.url ? " ⚙  ↻  ↗ " : " ⚙  ↻ ";
+  // On GitHub's issues, Auto-pilot's ☑ comes first, highlighted while its mode is on (#31).
+  const tools = [[" ⚙ ", () => openSettings()], [" ↻ ", () => refresh()]];
+  if (ui.repo?.url) tools.push([" ↗ ", () => openUrl(ui.repo.url)]);
+  const toggle = autopilotOffered() ? " ☑ " : "";
+  const right = toggle + tools.map(([t]) => t).join("");
   const action = actionFor(ui.view);
   const spin = ui.loading ? yellow(SPIN[ui.frame % SPIN.length]) + " " : "";
   const title = fit(ui.repo?.name ?? ui.forge?.name ?? "Pull requests and issues", cols - width(right) - 3 - (spin ? 2 : 0));
   const gap = " ".repeat(Math.max(0, cols - 1 - width(title) - (spin ? 2 : 0) - width(right)));
-  out.push(` ${link(ui.repo?.url, bold(title))}${gap}${spin}${dim(right)}`);
-  const at = cols - width(right);
-  ui.buttons.push({ row: 0, from: at, to: at + 3, action: () => openSettings() });
-  ui.buttons.push({ row: 0, from: at + 3, to: at + 6, action: () => refresh() });
-  if (ui.repo?.url) ui.buttons.push({ row: 0, from: at + 6, to: at + 9, action: () => openUrl(ui.repo.url) });
+  const shownToggle = toggle && (autopilot ? invert(accent(toggle)) : dim(toggle));
+  out.push(` ${link(ui.repo?.url, bold(title))}${gap}${spin}${shownToggle}${dim(right.slice(toggle.length))}`);
+  let at = cols - width(right);
+  if (toggle) { ui.buttons.push({ row: 0, from: at, to: at + width(toggle), action: () => toggleAutopilot() }); at += width(toggle); }
+  for (const [t, fn] of tools) { ui.buttons.push({ row: 0, from: at, to: at + width(t), action: fn }); at += width(t); }
   out.push(dim("─".repeat(cols)));
 
   // The switch: Pull requests (or Merge requests) N / Issues N.
@@ -1126,7 +1272,10 @@ function draw() {
   items.forEach((x, i) => {
     if (i) { lines.push(""); owner.push(-1); }
     if (i === ui.sel[view]) selStart = lines.length;
-    const a = actionFor(view, i), row = view === "prs" ? prRow(x, i === ui.sel[view], cols, a, mergeFor(i)) : issueRow(x, i === ui.sel[view], cols, a, closeFor(i));
+    // In Auto-pilot mode an issue row is its checkbox: no Resolve or Close button (#31).
+    const check = autopilot && isNumber(x.number) ? ui.autopilot.checked.has(x.number) : null;
+    const a = autopilot ? null : actionFor(view, i), row = view === "prs" ? prRow(x, i === ui.sel[view], cols, a, mergeFor(i))
+      : issueRow(x, i === ui.sel[view], cols, a, autopilot ? null : closeFor(i), check);
     if (row.hit) hits[lines.length + row.hit.line] = { ...row.hit, index: i };
     if (row.mergeHit) mergeHits[lines.length + row.mergeHit.line] = { ...row.mergeHit, number: x.number };
     for (const l of row) { lines.push(l); owner.push(i); }
@@ -1163,8 +1312,9 @@ function draw() {
   // there's more room there; for a, at the bottom, right above the notice and the key
   // hints (#28). Only its profiles take a click while it's open.
   if (ui.menu) {
-    const m = ui.menu, index = ui[m.view].findIndex((x) => x.number === m.number);
-    if (m.view !== view || index < 0) { ui.menu = null; return gone(m); }
+    // Auto-pilot's menu (#31) is about the checked issues, not a row: it stays while the mode does.
+    const m = ui.menu, index = m.autopilot ? -1 : ui[m.view].findIndex((x) => x.number === m.number);
+    if (m.autopilot ? !autopilot : m.view !== view || index < 0) { ui.menu = null; return gone(m); }
     // Under the row's button where it's drawn. When it's out of view, as in a pane
     // too short for the whole row, under the header at its right edge (#13).
     let y = 0, x = cols;
@@ -1195,9 +1345,19 @@ function draw() {
 
   // The menu's hints, shorter when the pane is too narrow for them, so a cancel key
   // stays in view. Otherwise a and what it acts on come first, so they survive a narrow
-  // pane's cut: a resolve #12, a review #34 (#28).
+  // pane's cut: a resolve #12, a review #34 (#28). In Auto-pilot mode, its Start bar
+  // takes their place, the list keeping its lines (#31); p names the mode on the
+  // issues it is offered on.
   const menuKeys = MENU_KEYS.find((k) => width(k) <= cols) ?? MENU_KEYS.at(-1);
-  const keys = ui.menu ? menuKeys : ` ${action ? `a ${action.key} #${action.number} · ` : ""}↑↓ select · ⏎ open · ⇥ switch · s profiles · r refresh · o repo · q close`;
+  if (autopilot && !ui.menu) {
+    const bar = autopilotBar(cols, ui.autopilot.checked.size);
+    const row = out.length;
+    if (row < rows) for (const h of bar.hits) ui.buttons.push({ row, ...h });
+    out.push(bar.text);
+    return paint(out, rows);
+  }
+  const pilot = action && autopilotOffered() ? "p auto-pilot · " : "";
+  const keys = ui.menu ? menuKeys : ` ${action ? `a ${action.key} #${action.number} · ` : ""}↑↓ select · ⏎ open · ${pilot}⇥ switch · s profiles · r refresh · o repo · q close`;
   out.push(dim(fit(keys, cols)));
   paint(out, rows);
 }
@@ -1244,11 +1404,14 @@ const choices = (form, key, store = ui.settings.store) => {
 const OPENCODE_NOTE = P.buildLaunch({ id: "x", name: "x", harness: "opencode", model: "m" }, "x").warnings[0];
 const entries = () => [P.DEFAULT_PROFILE, ...ui.settings.store.profiles];
 const describe = (p) => [P.HARNESS_NAMES[p.harness], p.model, p.thinking && `thinking ${p.thinking}`].filter(Boolean).join(" · ");
-const ACTION_LABELS = { resolve: "Resolve", review: "Review" };
-// What an action sends with no custom prompt, as Claude Code takes it.
-const DEFAULT_PROMPTS = Object.fromEntries(Object.values(ACTIONS).map((a) => [a.key, `/${a.skill} ${P.PROMPT_TOKEN}`]));
+const ACTION_LABELS = { resolve: "Resolve", review: "Review", autopilot: AUTOPILOT.label };
+// What an action, or Auto-pilot (#31), sends with no custom prompt, as Claude Code takes it.
+const DEFAULT_PROMPTS = {
+  ...Object.fromEntries(Object.values(ACTIONS).map((a) => [a.key, `/${a.skill} ${P.PROMPT_TOKEN}`])),
+  autopilot: `/${AUTOPILOT.skill} --issues ${P.PROMPT_LIST_TOKEN}`,
+};
 // A prompt's reasons start with its field's name ("Resolve prompt: …").
-const PROMPT_FIELDS = P.ACTION_KEYS.map((a) => ({ key: "prompt", word: P.PROMPT_LABELS[a] }));
+const PROMPT_FIELDS = P.PROMPT_KEYS.map((a) => ({ key: "prompt", word: P.PROMPT_LABELS[a] }));
 
 // `promptSel` is the action whose prompt row is selected, under the profiles; null
 // while a profile is. `prompt` is the prompt being edited: { action, text }.
@@ -1439,7 +1602,7 @@ function settingsKey(m) {
   if (st.mode === "prompt") return promptKey(st, k);
   selectedEntry(st);
   if (k === "\x1b" || k === "q" || k === "s") return closeSettings();
-  const at = P.ACTION_KEYS.indexOf(st.promptSel);
+  const at = P.PROMPT_KEYS.indexOf(st.promptSel);
   if (UP.includes(k) || k === "k") step(st, -1);
   else if (DOWN.includes(k) || k === "j") step(st, 1);
   else if (k === "n") return editProfile(null);
@@ -1455,12 +1618,12 @@ function settingsKey(m) {
 // ↑ and ↓ in the list, and the wheel: from the last profile on to the prompt rows,
 // and back.
 function step(st, by) {
-  const at = P.ACTION_KEYS.indexOf(st.promptSel);
+  const at = P.PROMPT_KEYS.indexOf(st.promptSel);
   if (by < 0) {
-    if (at >= 0) st.promptSel = P.ACTION_KEYS[at - 1] ?? null;
+    if (at >= 0) st.promptSel = P.PROMPT_KEYS[at - 1] ?? null;
     else st.sel = Math.max(0, st.sel - 1);
-  } else if (at >= 0) st.promptSel = P.ACTION_KEYS[Math.min(at + 1, P.ACTION_KEYS.length - 1)];
-  else if (st.sel === entries().length - 1) st.promptSel = P.ACTION_KEYS[0];
+  } else if (at >= 0) st.promptSel = P.PROMPT_KEYS[Math.min(at + 1, P.PROMPT_KEYS.length - 1)];
+  else if (st.sel === entries().length - 1) st.promptSel = P.PROMPT_KEYS[0];
   else st.sel += 1;
 }
 
@@ -1670,9 +1833,11 @@ function settingsLines(cols, rows) {
     if (why) for (const l of wrap(why, cols - 4, Math.max(1, height - 1))) { body.push("    " + red(l)); owner.push(null); }
     selEnd = body.length;
     body.push(""); owner.push(null);
-    const noun = Object.values(ACTIONS).find((a) => a.key === action).noun;
+    const noun = Object.values(ACTIONS).find((a) => a.key === action)?.noun;
     for (const note of [
-      `${P.PROMPT_TOKEN} becomes the ${noun}'s number; nothing else from it goes in.`,
+      action === AUTOPILOT.key
+        ? `${P.PROMPT_LIST_TOKEN} becomes the checked issues' numbers, as 12,15; nothing else from them goes in. It starts the Resolve profile.`
+        : `${P.PROMPT_TOKEN} becomes the ${noun}'s number; nothing else from it goes in.`,
       "Sent as written to every harness, instead of the IDD skill. Empty sends the default.",
     ]) for (const l of wrap(note, cols - 4, Infinity)) { body.push("  " + dim(l)); owner.push(null); }
     body.push(""); owner.push(null);
@@ -1711,10 +1876,10 @@ function settingsLines(cols, rows) {
     // With the last profile selected, the prompt rows under it show too, as far as
     // they fit: the wheel or ↓ goes on to them.
     if (!st.promptSel && st.sel === entries().length - 1) selEnd = Infinity;
-    // Each action's prompt, under the profiles: your own, or the default it sends
-    // without one. The selected one's Edit sits at the right edge, so a click on the
-    // row only selects it.
-    for (const a of P.ACTION_KEYS) {
+    // Each action's prompt, then Auto-pilot's (#31), under the profiles: your own, or
+    // the default it sends without one. The selected one's Edit sits at the right
+    // edge, so a click on the row only selects it.
+    for (const a of P.PROMPT_KEYS) {
       body.push(""); owner.push(null);
       const on = st.promptSel === a && st.mode === "list", bar = on ? accent("▌") : " ", edit = " Edit ";
       const select = () => { Object.assign(st, { promptSel: a, error: null, mode: "list" }); draw(); };
@@ -1777,6 +1942,8 @@ function click(x, y) {
   if (ui.settings) return;
   if (i == null || i < 0) return;
   ui.sel[ui.view] = i;
+  // In Auto-pilot mode a click on a row checks or unchecks it, and opens nothing (#31).
+  if (autopilotOn()) return toggleCheck(i);
   draw();
   openUrl(ui[ui.view][i]?.url);
 }
@@ -1851,6 +2018,9 @@ function onInput(data) {
     }
     // While a Merge or Close press asks, esc and q take it back rather than close the panel (#13, #27).
     if (ui.confirm && (k === "q" || (k === "\x1b" && data.length === 1))) { cancelMerge(); continue; }
+    // In Auto-pilot mode they leave the mode first, nothing checked (#31).
+    const autopilot = autopilotOn();
+    if (autopilot && (k === "q" || (k === "\x1b" && data.length === 1))) { leaveAutopilot(); draw(); continue; }
     if (k === "q" || k === "\x03" || (k === "\x1b" && data.length === 1)) return quit();
     // Any key clears a notice, except the progress of a launch, merge or close still under way.
     if (ui.notice && !(ui.acting && ui.notice.tone === "info")) { ui.notice = null; draw(); }
@@ -1865,9 +2035,14 @@ function onInput(data) {
     else if (k === "\t" || k === "\x1b[Z" || k === "\x1b[C" || k === "\x1b[D" || k === "h" || k === "l") pick(ui.view === "prs" ? "issues" : "prs");
     else if (k === "1") pick("prs");
     else if (k === "2") pick("issues");
+    // Auto-pilot (#31): p turns the mode on or off; in it, space or x checks the
+    // selected issue and enter is Start, which does nothing while none is checked.
+    else if (k === "p") toggleAutopilot();
+    else if (autopilot && (k === " " || k === "x")) toggleCheck(ui.sel.issues);
+    else if (autopilot && (k === "\r" || k === "\n")) startAutopilot();
     else if (k === "\r" || k === "\n") openUrl(ui[ui.view][ui.sel[ui.view]]?.url);
     else if (k === "o") openUrl(ui.repo?.url);
-    else if (k === "a") act(ui.view, ui.sel[ui.view], "keys");
+    else if (k === "a" && !autopilot) act(ui.view, ui.sel[ui.view], "keys");
     else if (k === "s") openSettings();
     else if (k === "r") refresh();
   }
@@ -2082,6 +2257,8 @@ else {
     pressMerge, MERGE_GAP, mergeStrategy, mergeArgs, mergeGuard, refresh,
     // An issue's Close button (#27): its press.
     pressClose,
+    // Auto-pilot (#31): the mode's toggle, Start, the issues it sends, and the new pane's label.
+    toggleAutopilot, startAutopilot, checkedNumbers, paneLabel,
     state: () => ({ cwd, target }),
     // Tests point the panel at another followed pane, or none.
     follow: (pane) => { target = pane; },
