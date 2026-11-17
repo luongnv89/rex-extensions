@@ -49,7 +49,7 @@ process.on("exit", () => fs.rmSync(stateHome, { recursive: true, force: true }))
 Object.assign(process.env, { REX_GITHUB_REX: "rex", REX_SESSION: "session:s", REX_BLOCK: "block:panel", REX_GITHUB_STARTUP_MS: "1", XDG_STATE_HOME: stateHome });
 process.argv.push("--target", "block:agent", "--cwd", "/start");
 const P = require("../profiles.cjs");
-const { width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput, MODES_ON, MODES_OFF, act, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, flags, locate, state, follow, splitLeft, ratioFor, fitWidth, COLUMNS, MAX_SHARE, settleResize, savedWidth, resetWidth, pressMerge, MERGE_GAP, mergeStrategy, mergeArgs, mergeGuard, refresh } = require("../panel.js");
+const { width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput, MODES_ON, MODES_OFF, act, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, flags, locate, state, follow, splitLeft, ratioFor, fitWidth, COLUMNS, MAX_SHARE, settleResize, savedWidth, resetWidth, pressMerge, MERGE_GAP, mergeStrategy, mergeArgs, mergeGuard, refresh, pressClose } = require("../panel.js");
 
 // Drops colors and OSC 8 hyperlinks, leaving the text a terminal shows.
 const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b\]8;[^\x07\x1b]*(?:\x1b\\|\x07)/g, "");
@@ -251,7 +251,7 @@ function setup(view) {
   Object.assign(ui, {
     view, prs: items("pull"), issues: items("issues"), errors: {}, error: null, repo: { name: "o/p", url: "https://x/o/p" },
     loading: false, fetched: true, follow: false, sel: { prs: 0, issues: 0 }, top: { prs: 0, issues: 0 }, notice: null,
-    forge: null, root: null, settings: null, acting: null, menu: null, confirm: null, merging: null, pasting: false, pasteCR: false,
+    forge: null, root: null, settings: null, acting: null, menu: null, confirm: null, merging: null, closing: null, pasting: false, pasteCR: false,
   });
   follow("block:agent");
   opened.length = 0;
@@ -520,7 +520,7 @@ test("a Ctrl-click on a title is left to the terminal", () => {
 function setupGitHub(view) {
   setup(view);
   for (const v of ["prs", "issues"]) ui[v].forEach((x, i) => Object.assign(x, { ref: `#${10 + i}`, number: 10 + i }));
-  Object.assign(ui, { forge: FORGES.github, root: "/repo", tab: "window:w1", sel: { prs: 2, issues: 2 }, acting: null, merging: null });
+  Object.assign(ui, { forge: FORGES.github, root: "/repo", tab: "window:w1", sel: { prs: 2, issues: 2 }, acting: null, merging: null, closing: null });
   calls.length = 0;
   callOpts.length = 0;
   return screen(draw);
@@ -957,7 +957,8 @@ test("each harness starts with its own model and thinking flags; empty ones add 
 test("each issue row has its own Resolve button, which resolves that issue", async (t) => {
   claudeHome(t, { ".claude/skills/issue-resolver/SKILL.md": "x" });
   const lines = setupGitHub("issues");
-  const y = lines.findIndex((l) => l?.trim() === "Resolve #11");
+  // Its Close button sits beside it (#27).
+  const y = lines.findIndex((l) => l?.trim() === "Resolve #11   Close #11");
   assert.ok(y > LIST.from, lines.join("\n"));
   fakeRex(agentHere());
   const x = lines[y].indexOf("Resolve");
@@ -2011,7 +2012,7 @@ const CC = { id: "cc", name: "Claude Code", harness: "claude" }, CX = { id: "cx"
 // The box's line for a profile, as drawn: its marker, name and hint, then the border.
 const entryLine = (lines, label) => lines.findIndex((l) => l?.includes(`│ ▸ ${label}`) || l?.includes(`│   ${label}`));
 const resolveButton = (lines, n) => {
-  const y = lines.findIndex((l) => l?.trim() === `Resolve #${n}`);
+  const y = lines.findIndex((l) => l?.trim() === `Resolve #${n}   Close #${n}`);
   return [lines[y]?.indexOf("Resolve"), y];
 };
 
@@ -2136,13 +2137,13 @@ test("a opens the menu under the selected row's button, a row's button under its
   lines = screen(() => click(x, y));
   assert.equal(ui.menu?.anchor, "row");
   assert.equal(ui.menu.number, 11);
-  assert.match(lines[y], /^▌ +Resolve #11 $/);
+  assert.match(lines[y], /^▌ +Resolve #11 {3}Close #11 $/);
   assert.equal(lines[y + 1].indexOf("┌ Resolve #11 with"), x - 1, lines.join("\n"));
   // The last row's button sits low: the menu goes above it.
   setupGitHub("issues");
   ui.sel.issues = 9;
   lines = screen(() => onInput(Buffer.from("a")));
-  const at = lines.findIndex((l) => /Resolve #19 $/.test(l ?? ""));
+  const at = lines.findIndex((l) => /Resolve #19 {3}Close #19 $/.test(l ?? ""));
   assert.ok(at > LIST.from && lines[at - 1].trimStart().startsWith("└"), lines.join("\n"));
   assert.ok(lines.slice(LIST.from, at).some((l) => l?.includes("┌ Resolve #19 with")), lines.join("\n"));
 });
@@ -2562,10 +2563,12 @@ async function followFolder(t) {
 // are `open`, read through git and gh (or glab) as a refresh reads them. A merge
 // the CLI accepts takes the pull request out of the list, unless `queued`: then it
 // stays open, as with auto-merge or a merge queue. `reply` answers the merge, and
-// `view` the look at its state afterwards. Restored when the test ends.
-function fakeForge(t, { forge = "github", open = [10, 11, 12, 13, 14], merges = ALL_MERGES, reply = { code: 0, stdout: "" }, queued = false, view = null } = {}) {
+// `view` the look at its state afterwards. Its open issues are `issues`; a close
+// the CLI accepts (`closeReply`) takes the issue out of the list (#27). Restored
+// when the test ends.
+function fakeForge(t, { forge = "github", open = [10, 11, 12, 13, 14], merges = ALL_MERGES, reply = { code: 0, stdout: "" }, queued = false, view = null, issues = [], closeReply = { code: 0, stdout: "" } } = {}) {
   t.after(() => { git = missing("git"); gh = missing("gh"); glab = missing("glab"); hold = () => false; held.length = 0; });
-  const state = { open: open.slice() };
+  const state = { open: open.slice(), issues: issues.slice() };
   const host = forge === "gitlab" ? "gitlab.com" : "github.com";
   git = (args) => args[0] === "rev-parse" ? { code: 0, stdout: "/repo\n" }
     : args[0] === "remote" ? { code: 0, stdout: `origin\tgit@${host}:o/p.git (fetch)\n` } : { code: 1, stderr: "no" };
@@ -2574,10 +2577,17 @@ function fakeForge(t, { forge = "github", open = [10, 11, 12, 13, 14], merges = 
     return reply;
   };
   const isOpen = (args) => state.open.includes(Number(args[2]));
+  const close = (args) => {
+    if (closeReply.code === 0 && !closeReply.error) state.issues = state.issues.filter((n) => n !== Number(args[2]));
+    return closeReply;
+  };
   if (forge === "github") {
     gh = (args) => {
       if (args[0] === "repo") return { code: 0, stdout: JSON.stringify({ nameWithOwner: "o/p", url: "https://x/o/p", squashMergeAllowed: merges.squash, mergeCommitAllowed: merges.merge, rebaseMergeAllowed: merges.rebase }) };
-      if (args[0] === "issue") return { code: 0, stdout: "[]" };
+      if (args[0] === "issue" && args[1] === "close") return close(args);
+      if (args[0] === "issue") return { code: 0, stdout: JSON.stringify(state.issues.map((n) => ({
+        number: n, title: `Issue ${n}`, body: `About ${n}`, author: { login: "a" }, labels: [], updatedAt: iso(60), url: `https://x/issues/${n}`,
+      }))) };
       if (args[1] === "list") return { code: 0, stdout: JSON.stringify(state.open.map((n) => ({
         number: n, title: `Title ${n}`, body: `Body ${n}`, author: { login: "a" }, isDraft: false, headRefName: `b${n}`, headRefOid: headOf(n),
         updatedAt: iso(60), url: `https://x/pull/${n}`, reviewDecision: "", statusCheckRollup: [],
@@ -2589,7 +2599,11 @@ function fakeForge(t, { forge = "github", open = [10, 11, 12, 13, 14], merges = 
   } else {
     glab = (args) => {
       if (args[0] === "repo") return { code: 0, stdout: JSON.stringify({ path_with_namespace: "g/p", web_url: "https://x/g/p" }) };
-      if (args[0] === "issue" || args[0] === "label") return { code: 0, stdout: "[]" };
+      if (args[0] === "issue" && args[1] === "close") return close(args);
+      if (args[0] === "issue") return { code: 0, stdout: JSON.stringify(state.issues.map((n) => ({
+        iid: n, title: `Issue ${n}`, description: `About ${n}`, author: { username: "a" }, labels: [], updated_at: iso(60), web_url: `https://x/issues/${n}`,
+      }))) };
+      if (args[0] === "label") return { code: 0, stdout: "[]" };
       if (args[1] === "list") return { code: 0, stdout: JSON.stringify(state.open.map((n) => ({
         iid: n, title: `Title ${n}`, description: `Body ${n}`, author: { username: "a" }, draft: false, source_branch: `b${n}`, sha: headOf(n),
         updated_at: iso(60), web_url: `https://x/merge_requests/${n}`,
@@ -3427,5 +3441,296 @@ test("at 28, 30 and 40 cells the Model field, its key hints and a model being ad
     assert.ok(text(lines.slice(-2)).includes("⏎ add"), `${cols}:\n${lines.join("\n")}`);
     assert.ok(lines.at(-1).trimEnd().endsWith("esc cancel"), `${cols}:\n${lines.join("\n")}`);
     at("\x1b\x1b\x1b");
+  }
+});
+
+// ── Closing an issue (#27) ──────────────────────────────────────────────────
+
+const closeCalls = (cli = "gh") => cliCalls(cli).filter((c) => c[0] === "issue" && c[1] === "close");
+
+// The panel on that repo's issues, #20 to #24 open, read by a refresh.
+async function loadIssues(t, options = {}) {
+  const loaded = await loadForge(t, { issues: [20, 21, 22, 23, 24], ...options });
+  assert.ok(ui.issues.length > 0, ui.error ?? "no issues");
+  ui.view = "issues";
+  return { ...loaded, lines: screen(draw) };
+}
+
+// An issue's Close button as the frame `lines` drew it, read off the buttons that
+// frame registered: its place, and the label on it.
+const closeButtonOf = (lines, number) => {
+  const b = ui.buttons.find((x) => x.close === number);
+  assert.ok(b, `no Close button for #${number}\n${lines.join("\n")}`);
+  return { ...b, label: lines[b.row]?.slice(b.from, b.to) };
+};
+
+// Presses an issue's Close button, then, a moment later, the Confirm close it
+// turned into, and waits for the close.
+async function closeVia(lines, ref) {
+  pressButton(lines, `Close ${ref}`);
+  later();
+  pressButton(screen(draw), `Confirm close ${ref}`);
+  await ui.acting;
+}
+
+test("every issue row shows a Close button, beside Resolve on GitHub or on its own line, never over another button (#27)", async (t) => {
+  for (const forge of ["github", "gitlab"]) {
+    await loadIssues(t, { forge });
+    for (const cols of [28, 30, 36, 37, 40, 60]) {
+      for (const armed of [null, { kind: "close", number: 21, notice: null }]) {
+        ui.confirm = armed;
+        const lines = screenAt(cols, 80, draw);
+        for (const l of lines) assert.ok(width(l ?? "") <= cols, `${forge} ${cols}: ${l}`);
+        for (const i of ui.issues) {
+          const label = armed?.number === i.number ? `Confirm close #${i.number}` : `Close #${i.number}`;
+          const b = closeButtonOf(lines, i.number);
+          assert.equal(b.label.trim(), label, `${forge} ${cols}\n${lines.join("\n")}`);
+          // Beside Resolve on GitHub when Confirm close fits there; else under the meta line.
+          if (forge === "github") {
+            const [, ry] = find(lines, `Resolve #${i.number}`);
+            assert.equal(b.row, cols >= 37 ? ry : ry + 1, `${cols}\n${lines.join("\n")}`);
+          } else {
+            assert.equal(b.from, 4, lines[b.row]);
+            assert.match(lines[b.row - 1], new RegExp(`#${i.number} · a`));
+          }
+        }
+        // No two buttons on a line share a cell.
+        for (const row of new Set(ui.buttons.map((b) => b.row))) {
+          const on = ui.buttons.filter((b) => b.row === row).sort((a, b) => a.from - b.from);
+          for (let k = 1; k < on.length; k++) assert.ok(on[k - 1].to <= on[k].from, `${forge} ${cols} row ${row}\n${lines.join("\n")}`);
+        }
+      }
+    }
+    ui.confirm = null;
+  }
+  // Pull requests have no Close button.
+  await loadIssues(t);
+  ui.view = "prs";
+  assert.ok(!screen(draw).some((l) => /Close/.test(l ?? "")));
+});
+
+test("a Close press only asks: the button reads Confirm close in red, the notice says so, and nothing is closed (#27)", async (t) => {
+  for (const [forge, cli] of [["github", "gh"], ["gitlab", "glab"]]) {
+    const { lines } = await loadIssues(t, { forge });
+    let after;
+    await quietly(async () => { after = screen(() => pressButton(lines, "Close #21")); });
+    assert.deepEqual(closeCalls(cli), [], forge);
+    assert.equal(ui.acting, null);
+    assert.deepEqual({ kind: ui.confirm?.kind, number: ui.confirm?.number }, { kind: "close", number: 21 });
+    assert.equal(ui.sel.issues, 0);
+    assert.equal(after.filter((l) => l?.includes("Confirm close") && !l.includes("Press")).length, 1, after.join("\n"));
+    assert.equal(ui.notice?.tone, "info");
+    assert.equal(ui.notice.text, "Press Confirm close #21 to close it. Any other key or click cancels.");
+    const raw = rawScreen(draw).find((l) => l?.includes("Confirm close #21") && !l.includes("Press"));
+    assert.match(raw, /\x1b\[31m Confirm close #21/, raw);
+  }
+});
+
+test("the second press closes that issue, and only that one, with no agent or pull request; it leaves the list (#27)", async (t) => {
+  // An agent and the resolver skill are there, so a resolve run would start.
+  claudeHome(t, { ".claude/skills/issue-resolver/SKILL.md": "x" });
+  for (const [forge, cli] of [["github", "gh"], ["gitlab", "glab"]]) {
+    const { lines } = await loadIssues(t, { forge });
+    fakeRex(agentHere());
+    calls.length = 0;
+    await quietly(async () => { await closeVia(lines, "#22"); await idle(); });
+    assert.deepEqual(closeCalls(cli), [["issue", "close", "22"]], forge);
+    // Nothing but the close and the refresh after it: no agent, no profile menu, no merge, no browser.
+    assert.equal(ui.menu, null, forge);
+    assert.deepEqual(rexCalls(), [], forge);
+    assert.deepEqual(mccCalls(), [], forge);
+    assert.deepEqual(opened, [], forge);
+    assert.ok(!cliCalls(cli).some((c) => ["pr", "mr"].includes(c[0]) && c[1] !== "list"), JSON.stringify(calls));
+    assert.ok(cliCalls(cli).some((c) => c[0] === "issue" && c[1] === "list"), "no refresh after the close");
+    assert.deepEqual(ui.issues.map((i) => i.number), [20, 21, 23, 24], forge);
+    assert.equal(ui.confirm, null);
+    assert.equal(ui.closing, null);
+    assert.equal(ui.notice?.tone, "ok");
+    assert.equal(ui.notice.text, "Closed #22");
+    const after = screen(draw);
+    assert.equal(find(after, "Close #22")[1], -1, after.join("\n"));
+    assert.ok(!ui.buttons.some((b) => b.close === 22));
+  }
+});
+
+test("while a close runs its button reads Closing #N… in yellow, a press on it does nothing, and nothing else starts (#27)", { timeout: 5000 }, async (t) => {
+  const { lines } = await loadIssues(t);
+  await quietly(async () => {
+    hold = (name, args) => name === "gh" && args[0] === "issue" && args[1] === "close";
+    pressButton(lines, "Close #22");
+    later();
+    let now = screen(() => pressButton(screen(draw), "Confirm close #22"));
+    assert.equal(closeButtonOf(now, 22).label, " Closing #22… ", now.join("\n"));
+    assert.deepEqual(ui.closing, { root: "/repo", number: 22 });
+    assert.equal(ui.notice?.text, "Closing #22…");
+    const raw = rawScreen(draw).find((l) => l?.includes(" Closing #22… "));
+    assert.match(raw, /\x1b\[33m Closing #22… /, raw);
+    // A press on it, another Close or a Resolve starts nothing.
+    for (let i = 0; i < 2; i++) {
+      const b = closeButtonOf(screen(draw), 22);
+      onInput(Buffer.from(pressAt(b.from, b.row)));
+      later();
+    }
+    pressButton(screen(draw), "Close #21");
+    pressButton(screen(draw), "Resolve #21");
+    assert.equal(ui.confirm, null);
+    assert.equal(ui.menu, null);
+    assert.equal(closeCalls().length, 1);
+    assert.deepEqual(rexCalls(), []);
+    hold = () => false;
+    const closing = held.find((h) => h.args[1] === "close");
+    closing.answer(gh(closing.args));
+    await ui.acting;
+    await idle();
+  });
+  assert.equal(ui.notice?.text, "Closed #22");
+  assert.equal(ui.closing, null);
+  assert.deepEqual(closeCalls(), [["issue", "close", "22"]]);
+});
+
+test("a close the CLI refuses, or that can't run, shows its reason in red and keeps the issue (#27)", async (t) => {
+  const { lines } = await loadIssues(t, { closeReply: { code: 1, stderr: "GraphQL: Could not resolve to an issue\nmore\n" } });
+  let last;
+  await quietly(async () => { await closeVia(lines, "#22"); last = screen(draw); });
+  assert.equal(closeCalls().length, 1);
+  assert.equal(ui.notice?.tone, "error");
+  assert.equal(ui.notice.text, "Can't close #22: GraphQL: Could not resolve to an issue");
+  assert.ok(ui.issues.some((i) => i.number === 22));
+  assert.equal(ui.closing, null);
+  assert.equal(closeButtonOf(last, 22).label, " Close #22 ", last.join("\n"));
+  // Nothing was closed, so the list isn't read again.
+  assert.ok(!calls.some((c) => c[0] === "git"), JSON.stringify(calls));
+  // gh missing says so.
+  gh = () => ({ error: Object.assign(new Error("spawn gh ENOENT"), { code: "ENOENT" }) });
+  await quietly(() => closeVia(screen(draw), "#22"));
+  assert.equal(ui.notice?.text, "Can't close #22: gh isn't installed");
+  assert.ok(ui.issues.some((i) => i.number === 22));
+  // A CLI that fails with nothing to say gives its exit code.
+  gh = () => ({ code: 4 });
+  await quietly(() => closeVia(screen(draw), "#22"));
+  assert.equal(ui.notice?.text, "Can't close #22: gh exited 4");
+  assert.ok(ui.issues.some((i) => i.number === 22));
+});
+
+test("a refresh that began before a close and answers after it doesn't list the closed issue again (#27)", { timeout: 5000 }, async (t) => {
+  const { lines } = await loadIssues(t);
+  await quietly(async () => {
+    pressButton(lines, "Close #22");
+    later();
+    // The timer's refresh is reading the issues, as they were before the close.
+    hold = (name, args) => name === "gh" && args[0] === "issue" && args[1] === "list";
+    const stale = refresh();
+    for (let i = 0; i < 50 && !held.length; i++) await tick();
+    const reading = held.find((h) => h.args[1] === "list");
+    assert.ok(reading, "the refresh is reading the issues");
+    const before = gh(reading.args);
+    pressButton(screen(draw), "Confirm close #22");
+    await ui.acting;
+    // Out of the list as soon as the CLI said so, while the refresh is still reading.
+    assert.ok(!ui.issues.some((i) => i.number === 22), "#22 is still listed");
+    hold = () => false;
+    // The stale answer, with #22 still open, comes after the close.
+    reading.answer(before);
+    await stale;
+    await idle();
+  });
+  assert.equal(ui.notice?.text, "Closed #22");
+  assert.deepEqual(ui.issues.map((i) => i.number), [20, 21, 23, 24]);
+  assert.deepEqual(closeCalls(), [["issue", "close", "22"]]);
+});
+
+test("any other key or click, esc and q take back a Close press that asked, close nothing, and the panel stays (#27)", async (t) => {
+  for (const [what, cancel] of [
+    ["j", () => onInput(Buffer.from("j"))],
+    ["esc", () => onInput(Buffer.from("\x1b"))],
+    ["q", () => onInput(Buffer.from("q"))],
+    ["a click elsewhere", () => onInput(Buffer.from(pressAt(0, 1)))],
+    ["another Close", () => pressButton(screen(draw), "Close #21")],
+    ["a refresh into another repo", () => { ui.context = "/elsewhere"; }],
+  ]) {
+    const { lines } = await loadIssues(t);
+    await quietly(async () => {
+      pressButton(lines, "Close #22");
+      later();
+      assert.equal(ui.confirm?.number, 22, what);
+      cancel();
+      if (what === "a refresh into another repo") { await refresh(); }
+      await idle();
+    });
+    assert.ok(!(ui.confirm?.kind === "close" && ui.confirm.number === 22), what);
+    assert.deepEqual(closeCalls(), [], what);
+    // Another Close asks about its own issue instead.
+    if (what === "another Close") assert.deepEqual([ui.confirm?.kind, ui.confirm?.number], ["close", 21]);
+    if (what !== "another Close" && what !== "a refresh into another repo") {
+      assert.equal(ui.confirm, null, what);
+      assert.ok(!(ui.notice?.text ?? "").startsWith("Press Confirm close"), what);
+      assert.ok(ui.issues.some((i) => i.number === 22), what);
+      // The question is gone: a press now only asks again.
+      await quietly(async () => { pressButton(screen(draw), "Close #22"); });
+      assert.equal(ui.confirm?.number, 22, what);
+      assert.deepEqual(closeCalls(), [], what);
+    }
+  }
+});
+
+test("a double click on Close only asks: a second press within MERGE_GAP keeps the question (#27)", async (t) => {
+  const { lines } = await loadIssues(t);
+  await quietly(async () => {
+    pressButton(lines, "Close #22");
+    pressButton(screen(draw), "Confirm close #22");
+  });
+  assert.equal(ui.confirm?.number, 22);
+  assert.deepEqual(closeCalls(), []);
+  await quietly(async () => { later(); pressButton(screen(draw), "Confirm close #22"); await ui.acting; await idle(); });
+  assert.deepEqual(closeCalls(), [["issue", "close", "22"]]);
+});
+
+test("an issue's Close question and a pull request's Merge question with the same number don't collide (#27)", async (t) => {
+  // PR #12 and issue #12, in one repo.
+  await loadIssues(t, { issues: [11, 12, 13] });
+  await quietly(async () => {
+    // Close #12 asks: Merge #12 doesn't read Confirm merge, and a Merge press only asks.
+    ui.view = "issues";
+    pressButton(screen(draw), "Close #12");
+    assert.deepEqual([ui.confirm?.kind, ui.confirm?.number], ["close", 12]);
+    ui.view = "prs";
+    let prs = screen(draw);
+    assert.equal(find(prs, "Confirm merge #12")[1], -1, prs.join("\n"));
+    later();
+    assert.equal(pressMerge(12), null);
+    assert.deepEqual([ui.confirm?.kind, ui.confirm?.number], ["merge", 12]);
+    assert.deepEqual(mergeCalls(), []);
+    // Merge #12 asks: Close #12 doesn't read Confirm close, and a Close press only asks.
+    ui.view = "issues";
+    const issues = screen(draw);
+    assert.equal(find(issues, "Confirm close #12")[1], -1, issues.join("\n"));
+    later();
+    assert.equal(pressClose(12), null);
+    assert.deepEqual([ui.confirm?.kind, ui.confirm?.number], ["close", 12]);
+  });
+  assert.deepEqual(closeCalls(), []);
+  assert.deepEqual(mergeCalls(), []);
+});
+
+test("Close asks nothing while a launch, merge or close runs, or while the profile menu is open (#27)", async (t) => {
+  await loadIssues(t);
+  const busy = Promise.resolve();
+  ui.acting = busy;
+  assert.equal(pressClose(22), busy);
+  assert.equal(ui.confirm, null);
+  ui.acting = null;
+  ui.menu = { view: "issues", number: 21 };
+  assert.equal(pressClose(22), null);
+  assert.equal(ui.confirm, null);
+  ui.menu = null;
+  assert.deepEqual(closeCalls(), []);
+});
+
+test("the CLIs' close arguments come from an integer only (#27)", () => {
+  assert.deepEqual(FORGES.github.closeArgs(7), ["issue", "close", "7"]);
+  assert.deepEqual(FORGES.gitlab.closeArgs(7), ["issue", "close", "7"]);
+  for (const bad of [0, -1, 1.5, "7", "7; rm -rf /", null, undefined, NaN, Infinity]) {
+    assert.throws(() => FORGES.github.closeArgs(bad), /not a number/, String(bad));
+    assert.throws(() => FORGES.gitlab.closeArgs(bad), /not a number/, String(bad));
   }
 });
