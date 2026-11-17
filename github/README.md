@@ -81,11 +81,11 @@ Once the profile is known, the panel:
 
 1. takes the action's custom prompt from the profiles file, if it has one;
 2. checks that the skill is installed for that agent: `issue-resolver` for an issue, `issue-pr-review` for a pull request (not with a custom prompt);
-3. finds where the new pane goes: to the right of your agent, side by side, the one in the pane the panel follows, else one in another pane of the panel's tab, else to the right of the pane the panel follows. It reads each pane's foreground program from Rex, and knows `claude`, `codex`, `gemini`, `opencode` and `pi`;
+3. finds where the new pane goes: to the right of your agent, side by side, the one in the pane the panel follows, else one in another pane of the panel's tab, else to the right of the pane the panel follows. It reads each pane's foreground program from Rex, and knows `claude`, `codex`, `gemini`, `opencode`, `pi` and `vibe` (Mistral Vibe, which runs as `vibe-rs`);
 4. opens a new pane there, in the repo's folder, labelled `resolve-N` or `review-N`, and starts the profile's agent in it with its model and thinking level, and the prompt as the last word of its command line: for Claude `/issue-resolver 12` or `/issue-pr-review 34`; other agents get "Use the issue-resolver skill on issue #12." With a custom prompt, it sends that prompt with the number filled in. Nothing from the title or description goes into the prompt;
 5. checks after 3 seconds that the agent is still running.
 
-The command lines are `mcc run -- [flags] <prompt>` (with mcc's full path), `claude [flags] <prompt>`, `codex [flags] <prompt>`, `pi [flags] <prompt>` and `opencode --prompt <prompt>`. Rex passes each word as it is, so no shell reads the prompt.
+The command lines are `mcc run -- [flags] <prompt>` (with mcc's full path), `claude [flags] <prompt>`, `codex [flags] <prompt>`, `pi [flags] <prompt>`, `opencode --prompt <prompt>` and `vibe <prompt>`, or `env VIBE_ACTIVE_MODEL=M vibe <prompt>` when the Mistral Vibe profile has a model. Rex passes each word as it is, so no shell reads the prompt.
 
 Your own agent and its conversation are left alone, and focus stays where it was. The panel shows what it is doing above the key hints, in yellow while it starts the agent, green once it runs, and red with the reason when something fails. If the agent fails at once, Rex keeps its pane open so you can read why.
 
@@ -145,7 +145,7 @@ The prompts are kept in the profiles file (see [Where they're kept](#where-theyr
 A profile says which agent Resolve or Review starts:
 
 - **Name** and **id**: the id is 1 to 32 lowercase letters, digits or `-`. `default` is taken.
-- **Harness**: Claude Code via `mcc run`, Claude Code, Codex, Pi or OpenCode.
+- **Harness**: Claude Code via `mcc run`, Claude Code, Codex, Pi, OpenCode or Mistral Vibe.
 - **Model** (optional): left empty, the harness uses its own default.
 - **Thinking** (optional): only the levels the harness takes. Left empty, the harness uses its own default.
 
@@ -160,8 +160,11 @@ How the fields become flags:
 | Codex | `-m M` | `-c model_reasoning_effort="L"` | low, medium, high, xhigh |
 | Pi | `--model M` | `--thinking L` | off, minimal, low, medium, high, xhigh, max |
 | OpenCode | none | none | none |
+| Mistral Vibe | `VIBE_ACTIVE_MODEL=M` (environment) | none | none |
 
 OpenCode has no model or thinking flag when it starts interactively, so a model set on an OpenCode profile is ignored. The profile form says so, and so does the notice when the agent starts.
+
+Mistral Vibe's `--model` flag works only in headless mode, so the panel passes the model in the `VIBE_ACTIVE_MODEL` environment variable instead, which Vibe reads when it starts interactively. The model is one of Vibe's model aliases, such as `mistral-medium-3.5` or `mistral-large-4`. An alias Vibe doesn't know isn't an error: Vibe starts its default model and says so in its pane, while the panel's notice still names the model you set. Vibe sets the thinking level per model in its own `~/.vibe/config.toml`, so a Mistral Vibe profile takes none. Vibe finds the IDD skills in `~/.vibe/skills`, `~/.agents/skills` and the same folders in the repo, which are among the folders the panel looks in.
 
 A model is letters, digits and `. _ : / @ + -`, starting with a letter or digit. Spaces, quotes and other shell characters are refused, and so are aliases with brackets such as `opus[1m]`: use the full model name instead.
 
@@ -177,7 +180,7 @@ A profile that can't be saved shows why, in red, and nothing is written.
 ~/.config/rex-github/profiles.json
 ```
 
-The file is per machine: it lives on the machine of the Rex server that holds the session, where the panel runs. It is the panel's own file, apart from [herdr-github](https://github.com/luongnv89/herdr-github)'s, though it has the same format: to use the profiles you made there, copy `~/.config/herdr/plugins/config/herdr-github/profiles.json` to it.
+The file is per machine: it lives on the machine of the Rex server that holds the session, where the panel runs. It is the panel's own file, apart from [herdr-github](https://github.com/luongnv89/herdr-github)'s, though it has the same format: to use the profiles you made there, copy `~/.config/herdr/plugins/config/herdr-github/profiles.json` to it. Copying the other way works too, though a herdr-github from before its Mistral Vibe harness shows a file with a Mistral Vibe profile read only.
 
 The panel reads the file when the profiles view opens and on every Resolve or Review click, and writes it only while it still holds what it read. If another panel changed it in the meantime, nothing is written, the view reads it again and asks you to make your change again. A file that isn't valid JSON, or is from a newer version of the panel, is shown read only and never overwritten; until you fix or delete it, the actions use the default. A file with a profile that can't be used (one edited by hand with a bad model, say) is read only too, so saving doesn't erase that profile or what it's assigned to: the view says which profile and why, the actions assigned to it use the default, and the other profiles still work. Fix or remove it in the file to save again. The same goes for a custom prompt that can't be used: the file is read only, and that action sends the default prompt until you fix it in the file.
 
@@ -235,6 +238,7 @@ It sends nothing anywhere except through `gh` to GitHub, or `glab` to GitLab.
 - **"The profiles file isn't valid JSON" or "is version N":** the file is read only until you fix or delete it, and the actions use the default meanwhile.
 - **"Resolve prompt: must contain {number}" (or another reason under a prompt):** a custom prompt needs `{number}` where the number goes, and has to fit the rules under [Custom prompts](#custom-prompts). Nothing is saved until it does.
 - **"A prompt in the file can't be used":** a prompt edited by hand in the profiles file breaks those rules. Its action sends the default meanwhile, and the file is read only: fix or remove the prompt in the file.
+- **Mistral Vibe starts with another model than the profile's:** Vibe didn't know the model alias, so it started its default model; its pane says which. Use an alias from Vibe's model list (`/model` in Vibe), or leave the model empty.
 - **A custom prompt like `/issue-resolver {number}` does nothing on Codex, Pi or OpenCode:** a custom prompt is sent as written, and only Claude Code runs a `/skill` as a command. Write it as prose for other agents, such as `Use the issue-resolver skill on issue #{number}.`, or leave it empty for the default.
 
 ## Develop
