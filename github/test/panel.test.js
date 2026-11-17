@@ -636,12 +636,12 @@ test("the header has no Resolve or Review button; the rows do, and a acts on the
   assert.match(lines[0], /^ o\/p +⚙ {2}↻ {2}↗ $/);
   assert.doesNotMatch(lines[0], /Resolve|Review/);
   assert.ok(find(lines, "Resolve #12")[1] > LIST.from, lines.join("\n"));
-  assert.match(lines[FOOTER], /⏎ open · a resolve ·/);
+  assert.match(lines[FOOTER], /^ a resolve #12 · ↑↓ select · ⏎ open ·/);
   lines = setupGitHub("prs");
   assert.match(lines[0], /^ o\/p +⚙ {2}↻ {2}↗ $/);
   assert.doesNotMatch(lines[0], /Resolve|Review|Merge/);
   assert.ok(find(lines, "Review #12")[1] > LIST.from, lines.join("\n"));
-  assert.match(lines[FOOTER], /⏎ open · a review ·/);
+  assert.match(lines[FOOTER], /^ a review #12 · ↑↓ select · ⏎ open ·/);
   for (const l of lines) assert.ok(width(l ?? "") <= 60, l);
   // GitLab: both skills use gh, so no button and no key.
   setupGitHub("issues");
@@ -1439,7 +1439,7 @@ test("launch notices name the harness, and lead with what to do", async (t) => {
   assert.equal(text(lines).match(/\bword\b/g).length, 60, lines.join("\n"));
   assert.ok(text(lines).includes("word end"), lines.join("\n"));
   assert.ok(!lines.some((l) => l?.startsWith(" word") && l.includes("…")), lines.join("\n"));
-  assert.match(lines[23], /^ ↑↓ select/);
+  assert.match(lines[23], /^ a resolve #12 · ↑↓ select/);
   // One too long for the room is cut there, ending in "…": the list keeps a line,
   // the URL under the message stays whole, and so do the key hints.
   ui.notice = { tone: "error", text: "word ".repeat(400), url: "https://x/install" };
@@ -1447,7 +1447,7 @@ test("launch notices name the harness, and lead with what to do", async (t) => {
   assert.ok(!lines[4].startsWith(" word") && lines[5].startsWith("─"), lines.join("\n"));
   assert.ok(lines[21].endsWith("…"), lines.join("\n"));
   assert.equal(lines[22], " https://x/install");
-  assert.match(lines[23], /^ ↑↓ select/);
+  assert.match(lines[23], /^ a resolve #12 · ↑↓ select/);
 });
 
 // The same text, however a narrow pane broke it: a word too long for a line is
@@ -1524,14 +1524,14 @@ test("at 28 and 30 cells the notice of a started OpenCode keeps its note whole",
     assert.ok(ui.menu, `${cols}: a opened no menu`);
     for (const l of menu) assert.ok(width(l ?? "") <= cols, `${cols}: ${l}`);
     assert.ok(menu.some((l) => /│ ▸ P\b/.test(l ?? "")), `${cols}:\n${menu.join("\n")}`);
-    // Too narrow for the full key hints: the short ones, esc still in view.
-    assert.equal(menu[23].trimEnd(), " ↑↓ · ⏎ start · esc cancel", `${cols}:\n${menu.join("\n")}`);
+    // Too narrow for the full key hints: the short ones, esc and q still in view.
+    assert.equal(menu[23].trimEnd(), " ↑↓ · ⏎ start · esc/q cancel", `${cols}:\n${menu.join("\n")}`);
     const lines = await screenAsync(() => onInput(Buffer.from("\r")), cols);
     const whole = "Started OpenCode in a new pane: Use the issue-resolver skill on issue #12. " +
       "(OpenCode ignores this profile's model and thinking level: it has no flag for them when it starts)";
     assert.ok(shows(lines, whole), `${cols}:\n${lines.join("\n")}`);
     for (const l of lines) assert.ok(width(l ?? "") <= cols, `${cols}: ${l}`);
-    assert.match(lines[23], /^ ↑↓ select/);
+    assert.match(lines[23], /^ a resolve #12 · ↑↓ select/);
   }
 });
 
@@ -2047,7 +2047,7 @@ test("with more profiles, a opens a menu of every one, the default first and the
   assert.ok(lines.some((l) => /│ {3}Claude Code +│$/.test(l ?? "")), lines.join("\n"));
   assert.ok(lines.some((l) => /│ ▸ Codex quick · Codex +│$/.test(l ?? "")), lines.join("\n"));
   assert.ok(lines.some((l) => l?.includes("┌ Resolve #12 with")), lines.join("\n"));
-  assert.match(lines[FOOTER], /^ ↑↓ choose · ⏎ start · esc cancel/);
+  assert.match(lines[FOOTER], /^ ↑↓\/jk choose · ⏎ start · esc\/q cancel/);
   // ↑ and ↓ (and k and j) move, and stop at either end; a does nothing while it's open.
   screen(() => onInput(Buffer.from("kkkkk")));
   assert.equal(ui.menu.sel, 0);
@@ -2113,23 +2113,27 @@ test("esc, q, the wheel and a click elsewhere close the menu and start nothing, 
   }
 });
 
-test("a opens the menu under the selected row's button, a row's button under its own, and the header's right edge holds it when the button is out of view (#13)", (t) => {
+test("a opens the menu at the bottom, right above the key hints, and a row's button under its own, above it when it sits low (#13, #28)", (t) => {
   claudeHome(t);
-  // a: under the selected row's button, from the button's column; the header has none.
+  // a: at the bottom of the list, its last line right above the key hints, from the
+  // selected row's button's column; the header has none.
   let lines = setupGitHub("issues");
-  const [sx, sy] = find(lines, "Resolve #12");
+  const [sx] = find(lines, "Resolve #12");
   lines = screen(() => onInput(Buffer.from("a")));
-  assert.equal(ui.menu?.anchor, "row");
+  assert.equal(ui.menu?.anchor, "keys");
   assert.equal(ui.menu.number, 12);
   assert.doesNotMatch(lines[0], /Resolve/);
-  assert.equal(lines[sy + 1].indexOf("┌ Resolve #12 with"), sx - 1, lines.join("\n"));
-  // A pane too short for the whole selected row: its button is out of view, so the
-  // menu opens under the header, at the right edge.
+  assert.match(lines[FOOTER - 1], /^ *└─*┘$/, lines.join("\n"));
+  const top = lines.findIndex((l) => l?.includes("┌ Resolve #12 with"));
+  assert.equal(top, FOOTER - 1 - ui.menu.entries.length - 1, lines.join("\n"));
+  assert.equal(lines[top].indexOf("┌ Resolve #12 with"), sx - 1, lines.join("\n"));
+  // A pane too short for the whole selected row: still at the bottom, at the right edge.
   setupGitHub("issues");
   lines = screenAt(60, 8, () => onInput(Buffer.from("a")));
   assert.ok(!lines.some((l) => /^▌ +Resolve #12/.test(l ?? "")), lines.join("\n"));
-  assert.match(lines[1], /^ *┌ Resolve #12 with ─*┐$/);
-  assert.equal(lines[1].length, 60, lines.join("\n"));
+  assert.match(lines[6], /^ *└─*↓?┘$/, lines.join("\n"));
+  assert.equal(lines[6].length, 60, lines.join("\n"));
+  assert.match(lines[7], /^ ↑↓\/jk choose/);
   for (const l of lines) assert.ok(width(l ?? "") <= 60, l);
   // A row's: right under its button, from the button's column.
   lines = setupGitHub("issues");
@@ -2142,7 +2146,10 @@ test("a opens the menu under the selected row's button, a row's button under its
   // The last row's button sits low: the menu goes above it.
   setupGitHub("issues");
   ui.sel.issues = 9;
-  lines = screen(() => onInput(Buffer.from("a")));
+  ui.follow = true;
+  lines = screen(draw);
+  const [lx, ly] = find(lines, "Resolve #19");
+  lines = screen(() => click(lx, ly));
   const at = lines.findIndex((l) => /Resolve #19 {3}Close #19 $/.test(l ?? ""));
   assert.ok(at > LIST.from && lines[at - 1].trimStart().startsWith("└"), lines.join("\n"));
   assert.ok(lines.slice(LIST.from, at).some((l) => l?.includes("┌ Resolve #19 with")), lines.join("\n"));
@@ -2213,10 +2220,10 @@ test("at 28, 30, 40 and 60 cells the menu fits, with a 40-character name, and it
     const [bx, by] = find(lines, "Resolve #12");
     lines = screenAt(cols, 24, () => (how === "a" ? onInput(Buffer.from("a")) : click(bx, by)));
     const where = `${cols} ${how}:\n${lines.join("\n")}`;
-    assert.equal(ui.menu?.anchor, "row", where);
+    assert.equal(ui.menu?.anchor, how === "a" ? "keys" : "row", where);
     for (const l of lines) assert.ok(width(l ?? "") <= cols, `${where}\n${l}`);
-    // The full key hints when they fit, else the short ones: esc cancel stays in view.
-    assert.match(lines[FOOTER], cols >= 33 ? /^ ↑↓ choose · ⏎ start · esc cancel/ : /^ ↑↓ · ⏎ start · esc cancel *$/, where);
+    // The full key hints when they fit, else the short ones: esc/q cancel stays in view.
+    assert.match(lines[FOOTER], cols >= 38 ? /^ ↑↓\/jk choose · ⏎ start · esc\/q cancel/ : /^ ↑↓ · ⏎ start · esc\/q cancel *$/, where);
     // The name, cut to the box when it must, ending in "…".
     const y = lines.findIndex((l) => l?.includes("│   Abcdefghij"));
     assert.ok(y > 0, where);
@@ -2242,19 +2249,114 @@ test("a menu longer than the room shows a window of it that follows the highligh
   assert.ok(shown.length < 11, lines.join("\n"));
   // Inside the list, the key hints last, the highlighted profile in view.
   for (const [, y] of shown) assert.ok(y >= 1 && y <= lastList, lines.join("\n"));
-  assert.match(lines[rows - 1], /^ ↑↓ choose/);
+  assert.match(lines[rows - 1], /^ ↑↓\/jk choose/);
   assert.ok(shown.some(([l]) => l.includes("▸ Profile 0")), lines.join("\n"));
   assert.ok(lines.some((l) => /^ *└─*↓┘$/.test(l ?? "")), lines.join("\n"));
+  // Opened by a, it sits at the bottom: its last line right above the key hints (#28).
+  assert.equal(ui.menu.anchor, "keys");
+  assert.match(lines[lastList], /^ *└─*↓┘$/, lines.join("\n"));
   // Down past the window: it scrolls, keeping the highlight in view.
   lines = at(() => onInput(Buffer.from("j".repeat(10))));
   shown = inBox(lines);
   assert.ok(shown.some(([l]) => l.includes("▸ Profile 9")), lines.join("\n"));
   assert.ok(!shown.some(([l]) => l.includes("Claude Code via mcc run")), lines.join("\n"));
   assert.ok(lines.some((l) => /┌ Resolve #12 with ─*↑┐$/.test(l ?? "")), lines.join("\n"));
+  assert.match(lines[lastList], /^ *└─*┘$/, lines.join("\n"));
   // A click on a profile in view starts that one.
   const [l, y] = shown.find(([x]) => x.includes("│   Profile 8"));
   await screenAsync(() => click(l.indexOf("│") + 3, y));
   assert.deepEqual(splitCommand(), ["pi", "--model", "m8", "Use the issue-resolver skill on issue #12."]);
+});
+
+// ── The keyboard path, for a phone over remote access (#28) ─────────────────
+// A phone shows only the bottom rows of the pane, above its keyboard, and may send
+// no clicks at all: a, its menu and its hints must all be there.
+
+// A tall pane with a short list: the bottom of the list is empty.
+const shortList = (view) => {
+  setupGitHub(view);
+  ui[view] = ui[view].slice(0, 2);
+  ui.sel[view] = 1;
+};
+
+test("in a tall pane with a short list, a opens the menu in the rows right above the key hints, on both lists (#28)", (t) => {
+  const dir = claudeHome(t);
+  useProfiles(dir, [CC, CX], {});
+  const rows = 40, footer = rows - 1;
+  for (const [view, title] of [["issues", "Resolve #11 with"], ["prs", "Review #11 with"]]) for (const cols of [28, 36, 60]) {
+    shortList(view);
+    const before = screenAt(cols, rows, draw);
+    const button = before.findIndex((l) => l?.includes(view === "issues" ? "Resolve #11" : "Review #11"));
+    const lines = screenAt(cols, rows, () => onInput(Buffer.from("a")));
+    const where = `${view} ${cols}:\n${lines.join("\n")}`;
+    assert.equal(ui.menu?.anchor, "keys", where);
+    const n = ui.menu.entries.length, top = lines.findIndex((l) => l?.includes(`┌ ${title}`));
+    // Its last line is the one above the key hints, and the whole box is in the last rows.
+    assert.match(lines[footer - 1], /^ *└─*┘$/, where);
+    assert.equal(top, footer - n - 2, where);
+    assert.ok(top > button + 1, where);
+    for (let y = top + 1; y < footer - 1; y++) assert.match(lines[y], /│ [▸ ] /, where);
+    assert.match(lines[footer], /^ ↑↓/, where);
+    for (const l of lines) assert.ok(width(l ?? "") <= cols, `${where}\n${l}`);
+    screenAt(cols, rows, () => onInput(Buffer.from("q")));
+  }
+});
+
+test("from the keyboard only: a, then j or ↓, then enter starts the highlighted profile; q and esc start nothing (#28)", async (t) => {
+  const dir = home(t, { ".agents/skills/issue-resolver/SKILL.md": "x" });
+  useProfiles(dir, [CC, CX], { resolve: "cc" });
+  for (const down of ["j", "\x1b[B"]) {
+    shortList("issues");
+    fakeRex(agentHere());
+    await screenAsync(() => { onInput(Buffer.from("a")); assert.equal(ui.menu.sel, 1); onInput(Buffer.from(down)); onInput(Buffer.from("\r")); });
+    assert.equal(ui.menu, null);
+    assert.deepEqual(splitCommand(), ["codex", "Use the issue-resolver skill on issue #11."], JSON.stringify(down));
+  }
+  for (const cancel of ["q", "\x1b"]) {
+    shortList("issues");
+    fakeRex(agentHere());
+    screenAt(36, 40, () => onInput(Buffer.from("a")));
+    assert.ok(ui.menu);
+    const exit = noExit(() => screenAt(36, 40, () => onInput(Buffer.from(cancel))));
+    assert.equal(exit, null, `${JSON.stringify(cancel)} closed the panel`);
+    assert.equal(ui.menu, null);
+    assert.deepEqual(rexCalls(), [], JSON.stringify(cancel));
+  }
+});
+
+test("the key hints lead with a and the issue or pull request it acts on, however narrow the pane (#28)", (t) => {
+  claudeHome(t);
+  for (const cols of [20, 28, 36, 60]) {
+    setupGitHub("issues");
+    let lines = screenAt(cols, 24, draw);
+    assert.match(lines[FOOTER], /^ a resolve #12 · /, `${cols}: ${lines[FOOTER]}`);
+    // The selected row is what a acts on.
+    lines = screenAt(cols, 24, () => onInput(Buffer.from("j")));
+    assert.match(lines[FOOTER], /^ a resolve #13 · /, `${cols}: ${lines[FOOTER]}`);
+    setupGitHub("prs");
+    lines = screenAt(cols, 24, draw);
+    assert.match(lines[FOOTER], /^ a review #12 · /, `${cols}: ${lines[FOOTER]}`);
+    for (const l of lines) assert.ok(width(l ?? "") <= cols, `${cols}: ${l}`);
+  }
+  // No row to act on, or no action on GitLab: the hints as before.
+  setupGitHub("issues");
+  ui.issues = [];
+  assert.match(screen(draw)[FOOTER], /^ ↑↓ select · ⏎ open · ⇥ switch/);
+  setupGitHub("issues");
+  ui.forge = FORGES.gitlab;
+  assert.match(screen(draw)[FOOTER], /^ ↑↓ select · ⏎ open · ⇥ switch/);
+});
+
+test("the menu's key hints name j/k and q, and keep a key that cancels at any width (#28)", (t) => {
+  const dir = claudeHome(t);
+  useProfiles(dir, [CC, CX], {});
+  const expect = { 20: " ⏎ start · q cancel", 28: " ↑↓ · ⏎ start · esc/q cancel", 36: " ↑↓ · ⏎ start · esc/q cancel", 60: " ↑↓/jk choose · ⏎ start · esc/q cancel" };
+  for (const [cols, hint] of Object.entries(expect)) {
+    setupGitHub("issues");
+    const lines = screenAt(Number(cols), 24, () => onInput(Buffer.from("a")));
+    assert.equal(lines[FOOTER].trimEnd(), hint, `${cols}:\n${lines.join("\n")}`);
+    screenAt(Number(cols), 24, () => onInput(Buffer.from("q")));
+  }
 });
 
 // ── Following the focused pane ──────────────────────────────────────────────

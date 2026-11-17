@@ -262,7 +262,8 @@ const ui = {
   rows: [], buttons: [], visible: true, notice: null,
   root: null, tab: null, acting: null, settings: null,
   // The profile menu of a Resolve or Review press, while it's open: { view, number,
-  // key, entries, sel, top, anchor }, anchor being "row": under that row's button.
+  // key, entries, sel, top, anchor }, anchor being "row": under that row's button, or
+  // "keys", for a: at the bottom, just above the key hints (#28).
   menu: null,
   // A Merge or Close press that only asked (#13, #27): { kind, number, notice, at },
   // kind "close" for an issue's Close button and "merge" (or none) for a pull
@@ -759,9 +760,11 @@ function readStore() {
 }
 
 // A row's Resolve or Review button, and the a key, for the selected row. With only
-// the default profile it starts at once; with more, it opens a menu of them under
-// that row's button, and the one you choose starts. One launch, or one menu, at a
-// time. The header has no such button any more (#13).
+// the default profile it starts at once; with more, it opens a menu of them, and the
+// one you choose starts: under that row's button for a click, and for a ("keys") at
+// the bottom of the panel, just above the key hints, where a phone over remote access
+// shows it (#28). One launch, or one menu, at a time. The header has no such button
+// any more (#13).
 function act(view = ui.view, index = ui.sel[view], anchor = "row") {
   const action = actionFor(view, index);
   if (!action || ui.acting || ui.menu) return ui.acting;
@@ -1077,8 +1080,10 @@ function menuLines(m, cols, shown) {
   return { width: w, lines };
 }
 
-// The key hints while the menu is open: 33 cells, and 26 for a narrower pane.
-const MENU_KEYS = " ↑↓ choose · ⏎ start · esc cancel", MENU_KEYS_SHORT = " ↑↓ · ⏎ start · esc cancel";
+// The key hints while the menu is open: 38 cells, 28 for a narrower pane, and 19 for
+// one narrower still, so a key that cancels stays in view. j/k and q are there for a
+// phone's keyboard, which may have no arrows or esc (#28).
+const MENU_KEYS = [" ↑↓/jk choose · ⏎ start · esc/q cancel", " ↑↓ · ⏎ start · esc/q cancel", " ⏎ start · q cancel"];
 
 function draw() {
   const cols = process.stdout.columns || 60, rows = process.stdout.rows || 24;
@@ -1155,7 +1160,8 @@ function draw() {
   }
 
   // The profile menu, over the list: under the button pressed, or above it when
-  // there's more room there. Only its profiles take a click while it's open.
+  // there's more room there; for a, at the bottom, right above the notice and the key
+  // hints (#28). Only its profiles take a click while it's open.
   if (ui.menu) {
     const m = ui.menu, index = ui[m.view].findIndex((x) => x.number === m.number);
     if (m.view !== view || index < 0) { ui.menu = null; return gone(m); }
@@ -1167,11 +1173,15 @@ function draw() {
       if (hit?.index === index) { y = listTop + r; x = hit.from; break; }
     }
     const n = m.entries.length, limit = listTop + height, below = limit - y - 1, above = y - 1;
-    const down = y === 0 || below >= n + 2 || (above < n + 2 && below >= above);
-    const shown = Math.max(1, Math.min(n, (down ? below : above) - 2));
+    // From the keys, it ends on the list's last line, above the hints: a phone shows the
+    // bottom of the pane, near the cursor, so a menu under a button high up is out of
+    // view there. Its room is all of the list's, and the switch's above it if need be.
+    const bottom = m.anchor === "keys";
+    const down = !bottom && (y === 0 || below >= n + 2 || (above < n + 2 && below >= above));
+    const shown = Math.max(1, Math.min(n, (bottom ? limit - 1 : down ? below : above) - 2));
     m.top = Math.max(0, Math.min(m.top, m.sel, n - shown), m.sel - shown + 1);
     const box = menuLines(m, cols, shown), left = Math.max(0, Math.min(x, cols - box.width));
-    const first = down ? y + 1 : y - box.lines.length;
+    const first = bottom ? limit - box.lines.length : down ? y + 1 : y - box.lines.length;
     ui.buttons = [];
     box.lines.forEach((l, k) => {
       const row = first + k;
@@ -1183,9 +1193,11 @@ function draw() {
   }
   out.push(...notice);
 
-  // The menu's hints, shorter when the pane is too narrow for them, so esc stays in view.
-  const menuKeys = width(MENU_KEYS) <= cols ? MENU_KEYS : MENU_KEYS_SHORT;
-  const keys = ui.menu ? menuKeys : ` ↑↓ select · ⏎ open · ${action ? `a ${action.key} · ` : ""}⇥ switch · s profiles · r refresh · o repo · q close`;
+  // The menu's hints, shorter when the pane is too narrow for them, so a cancel key
+  // stays in view. Otherwise a and what it acts on come first, so they survive a narrow
+  // pane's cut: a resolve #12, a review #34 (#28).
+  const menuKeys = MENU_KEYS.find((k) => width(k) <= cols) ?? MENU_KEYS.at(-1);
+  const keys = ui.menu ? menuKeys : ` ${action ? `a ${action.key} #${action.number} · ` : ""}↑↓ select · ⏎ open · ⇥ switch · s profiles · r refresh · o repo · q close`;
   out.push(dim(fit(keys, cols)));
   paint(out, rows);
 }
@@ -1855,7 +1867,7 @@ function onInput(data) {
     else if (k === "2") pick("issues");
     else if (k === "\r" || k === "\n") openUrl(ui[ui.view][ui.sel[ui.view]]?.url);
     else if (k === "o") openUrl(ui.repo?.url);
-    else if (k === "a") act(ui.view, ui.sel[ui.view], "row");
+    else if (k === "a") act(ui.view, ui.sel[ui.view], "keys");
     else if (k === "s") openSettings();
     else if (k === "r") refresh();
   }
