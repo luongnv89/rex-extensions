@@ -177,10 +177,11 @@ test("parseStore: no file is empty; bad JSON or another version is read only", (
     assert.deepEqual(r.store, P.emptyStore());
     assert.match(r.warnings[0], /isn't valid JSON/);
   }
-  // Version 2 holds custom prompts (#20) and is read; a newer one is read only.
-  const newer = P.parseStore(JSON.stringify({ version: 3, profiles: [ok({ harness: "pi" })], assign: { resolve: "p" } }));
+  // Version 2 holds custom prompts (#20) and version 3 custom models (#24), and
+  // both are read; a newer one is read only.
+  const newer = P.parseStore(JSON.stringify({ version: 4, profiles: [ok({ harness: "pi" })], assign: { resolve: "p" } }));
   assert.equal(newer.readOnly, true);
-  assert.equal(newer.warnings[0], "The profiles file is version 3, not 1 or 2: it is read only here");
+  assert.equal(newer.warnings[0], "The profiles file is version 4, not 1, 2 or 3: it is read only here");
   assert.equal(P.resolveProfile(newer.store, "resolve").harness, "pi");
 });
 
@@ -217,9 +218,9 @@ test("parseStore skips bad, duplicate and reserved profiles, drops a missing ass
   const notList = P.parseStore(JSON.stringify({ version: 1, profiles: { a: 1 } }));
   assert.equal(notList.readOnly, true);
   assert.match(notList.warnings[0], /read only here/);
-  // Another version says so first, and only once (version 2 is read since #20).
-  const both = P.parseStore(JSON.stringify({ version: 3, profiles: ["x"] }));
-  assert.match(both.warnings[0], /version 3/);
+  // Another version says so first, and only once (version 2 is read since #20, 3 since #24).
+  const both = P.parseStore(JSON.stringify({ version: 4, profiles: ["x"] }));
+  assert.match(both.warnings[0], /version 4/);
   assert.ok(!both.warnings.some((w) => /fix or remove them/.test(w)));
   // What it writes, it reads back the same.
   const again = P.parseStore(P.serializeStore(store));
@@ -338,7 +339,7 @@ test("prompts: version 1 without them, version 2 with them, and a bad one makes 
   assert.match(r.warnings[0], /Some profiles in the file can't be used/);
   assert.ok(!r.warnings.some((w) => /A prompt in the file/.test(w)));
   // A newer version is read only, with its prompts still read.
-  r = hand({ resolve: "Go {number}" }, 3);
+  r = hand({ resolve: "Go {number}" }, 4);
   assert.equal(r.readOnly, true);
   assert.equal(r.store.prompts.resolve, "Go {number}");
 });
@@ -381,4 +382,127 @@ test("shellJoin quotes every word so a shell reads back the same words", () => {
   }
   assert.equal(P.shellQuote("it's"), "'it'\\''s'");
   assert.equal(P.shellJoin(P.buildLaunch(P.DEFAULT_PROFILE, PROMPT).argv), "'mcc' 'run' '--' '/issue-resolver 12'");
+});
+
+// ── Models (#24) ────────────────────────────────────────────────────────────
+
+test("MODELS: a short list of valid model names for each harness that takes one, none for OpenCode", () => {
+  assert.deepEqual(Object.keys(P.MODELS), P.HARNESSES);
+  assert.deepEqual(P.NO_MODEL, ["opencode"]);
+  assert.deepEqual(P.MODELS.opencode, []);
+  for (const harness of P.HARNESSES.filter((h) => h !== "opencode")) {
+    const list = P.MODELS[harness];
+    assert.ok(list.length > 0 && list.length <= 12, harness);
+    assert.equal(new Set(list).size, list.length, `${harness} lists a model twice`);
+    // Each one passes the MODEL rule, so a profile can hold it and start it.
+    for (const model of list) assert.deepEqual(P.validateProfile(ok({ harness, model })), [], `${harness} ${model}`);
+  }
+  // The names each harness takes: Claude Code's aliases, Vibe's own list.
+  for (const h of ["mcc", "claude"]) for (const m of ["fable", "opus", "sonnet", "haiku", "claude-opus-5-5"]) assert.ok(P.MODELS[h].includes(m), `${h} ${m}`);
+  assert.deepEqual(P.MODELS.vibe, ["mistral-large-4-0-3", "mistral-medium-3.5", "glm-5-3", "zai-glm-5-3-flash"]);
+  assert.ok(P.MODELS.pi.every((m) => m.includes("/")), "pi takes provider/id");
+});
+
+test("modelChoices: the built-in models, then the ones you added, each once", () => {
+  const store = { ...P.emptyStore(), customModels: { codex: ["gpt-mine", "gpt-5.5"], vibe: ["devstral-2"] } };
+  assert.deepEqual(P.modelChoices(store, "codex"), [...P.MODELS.codex, "gpt-mine"]);
+  assert.deepEqual(P.modelChoices(store, "vibe"), [...P.MODELS.vibe, "devstral-2"]);
+  assert.deepEqual(P.modelChoices(store, "pi"), P.MODELS.pi);
+  assert.deepEqual(P.modelChoices(P.emptyStore(), "claude"), P.MODELS.claude);
+  assert.deepEqual(P.modelChoices(store, "opencode"), []);
+  assert.deepEqual(P.modelChoices(store, "nope"), []);
+  assert.deepEqual(P.modelChoices(null, "mcc"), P.MODELS.mcc);
+});
+
+test("addCustomModel and removeCustomModel: the MODEL rule, a harness that takes one, and only your own removed", () => {
+  const base = P.emptyStore();
+  let s = P.addCustomModel(base, "codex", " gpt-mine ");
+  assert.deepEqual(s.customModels, { codex: ["gpt-mine"] });
+  assert.deepEqual(base.customModels, {}, "the store passed in is left as it was");
+  s = P.addCustomModel(s, "codex", "openai/gpt-x@2");
+  assert.deepEqual(P.modelChoices(s, "codex").slice(-2), ["gpt-mine", "openai/gpt-x@2"]);
+  // Refused, each with a reason under Model.
+  assert.throws(() => P.addCustomModel(s, "codex", "opus[1m]"), /^Error: Model: letters, digits and \. _ : \/ @ \+ - only/);
+  assert.throws(() => P.addCustomModel(s, "codex", "-x"), /^Error: Model: letters/);
+  assert.throws(() => P.addCustomModel(s, "codex", "a b"), /^Error: Model: letters/);
+  assert.throws(() => P.addCustomModel(s, "codex", "x".repeat(129)), /^Error: Model: letters/);
+  assert.throws(() => P.addCustomModel(s, "codex", "  "), /^Error: Model: type the model's name$/);
+  assert.throws(() => P.addCustomModel(s, "codex", "gpt-mine"), /^Error: Model: gpt-mine is already offered for Codex$/);
+  assert.throws(() => P.addCustomModel(s, "codex", "gpt-5.5"), /already offered/);
+  assert.throws(() => P.addCustomModel(s, "opencode", "x"), /^Error: Model: OpenCode takes no model$/);
+  assert.throws(() => P.addCustomModel(s, "nope", "x"), /No harness/);
+  // The same name can be added for another harness.
+  assert.deepEqual(P.addCustomModel(s, "pi", "gpt-mine").customModels.pi, ["gpt-mine"]);
+  // Removed: yours only; the harness's key goes with its last one.
+  assert.throws(() => P.removeCustomModel(s, "codex", "gpt-5.5"), /^Error: Model: gpt-5.5 is built in, so it can't be removed$/);
+  assert.throws(() => P.removeCustomModel(s, "codex", "other"), /^Error: Model: other isn't a model you added$/);
+  assert.throws(() => P.removeCustomModel(s, "codex", ""), /^Error: Model: choose a model you added/);
+  s = P.removeCustomModel(s, "codex", "gpt-mine");
+  assert.deepEqual(s.customModels, { codex: ["openai/gpt-x@2"] });
+  s = P.removeCustomModel(s, "codex", "openai/gpt-x@2");
+  assert.deepEqual(s.customModels, {});
+  // No reason holds "; ", which the form splits reasons on.
+  for (const fn of [() => P.addCustomModel(s, "codex", "a;b"), () => P.removeCustomModel(s, "vibe", "glm-5-3")]) {
+    assert.throws(fn, (e) => !e.message.includes("; "));
+  }
+});
+
+test("custom models: version 3 only while there is one, read back the same, older versions as before", () => {
+  const base = P.upsertProfile(P.emptyStore(), ok({ id: "a", harness: "codex" }));
+  const v1 = P.serializeStore(base);
+  assert.equal(JSON.parse(v1).version, 1);
+  const withModel = P.addCustomModel(base, "codex", "gpt-mine");
+  const v3 = P.serializeStore(withModel);
+  assert.deepEqual(JSON.parse(v3), { ...JSON.parse(v1), version: 3, prompts: { resolve: null, review: null }, customModels: { codex: ["gpt-mine"] } });
+  assert.deepEqual(P.parseStore(v3), { store: { ...withModel, version: 3 }, warnings: [], readOnly: false });
+  // With a prompt too, still version 3, holding both; the harnesses in their order.
+  const both = P.addCustomModel(P.setPrompt(withModel, "resolve", "Go {number}"), "claude", "claude-opus-4-8");
+  const parsed = JSON.parse(P.serializeStore(both));
+  assert.equal(parsed.version, 3);
+  assert.equal(parsed.prompts.resolve, "Go {number}");
+  assert.deepEqual(Object.keys(parsed.customModels), ["claude", "codex"]);
+  // The last custom model removed: back to version 2, or 1, so older panels still save.
+  assert.equal(JSON.parse(P.serializeStore(P.removeCustomModel(P.removeCustomModel(both, "codex", "gpt-mine"), "claude", "claude-opus-4-8"))).version, 2);
+  assert.equal(P.serializeStore(P.removeCustomModel(withModel, "codex", "gpt-mine")), v1);
+  // An empty list, or none, writes nothing.
+  assert.equal(P.serializeStore({ ...base, customModels: { codex: [] } }), v1);
+  // A custom model the built-in list has too is read and kept, not refused.
+  const dup = P.parseStore(JSON.stringify({ version: 3, profiles: [], assign: {}, customModels: { vibe: ["glm-5-3"] } }));
+  assert.equal(dup.readOnly, false);
+  assert.deepEqual(dup.store.customModels, { vibe: ["glm-5-3"] });
+  assert.deepEqual(P.modelChoices(dup.store, "vibe"), P.MODELS.vibe);
+  // Read from an older version's file too, as prompts are.
+  assert.deepEqual(P.parseStore(JSON.stringify({ version: 1, profiles: [], customModels: { pi: ["x/y"] } })).store.customModels, { pi: ["x/y"] });
+});
+
+test("custom models it can't use are skipped, and make the file read only", () => {
+  const hand = (customModels) => P.parseStore(JSON.stringify({ version: 3, profiles: [], assign: {}, customModels }));
+  const first = "A custom model in the file can't be used (see below), so it is read only here: fix or remove it to save";
+  const cases = [
+    [{ nope: ["x"] }, 'Skipped the custom models of "nope": there is no such harness'],
+    [{ "\u001b[31m": ["x"] }, "Skipped the custom models of a harness: there is no such harness"],
+    [{ opencode: ["x"] }, "Skipped the custom models of OpenCode: it takes no model"],
+    [{ codex: "gpt" }, "Skipped the custom models of Codex: they aren't a list"],
+    [{ codex: ["ok", "opus[1m]"] }, "Skipped the custom models of Codex: #2: Model: letters, digits and . _ : / @ + - only, starting with a letter or digit"],
+    [{ codex: ["ok", 5] }, "Skipped the custom models of Codex: #2: Model: letters, digits and . _ : / @ + - only, starting with a letter or digit"],
+    [{ codex: ["ok", "ok"] }, "Skipped the custom models of Codex: ok is listed twice"],
+  ];
+  for (const [models, why] of cases) {
+    const r = hand(models);
+    assert.equal(r.readOnly, true, JSON.stringify(models));
+    assert.deepEqual(r.warnings, [first, why], JSON.stringify(models));
+  }
+  // What can be used is still offered.
+  assert.deepEqual(hand({ codex: ["ok", "opus[1m]"] }).store.customModels, { codex: ["ok"] });
+  for (const models of [[], "x", 5]) {
+    const r = hand(models);
+    assert.equal(r.readOnly, true);
+    assert.deepEqual(r.warnings, [first, "The profiles file's custom models aren't an object"]);
+  }
+  // Null or missing is none.
+  assert.deepEqual(hand(null), { store: { ...P.emptyStore() }, warnings: [], readOnly: false });
+  // A skipped profile says so first, and once.
+  const r = P.parseStore(JSON.stringify({ version: 3, profiles: ["x"], customModels: { nope: [] } }));
+  assert.match(r.warnings[0], /Some profiles in the file can't be used/);
+  assert.ok(!r.warnings.some((w) => w === first));
 });
