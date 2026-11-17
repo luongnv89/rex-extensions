@@ -374,7 +374,14 @@ async function refresh() {
       for (const v of ["prs", "issues"]) ui.sel[v] = Math.min(ui.sel[v], Math.max(0, ui[v].length - 1));
       return;
     }
-    Object.assign(ui, { repo: null, forge: null, errors: {}, prs: [], issues: [], error: errors.join(" · ") });
+    // The repo can't be read now (offline, gh's login expired, a rate limit): the lists
+    // go, the error in their place. Auto-pilot's mode and checks outlast it (#31): this
+    // is still the repo they were checked on (another one left the mode above), so it
+    // stays GitHub's until a fetch answers otherwise; with no issues, Start is dimmed
+    // and nothing can start. No GitHub or GitLab remote, above, says the repo itself
+    // changed: the forge goes, and the mode with it.
+    const keep = ui.autopilot.on && ui.forge === FORGES.github;
+    Object.assign(ui, { repo: keep ? ui.repo : null, forge: keep ? ui.forge : null, errors: {}, prs: [], issues: [], error: errors.join(" · ") });
   } catch (e) {
     if (cwd === context) ui.error = `Can't read the repository: ${e.message}`;
   } finally {
@@ -476,20 +483,21 @@ function dropAutopilot() {
 // Whether the mode is on. Every look at it keeps it true to the list: off where it
 // isn't offered (the pull requests, another forge, another repo), and an issue gone
 // from the list (closed, or not in a refresh's answer) no longer checked. A failed
-// fetch of the issues leaves the list empty: that says nothing of what is open, so
-// what is checked stays checked until a fetch answers.
+// fetch, of the issues or of the whole repo, leaves the list empty or as it was: that
+// says nothing of what is open, so what is checked stays checked until a fetch answers.
 function autopilotOn() {
   const ap = ui.autopilot;
   if (!ap.on) return false;
   if (!autopilotOffered()) { dropAutopilot(); return false; }
-  if (ui.errors?.issues) return true;
+  if (ui.error || ui.errors?.issues) return true;
   const open = new Set(ui.issues.map((i) => i.number));
   for (const n of ap.checked) if (!open.has(n)) ap.checked.delete(n);
   return true;
 }
 
-// The checked issues' numbers, in the list's order, not the order they were checked in.
-const checkedNumbers = () => (autopilotOn() ? ui.issues.filter((i) => isNumber(i.number) && ui.autopilot.checked.has(i.number)).map((i) => i.number) : []);
+// The checked issues' numbers, in the list's order, not the order they were checked in;
+// none while the repo can't be read, as the list may then be an old one.
+const checkedNumbers = () => (autopilotOn() && !ui.error ? ui.issues.filter((i) => isNumber(i.number) && ui.autopilot.checked.has(i.number)).map((i) => i.number) : []);
 
 // The header's ☑ and p: into the mode, with nothing checked, or out of it.
 function toggleAutopilot() {

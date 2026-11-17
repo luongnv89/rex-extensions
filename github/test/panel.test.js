@@ -4181,6 +4181,58 @@ test("leaving Auto-pilot by switching lists says how many issues were unchecked,
   }
 });
 
+test("a refresh that can't read the repo at all keeps Auto-pilot and its checks, Start dimmed; the next that answers unchecks only the issues gone (#31)", async (t) => {
+  const { state } = await loadIssues(t);
+  checkRows(screen(draw), "Issue 21", "Issue 23", "Issue 24");
+  // Offline, or gh's login expired: every gh call fails, gh repo view too.
+  const answers = gh;
+  gh = () => ({ code: 1, stderr: "error connecting to api.github.com" });
+  await quietly(() => refresh());
+  assert.ok(ui.error, "the load failed");
+  assert.equal(ui.issues.length, 0);
+  let lines = screen(draw);
+  assert.equal(ui.autopilot.on, true);
+  assert.equal(ui.notice, null, "no notice of issues unchecked");
+  assert.deepEqual([...ui.autopilot.checked].sort((a, b) => a - b), [21, 23, 24]);
+  assert.ok(lines.some((l) => /error connecting to api\.github\.com/.test(l ?? "")), lines.join("\n"));
+  assert.match(lines[FOOTER], /^ {2}▶ Start {3}✕ Cancel/, lines.join("\n"));
+  assert.ok(!lines.some((l) => /Resolve|Close/.test(l ?? "")), lines.join("\n"));
+  await screenAsync(() => onInput(Buffer.from("\r")));
+  assert.equal(ui.menu, null);
+  assert.deepEqual(splits(), []);
+  // A second failed refresh, the 2-minute one say, keeps them too.
+  await quietly(() => refresh());
+  screen(draw);
+  assert.equal(ui.autopilot.on, true);
+  assert.equal(ui.autopilot.checked.size, 3);
+  // It answers again, without #23: only #23 is unchecked.
+  gh = answers;
+  state.issues = state.issues.filter((n) => n !== 23);
+  await quietly(() => refresh());
+  lines = screen(draw);
+  assert.equal(ui.error, null);
+  assert.deepEqual(checkedNumbers(), [21, 24]);
+  assert.match(lines[FOOTER], /▶ Start 2 /);
+});
+
+test("a refresh of the same folder that finds no GitHub remote, or a GitLab one, still leaves Auto-pilot and says what it unchecked (#31)", async (t) => {
+  for (const remote of ["", "origin\tgit@gitlab.com:g/p.git (fetch)\n"]) {
+    await loadIssues(t);
+    checkRows(screen(draw), "Issue 21", "Issue 24");
+    const answers = git;
+    git = (args) => (args[0] === "remote" ? { code: 0, stdout: remote } : answers(args));
+    glab = (args) => (args[0] === "repo" ? { code: 0, stdout: JSON.stringify({ path_with_namespace: "g/p", web_url: "https://x/g/p" }) } : { code: 0, stdout: "[]" });
+    await quietly(() => refresh());
+    const lines = screen(draw);
+    const where = JSON.stringify(remote);
+    assert.equal(ui.forge, remote ? FORGES.gitlab : null, where);
+    assert.equal(ui.autopilot.on, false, where);
+    assert.equal(ui.autopilot.checked.size, 0, where);
+    assert.equal(ui.notice?.text, "Left Auto-pilot: 2 checked issues unchecked.", where);
+    assert.ok(!lines.some((l) => /▶ Start/.test(l ?? "")), `${where}\n${lines.join("\n")}`);
+  }
+});
+
 test("at the panel's default 36 cells, the bar keeps the keys that start, check and cancel in view (#31)", (t) => {
   claudeHome(t);
   setupGitHub("issues");
