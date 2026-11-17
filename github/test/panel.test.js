@@ -1098,25 +1098,26 @@ test("s opens the profiles; a new profile is typed, saved and assigned, then use
     onInput(Buffer.from("\x1b[B"));
     onInput(Buffer.from("qj"));
     onInput(Buffer.from("\x1b[B\x1b[C\x1b[C"));
+    // The model is chosen from Codex's (#24): the first after the harness default.
     onInput(Buffer.from("\x1b[B"));
-    onInput(Buffer.from("gpt-5"));
+    onInput(Buffer.from("\x1b[C"));
     onInput(Buffer.from("\x1b[B\x1b[C"));
   }));
   assert.equal(exit, null, "a key in the form closed the panel");
   assert.equal(ui.settings.mode, "edit");
-  assert.deepEqual({ ...ui.settings.form, prev: undefined }, { prev: undefined, name: "Quick job", id: "qj", harness: "codex", model: "gpt-5", thinking: "low" });
+  assert.deepEqual({ ...ui.settings.form, prev: undefined }, { prev: undefined, name: "Quick job", id: "qj", harness: "codex", model: "gpt-6.1-sol", thinking: "low", saved: "", adding: null });
   lines = screen(() => onInput(Buffer.from("\r")));
   assert.equal(ui.settings.mode, "list");
   assert.ok(lines.some((l) => l?.includes("Saved Quick job")), lines.join("\n"));
   screen(() => onInput(Buffer.from("R")));
   assert.deepEqual(JSON.parse(fs.readFileSync(storeFile(), "utf8")), {
-    version: 1, profiles: [{ id: "qj", name: "Quick job", harness: "codex", model: "gpt-5", thinking: "low" }], assign: { resolve: "qj", review: null },
+    version: 1, profiles: [{ id: "qj", name: "Quick job", harness: "codex", model: "gpt-6.1-sol", thinking: "low" }], assign: { resolve: "qj", review: null },
   });
   assert.equal(noExit(() => screen(() => onInput(Buffer.from("\x1b")))), null);
   assert.equal(ui.settings, null);
   fakeRex(agentHere());
   await screenAsync(() => startWithMenu());
-  assert.deepEqual(splitCommand(), ["codex", "-m", "gpt-5", "-c", 'model_reasoning_effort="low"', "Use the issue-resolver skill on issue #12."]);
+  assert.deepEqual(splitCommand(), ["codex", "-m", "gpt-6.1-sol", "-c", 'model_reasoning_effort="low"', "Use the issue-resolver skill on issue #12."]);
 });
 
 test("a click inside the profile views opens nothing and starts nothing", (t) => {
@@ -1157,10 +1158,14 @@ test("the header's ⚙ opens the profiles; e edits and d deletes, and the defaul
   let store = JSON.parse(fs.readFileSync(storeFile(), "utf8"));
   assert.deepEqual(store.profiles.map((p) => p.id), ["mine"]);
   assert.deepEqual(store.assign, { resolve: "mine", review: "mine" });
-  // An invalid model stays in the form with the reason.
-  shown = screen(() => onInput(Buffer.from("e\x1b[B\x1b[B\x1b[Bopus[1m]\r")));
+  // An invalid model, added with + (#24), stays in the form with the reason; esc
+  // takes it back, then goes back to the list.
+  shown = screen(() => onInput(Buffer.from("e\x1b[B\x1b[B\x1b[B+opus[1m]\r")));
   assert.equal(ui.settings.mode, "edit");
   assert.ok(text(shown).includes("Model:"), shown.join("\n"));
+  screen(() => onInput(Buffer.from("\x1b")));
+  assert.equal(ui.settings.mode, "edit");
+  assert.equal(ui.settings.form.adding, null);
   screen(() => onInput(Buffer.from("\x1b")));
   assert.equal(ui.settings.mode, "list");
   // d asks first; n keeps it, y deletes it and its assignments.
@@ -1328,8 +1333,10 @@ test("the form names the id's rule, fits a narrow pane, and shows each field's r
   let lines = screen(() => onInput(Buffer.from("n")));
   // The id's rule is the empty field's hint, beside a short label.
   assert.ok(lines.some((l) => /^ {2}Id {7}a-z 0-9 -/.test(l ?? "")), lines.join("\n"));
-  // Two bad fields: both reasons show, each under its own field.
-  lines = screen(() => onInput(Buffer.from("\x1b[B\x1b[B\x1b[Bopus[1m]\r")));
+  // Bad fields: each reason shows under its own field. The model's comes from
+  // adding one with + (#24), and the others' stay.
+  screen(() => onInput(Buffer.from("\r")));
+  lines = screen(() => onInput(Buffer.from("\x1b[B\x1b[B\x1b[B+opus[1m]\r")));
   assert.equal(ui.settings.mode, "edit");
   const at = (label) => lines.findIndex((l) => l?.trimStart().replace(/^▌ /, "").startsWith(label));
   const name = at("Name"), id = at("Id"), model = at("Model");
@@ -1341,6 +1348,7 @@ test("the form names the id's rule, fits a narrow pane, and shows each field's r
   lines = screen(() => onInput(Buffer.from("\x7f")));
   assert.ok(!text(lines).includes("Model: letters"), lines.join("\n"));
   // A narrow pane puts a wide choice under its label, and cuts its name, not its ›.
+  screen(() => onInput(Buffer.from("\x1b")));
   lines = screenAt(28, 24, () => onInput(Buffer.from("\x1b[B\x1b[B\x1b[B\x1b[B")));
   for (const l of lines) assert.ok(width(l ?? "") <= 28, l);
   const harness = lines.findIndex((l) => l?.includes("Harness"));
@@ -1361,7 +1369,8 @@ test("at 30 and 40 cells the form shows each reason whole, and each choice with 
   };
   for (const cols of [30, 40]) {
     screenAt(cols, 24, () => { ui.settings = null; onInput(Buffer.from("sn")); });
-    let lines = screenAt(cols, 24, () => onInput(Buffer.from("\x1b[B\x1b[B\x1b[Bopus[1m]\r")));
+    screenAt(cols, 24, () => onInput(Buffer.from("\r")));
+    let lines = screenAt(cols, 24, () => onInput(Buffer.from("\x1b[B\x1b[B\x1b[B+opus[1m]\r")));
     assert.equal(ui.settings.mode, "edit");
     for (const l of lines) assert.ok(width(l ?? "") <= cols, `${cols}: ${l}`);
     const all = text(lines).replace(/\s+/g, " ");
@@ -1456,11 +1465,11 @@ test("at 28, 30 and 40 cells the profiles show each warning, note and question w
       for (const l of lines) assert.ok(width(l ?? "") <= cols, `${cols}: ${l}`);
       return lines;
     };
-    // The OpenCode note, in the form, under an OpenCode profile with a model
-    // (← twice from the first harness: Mistral Vibe, then OpenCode).
-    useProfiles(dir, []);
+    // The OpenCode note, in the form, under an OpenCode profile with a model: one
+    // stored, since the form offers OpenCode none (#24).
+    useProfiles(dir, [{ id: "oc", name: "OC", harness: "opencode", model: "x" }]);
     setupGitHub("issues");
-    let lines = at(() => onInput(Buffer.from("sn\x1b[B\x1b[B\x1b[D\x1b[D\x1b[Bx")));
+    let lines = at(() => onInput(Buffer.from("sje")));
     assert.equal(ui.settings.form.harness, "opencode");
     assert.ok(shows(lines, note), `${cols}:\n${lines.join("\n")}`);
     assert.ok(lines.at(-1).trimEnd().endsWith("esc back"), `${cols}:\n${lines.join("\n")}`);
@@ -1569,10 +1578,11 @@ test("the profiles keep their key hints however much there is to say, and cut it
     assert.ok(aboveHints(lines, "↑↓ select").endsWith("…"), `${cols}x${rows}:\n${lines.join("\n")}`);
     screenAt(cols, rows, () => onInput(Buffer.from("\x1b")));
   }
-  // The OpenCode form on a 28x10 pane: the field, the note cut, the key hints whole.
-  useProfiles(dir, []);
+  // The OpenCode form on a 28x10 pane, on its Model: the field, the note cut, the
+  // key hints whole.
+  useProfiles(dir, [{ id: "oc", name: "OC", harness: "opencode", model: "x" }]);
   setupGitHub("issues");
-  const lines = screenAt(28, 10, () => onInput(Buffer.from("sn\x1b[B\x1b[B\x1b[D\x1b[D\x1b[Bx")));
+  const lines = screenAt(28, 10, () => onInput(Buffer.from("sje\x1b[B\x1b[B\x1b[B")));
   assert.equal(ui.settings.form.harness, "opencode");
   fitsWithHints(lines, 28, 10, "↑↓ field", "esc back");
   assert.ok(lines.some((l) => l?.startsWith("▌ Model")), lines.join("\n"));
@@ -3178,4 +3188,215 @@ test("mergeGuard drops a merged pull request from a refresh that began before th
   assert.deepEqual(numbers(g.filter(list, "/r", after)), [11, 12]);
   assert.deepEqual(numbers(g.filter(list, "/r", before)), [11, 12]);
   assert.deepEqual(g.filter(undefined, "/r", after), []);
+});
+
+// ── Models (#24) ────────────────────────────────────────────────────────────
+
+// The keys to the form's Model field, from a new profile's Name.
+const TO_MODEL = "\x1b[B\x1b[B\x1b[B";
+const stored = () => JSON.parse(fs.readFileSync(storeFile(), "utf8"));
+
+test("the Model field steps through the harness's models, the harness default first, and follows the harness", (t) => {
+  useProfiles(home(t), []);
+  setupGitHub("issues");
+  screen(() => onInput(Buffer.from("sn")));
+  let lines = screen(() => onInput(Buffer.from(TO_MODEL)));
+  assert.ok(lines.some((l) => l?.startsWith("▌ Model") && l.includes("‹ harness default ›")), lines.join("\n"));
+  // → (or space) through mcc's, round to the default; ← the other way.
+  const seen = [];
+  for (let i = 0; i <= P.MODELS.mcc.length; i++) { screen(() => onInput(Buffer.from(i % 2 ? " " : "\x1b[C"))); seen.push(ui.settings.form.model); }
+  assert.deepEqual(seen, [...P.MODELS.mcc, ""]);
+  screen(() => onInput(Buffer.from("\x1b[D")));
+  assert.equal(ui.settings.form.model, P.MODELS.mcc.at(-1));
+  lines = screen(() => onInput(Buffer.from("\x1b[C\x1b[C\x1b[C")));
+  assert.equal(ui.settings.form.model, "opus");
+  assert.ok(lines.some((l) => l?.startsWith("▌ Model") && l.includes("‹ opus ›")), lines.join("\n"));
+  // Claude Code takes opus too, so it stays; Codex doesn't, so it goes back to the default.
+  screen(() => onInput(Buffer.from("\x1b[A\x1b[C")));
+  assert.deepEqual([ui.settings.form.harness, ui.settings.form.model], ["claude", "opus"]);
+  screen(() => onInput(Buffer.from("\x1b[C")));
+  assert.deepEqual([ui.settings.form.harness, ui.settings.form.model], ["codex", ""]);
+  screen(() => onInput(Buffer.from("\x1b[B\x1b[C")));
+  assert.equal(ui.settings.form.model, P.MODELS.codex[0]);
+  // Mistral Vibe offers its own list; OpenCode only the default.
+  screen(() => onInput(Buffer.from("\x1b[A\x1b[D\x1b[D\x1b[D\x1b[B")));
+  assert.equal(ui.settings.form.harness, "vibe");
+  for (const want of [...P.MODELS.vibe, ""]) { screen(() => onInput(Buffer.from("\x1b[C"))); assert.equal(ui.settings.form.model, want); }
+  screen(() => onInput(Buffer.from("\x1b[A\x1b[D\x1b[B\x1b[C")));
+  assert.deepEqual([ui.settings.form.harness, ui.settings.form.model], ["opencode", ""]);
+  screen(() => onInput(Buffer.from("\x1b[D")));
+  assert.equal(ui.settings.form.model, "");
+  // Letters aren't typed into it any more.
+  screen(() => onInput(Buffer.from("gpt")));
+  assert.equal(ui.settings.form.model, "");
+});
+
+test("+ on Model adds a model for the harness: saved to the file, chosen, and offered from then on", async (t) => {
+  const dir = home(t, { ".agents/skills/issue-resolver/SKILL.md": "x" });
+  useProfiles(dir, []);
+  setupGitHub("issues");
+  screen(() => onInput(Buffer.from("snMine")));
+  screen(() => onInput(Buffer.from("\x1b[Bmine\x1b[B\x1b[C\x1b[C\x1b[B")));
+  assert.equal(ui.settings.form.harness, "codex");
+  let lines = screen(() => onInput(Buffer.from("+")));
+  assert.equal(ui.settings.form.adding, "");
+  assert.ok(text(lines).includes("new model name"), lines.join("\n"));
+  assert.match(lines.at(-1), /type the model · ⏎ add · esc cancel/);
+  // Typed, and pasted.
+  screen(() => onInput(Buffer.from("gpt-")));
+  screen(() => onInput(Buffer.from("\x1b[200~mine\x1b[201~")));
+  assert.equal(ui.settings.form.adding, "gpt-mine");
+  lines = screen(() => onInput(Buffer.from("\r")));
+  assert.deepEqual([ui.settings.form.model, ui.settings.form.adding], ["gpt-mine", null]);
+  assert.ok(text(lines).includes("Added gpt-mine to Codex's models"), lines.join("\n"));
+  assert.ok(lines.some((l) => l?.startsWith("▌ Model") && l.includes("‹ gpt-mine ›")), lines.join("\n"));
+  // In the file at once, as version 3, before the profile is saved.
+  assert.deepEqual(stored(), { version: 3, profiles: [], assign: { resolve: null, review: null }, prompts: { resolve: null, review: null }, customModels: { codex: ["gpt-mine"] } });
+  screen(() => onInput(Buffer.from("\r")));
+  assert.equal(ui.settings.mode, "list");
+  screen(() => onInput(Buffer.from("R\x1b")));
+  assert.deepEqual(stored().profiles, [{ id: "mine", name: "Mine", harness: "codex", model: "gpt-mine" }]);
+  // Offered next time, last after Codex's own; not for another harness.
+  screen(() => onInput(Buffer.from("sn" + TO_MODEL)));
+  screen(() => onInput(Buffer.from("\x1b[A\x1b[C\x1b[C\x1b[B\x1b[D")));
+  assert.deepEqual([ui.settings.form.harness, ui.settings.form.model], ["codex", "gpt-mine"]);
+  screen(() => onInput(Buffer.from("\x1b[A\x1b[C\x1b[B\x1b[D")));
+  assert.deepEqual([ui.settings.form.harness, ui.settings.form.model], ["pi", P.MODELS.pi.at(-1)]);
+  screen(() => onInput(Buffer.from("\x1b\x1b\x1b")));
+  assert.equal(ui.settings, null);
+  // And it starts with it.
+  fakeRex(agentHere());
+  await screenAsync(() => startWithMenu());
+  assert.deepEqual(splitCommand(), ["codex", "-m", "gpt-mine", "Use the issue-resolver skill on issue #12."]);
+});
+
+test("a model that breaks the MODEL rule, or is already offered, isn't added; - removes only one you added", (t) => {
+  useProfiles(home(t), []);
+  setupGitHub("issues");
+  screen(() => onInput(Buffer.from("sn\x1b[B\x1b[B\x1b[C\x1b[C\x1b[B")));
+  const before = fs.readFileSync(storeFile(), "utf8");
+  for (const [name, why] of [
+    ["opus[1m]", "Model: letters, digits and . _ : / @ + - only, starting with a letter or digit"],
+    ["-x", "Model: letters, digits"],
+    ["gpt-6-sol", "Model: gpt-6-sol is already offered for Codex"],
+    ["", "Model: type the model's name"],
+  ]) {
+    screen(() => onInput(Buffer.from("+")));
+    if (name) screen(() => onInput(Buffer.from(name)));
+    const lines = screen(() => onInput(Buffer.from("\r")));
+    assert.equal(ui.settings.form.adding, name, name);
+    const at = lines.findIndex((l) => l?.startsWith("▌ Model"));
+    assert.ok(text(lines.slice(at + 1, at + 4)).replace(/\s+/g, " ").includes(why), `${name}:\n${lines.join("\n")}`);
+    assert.equal(fs.readFileSync(storeFile(), "utf8"), before, name);
+    // Typing takes the reason away; esc takes the model back, and stays in the form.
+    screen(() => onInput(Buffer.from("\x1b")));
+    assert.deepEqual([ui.settings.mode, ui.settings.form.adding, ui.settings.fieldErrors.model], ["edit", null, undefined]);
+  }
+  // Added, then removed: the file goes back to version 1.
+  screen(() => onInput(Buffer.from("+gpt-mine\r")));
+  assert.deepEqual(stored().customModels, { codex: ["gpt-mine"] });
+  let lines = screen(() => onInput(Buffer.from("-")));
+  assert.equal(stored().version, 1);
+  assert.equal(stored().customModels, undefined);
+  assert.equal(ui.settings.form.model, "");
+  assert.ok(text(lines).includes("Removed gpt-mine from Codex's models"), lines.join("\n"));
+  // A built-in model, or the default, can't be removed.
+  lines = screen(() => onInput(Buffer.from("\x1b[C-")));
+  assert.ok(text(lines).replace(/\s+/g, " ").includes("Model: gpt-6.1-sol is built in, so it can't be removed"), lines.join("\n"));
+  assert.ok(P.modelChoices(readStore().store, "codex").includes("gpt-6.1-sol"));
+  lines = screen(() => onInput(Buffer.from("\x1b[D-")));
+  assert.ok(text(lines).replace(/\s+/g, " ").includes("Model: choose a model you added to remove it"), lines.join("\n"));
+  // + and - are text in the other fields, and OpenCode takes no model to add.
+  screen(() => onInput(Buffer.from("\x1b[A\x1b[A\x1b[A+-")));
+  assert.equal(ui.settings.form.name, "+-");
+  lines = screen(() => onInput(Buffer.from("\x1b[B\x1b[B\x1b[C\x1b[C\x1b[B+")));
+  assert.equal(ui.settings.form.harness, "opencode");
+  assert.equal(ui.settings.form.adding, null);
+  assert.ok(text(lines).includes("Model: OpenCode takes no model"), lines.join("\n"));
+  // A paste without bracketed paste: what follows the enter that adds it is dropped,
+  // so a - in it doesn't remove what was just added.
+  screen(() => onInput(Buffer.from("\x1b[A\x1b[C\x1b[B+x/y\r-")));
+  assert.equal(ui.settings.form.model, "x/y");
+  assert.deepEqual(stored().customModels, { vibe: ["x/y"] });
+});
+
+test("a model isn't added to a read-only file, or over a change made elsewhere", (t) => {
+  const dir = home(t);
+  // Read only: from a newer version, the file kept as it is.
+  const newer = JSON.stringify({ version: 4, profiles: [], assign: {} });
+  fs.writeFileSync(useProfiles(dir, []), newer);
+  setupGitHub("issues");
+  screen(() => onInput(Buffer.from("sn" + TO_MODEL)));
+  let lines = screen(() => onInput(Buffer.from("+mine\r")));
+  assert.ok(shows(lines, "Not saved: The profiles file is version 4, not 1, 2 or 3: it is read only here"), lines.join("\n"));
+  assert.equal(fs.readFileSync(storeFile(), "utf8"), newer);
+  assert.equal(ui.settings.form.adding, "mine");
+  screen(() => onInput(Buffer.from("\x1b\x1b\x1b")));
+  // Changed elsewhere since the view opened: read again, not overwritten; the next
+  // enter adds it, and keeps what the other change made.
+  useProfiles(dir, []);
+  setupGitHub("issues");
+  screen(() => onInput(Buffer.from("sn" + TO_MODEL)));
+  const theirs = JSON.stringify({ version: 3, profiles: [{ id: "app", name: "From the app", harness: "pi" }], assign: {}, customModels: { mcc: ["theirs"] } });
+  fs.writeFileSync(storeFile(), theirs);
+  lines = screen(() => onInput(Buffer.from("+mine\r")));
+  assert.ok(text(lines).includes("changed elsewhere"), lines.join("\n"));
+  assert.equal(fs.readFileSync(storeFile(), "utf8"), theirs);
+  screen(() => onInput(Buffer.from("\r")));
+  assert.deepEqual(stored().customModels, { mcc: ["theirs", "mine"] });
+  assert.deepEqual(stored().profiles.map((p) => p.id), ["app"]);
+  assert.equal(ui.settings.form.model, "mine");
+  assert.ok(!fs.readdirSync(path.dirname(storeFile())).some((f) => f.endsWith(".tmp")));
+});
+
+test("a profile's model in neither list shows as it is, is kept, and starts as before", async (t) => {
+  const dir = home(t, { ".agents/skills/issue-resolver/SKILL.md": "x" });
+  useProfiles(dir, [{ id: "old", name: "Old", harness: "codex", model: "gpt-legacy" }], { resolve: "old" });
+  setupGitHub("issues");
+  let lines = screen(() => onInput(Buffer.from("sje")));
+  assert.ok(lines.some((l) => l?.includes("Model") && l.includes("‹ gpt-legacy ›")), lines.join("\n"));
+  // Stepping away and back finds it again, after Codex's own.
+  screen(() => onInput(Buffer.from(TO_MODEL + "\x1b[C")));
+  assert.equal(ui.settings.form.model, "");
+  screen(() => onInput(Buffer.from("\x1b[D")));
+  assert.equal(ui.settings.form.model, "gpt-legacy");
+  // Another harness keeps it too: it isn't one the old harness offered.
+  screen(() => onInput(Buffer.from("\x1b[A\x1b[C")));
+  assert.deepEqual([ui.settings.form.harness, ui.settings.form.model], ["pi", "gpt-legacy"]);
+  screen(() => onInput(Buffer.from("\x1b[D\r")));
+  assert.equal(ui.settings.mode, "list");
+  assert.deepEqual(stored().profiles, [{ id: "old", name: "Old", harness: "codex", model: "gpt-legacy" }]);
+  assert.equal(stored().version, 1);
+  screen(() => onInput(Buffer.from("\x1b")));
+  fakeRex(agentHere());
+  await screenAsync(() => startWithMenu());
+  assert.deepEqual(splitCommand(), ["codex", "-m", "gpt-legacy", "Use the issue-resolver skill on issue #12."]);
+});
+
+test("at 28, 30 and 40 cells the Model field, its key hints and a model being added fit", (t) => {
+  const dir = home(t);
+  for (const cols of [28, 30, 40]) {
+    useProfiles(dir, []);
+    setupGitHub("issues");
+    const at = (keys) => {
+      const lines = screenAt(cols, 24, () => onInput(Buffer.from(keys)));
+      for (const l of lines) assert.ok(width(l ?? "") <= cols, `${cols}: ${l}`);
+      return lines;
+    };
+    // Pi's longest name: under the label when it doesn't fit beside it, with its ›.
+    at("sn\x1b[B\x1b[B\x1b[C\x1b[C\x1b[C");
+    let lines = at("\x1b[B\x1b[C\x1b[C\x1b[C");
+    assert.equal(ui.settings.form.model, "anthropic/claude-sonnet-5-5");
+    assert.ok(lines.some((l) => /‹ .*(sonnet-5-5|…) ›$/.test(l?.trimEnd() ?? "")), `${cols}:\n${lines.join("\n")}`);
+    // The Model row's key hints, whole.
+    const foot = text(lines.slice(-3));
+    for (const hint of ["↑↓ field", "←→ choose", "+ add", "- remove", "⏎ save", "esc back"]) assert.ok(foot.includes(hint), `${cols}: ${foot}`);
+    assert.ok(lines.at(-1).trimEnd().endsWith("esc back"), `${cols}:\n${lines.join("\n")}`);
+    assert.ok(!foot.includes("…"), foot);
+    // A long model being added is cut, and its hints are whole.
+    lines = at("+" + "m".repeat(60));
+    assert.ok(text(lines.slice(-2)).includes("⏎ add"), `${cols}:\n${lines.join("\n")}`);
+    assert.ok(lines.at(-1).trimEnd().endsWith("esc cancel"), `${cols}:\n${lines.join("\n")}`);
+    at("\x1b\x1b\x1b");
+  }
 });
