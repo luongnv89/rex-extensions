@@ -4225,7 +4225,12 @@ test("a failed fetch of the issues unchecks nothing; the next one that answers u
   let lines = screen(draw);
   assert.equal(ui.autopilot.on, true);
   assert.deepEqual([...ui.autopilot.checked].sort((a, b) => a - b), [21, 23, 24]);
-  assert.match(lines[FOOTER], /▶ Start 3 /, lines.join("\n"));
+  // Start sends none of them then, so it is dimmed, without a count, and enter starts nothing.
+  assert.match(lines[FOOTER], /^ {2}▶ Start {3}✕ Cancel/, lines.join("\n"));
+  await screenAsync(() => onInput(Buffer.from("\r")));
+  assert.equal(ui.menu, null);
+  assert.deepEqual(splits(), []);
+  assert.deepEqual([...ui.autopilot.checked].sort((a, b) => a - b), [21, 23, 24]);
   // It answers again, without #23: only #23 is unchecked.
   gh = answers;
   state.issues = state.issues.filter((n) => n !== 23);

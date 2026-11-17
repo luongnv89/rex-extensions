@@ -1367,7 +1367,9 @@ function draw() {
   // issues it is offered on.
   const menuKeys = MENU_KEYS.find((k) => width(k) <= cols) ?? MENU_KEYS.at(-1);
   if (autopilot && !ui.menu) {
-    const bar = autopilotBar(cols, ui.autopilot.checked.size);
+    // Start's count is of the checked issues it would send: none while the issues
+    // can't be fetched, though what is checked is kept for the next fetch.
+    const bar = autopilotBar(cols, checkedNumbers().length);
     const row = out.length;
     if (row < rows) for (const h of bar.hits) ui.buttons.push({ row, ...h });
     out.push(bar.text);
