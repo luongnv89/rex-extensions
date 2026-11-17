@@ -186,6 +186,8 @@ const FORGES = {
     mergeArgs: (number, repo, head) => mergeArgs(number, mergeStrategy(repo), head),
     viewArgs: (number) => ["pr", "view", String(whole(number)), "--json", "state"],
     merged: (j) => (j?.state === "MERGED" ? true : j?.state === "OPEN" ? false : null),
+    // Closing an issue (#27): `gh issue close`, by its number alone.
+    closeArgs: (number) => ["issue", "close", String(whole(number))],
   },
   gitlab: {
     name: "GitLab", cli: "glab", prs: "Merge requests", pr: "merge request",
@@ -212,6 +214,8 @@ const FORGES = {
     mergeArgs: (iid, _repo, head) => gitlabMergeArgs(iid, head),
     viewArgs: (iid) => ["mr", "view", String(whole(iid)), "--output", "json"],
     merged: (j) => (j?.state === "merged" ? true : j?.state === "opened" ? false : null),
+    // Closing an issue (#27): `glab issue close`, by its iid alone.
+    closeArgs: (iid) => ["issue", "close", String(whole(iid))],
   },
 };
 
@@ -260,13 +264,18 @@ const ui = {
   // The profile menu of a Resolve or Review press, while it's open: { view, number,
   // key, entries, sel, top, anchor }, anchor being "row": under that row's button.
   menu: null,
-  // A Merge press that only asked (#13): { number, notice, at }, the pull request whose
-  // button now reads Confirm merge, the notice that says so, and when it asked; null otherwise.
+  // A Merge or Close press that only asked (#13, #27): { kind, number, notice, at },
+  // kind "close" for an issue's Close button and "merge" (or none) for a pull
+  // request's Merge, the item whose button now reads Confirm merge or Confirm close,
+  // the notice that says so, and when it asked; null otherwise.
   confirm: null,
   // The merge under way (#20): { root, number }, the pull request whose button reads
   // Merging #N… until the CLI has answered and the forge has said what became of it;
   // null otherwise. ui.acting says that something runs, not which pull request.
   merging: null,
+  // The close under way (#27): { root, number }, the issue whose button reads
+  // Closing #N… until the CLI has answered; null otherwise.
+  closing: null,
   // Between a paste's start and end marks, which can come in different chunks;
   // pasteCR when the last part ended in \r, so a \n starting the next is its \r\n.
   pasting: false, pasteCR: false,
@@ -325,11 +334,12 @@ async function locate() {
 
 async function refresh() {
   if (ui.loading) return;
-  // Numbered for the merge guard: a pull request merged after this began stays out of its answer (#13).
-  const began = merges.begin();
+  // Numbered for the merge guard: a pull request merged after this began stays out of its answer (#13);
+  // and for the close guard, the same for an issue closed (#27).
+  const began = merges.begin(), closeBegan = closes.begin();
   const context = cwd;
   if (context !== ui.context) {
-    // Another repo: a Merge press that asked was about a pull request of the old one (#13).
+    // Another repo: a Merge or Close press that asked was about an item of the old one (#13, #27).
     if (ui.confirm) cancelMerge();
     Object.assign(ui, { context, prs: [], issues: [], errors: {}, repo: null, root: null, forge: null, error: null, fetched: false, sel: { prs: 0, issues: 0 }, top: { prs: 0, issues: 0 } });
   }
@@ -353,6 +363,7 @@ async function refresh() {
       if (result.error) { errors.push(result.error); continue; }
       forgeCache.set(host, id);
       result.prs = merges.filter(result.prs, root, began);
+      result.issues = closes.filter(result.issues, root, closeBegan);
       Object.assign(ui, result, { forge: FORGES[id], error: null, fetched: true });
       for (const v of ["prs", "issues"]) ui.sel[v] = Math.min(ui.sel[v], Math.max(0, ui[v].length - 1));
       return;
@@ -493,6 +504,13 @@ function mergeGuard() {
   };
 }
 const merges = mergeGuard();
+// The same for the issues closed from the panel (#27).
+const closes = mergeGuard();
+
+// Whether the press that asked is a Merge press about `number`, or a Close press
+// (#27): an issue and a pull request can have the same number.
+const askingMerge = (number) => ui.confirm?.kind !== "close" && ui.confirm?.number === number;
+const askingClose = (number) => ui.confirm?.kind === "close" && ui.confirm.number === number;
 
 // The Merge button of pull request `index`, on any forge that can merge: its
 // number, how it is shown (#12, or !12 on GitLab), `armed` once a press asked, and
@@ -502,7 +520,7 @@ function mergeFor(index) {
   const forge = ui.forge, item = ui.prs[index];
   if (!forge?.mergeArgs || !item || !isNumber(item.number)) return null;
   const merging = ui.merging?.number === item.number && ui.merging.root === ui.root;
-  return { number: item.number, ref: `${forge.mark}${item.number}`, armed: ui.confirm?.number === item.number, merging };
+  return { number: item.number, ref: `${forge.mark}${item.number}`, armed: askingMerge(item.number), merging };
 }
 
 // A second press sooner than this after the first is a double click, not a
@@ -518,7 +536,7 @@ function pressMerge(number) {
   const index = ui.prs.findIndex((p) => p.number === number);
   const merge = index >= 0 ? mergeFor(index) : null;
   if (!merge) return null;
-  if (ui.confirm?.number === number) {
+  if (askingMerge(number)) {
     if (Date.now() - ui.confirm.at < MERGE_GAP) return null;
     ui.confirm = null;
     ui.sel.prs = index;
@@ -534,7 +552,7 @@ function pressMerge(number) {
   // is drawn where Merge was pressed; only when the notice would cover it does the
   // list scroll, just enough to keep it in view.
   const shown = ui.buttons.some((b) => b.merge === number);
-  ui.confirm = { number, notice: null, at: Date.now() };
+  ui.confirm = { kind: "merge", number, notice: null, at: Date.now() };
   ui.notice = { tone: "info", text: clean(`Press Confirm merge ${merge.ref} to merge it (${method}). Any other key or click cancels.`), url: null };
   ui.confirm.notice = ui.notice;
   draw();
@@ -542,7 +560,7 @@ function pressMerge(number) {
   return null;
 }
 
-// Takes back a press that only asked, and the notice that asked.
+// Takes back a press that only asked, Merge or Close, and the notice that asked.
 function cancelMerge() {
   if (ui.notice && ui.notice === ui.confirm?.notice) ui.notice = null;
   ui.confirm = null;
@@ -594,6 +612,75 @@ async function mergePr(number) {
   } else if (merged === false) say("ok", `${ref} will merge when its checks pass or the queue reaches it`);
   else say("ok", `Merge sent for ${ref}; refreshing to see its state`);
   // Read the list again: now, or on the next poll when a refresh is already running.
+  ui.fetchedAt = 0;
+  refresh();
+}
+
+// ── Closing an issue (#27) ──────────────────────────────────────────────────
+// Every issue, on GitHub and GitLab, has a Close button. Like Merge, the first
+// press only asks: the button reads Confirm close #N, and the notice says pressing
+// it closes the issue. A second press closes that issue with `gh issue close`
+// (`glab issue close` on GitLab), and nothing else: no agent, no pull request.
+// Any other key or click takes the question back.
+
+// The Close button of issue `index`: its number, how it is shown, `armed` once a
+// press asked, and `closing` while its close runs, only in the repo it was pressed in.
+function closeFor(index) {
+  const forge = ui.forge, item = ui.issues[index];
+  if (!forge?.closeArgs || !item || !isNumber(item.number)) return null;
+  const closing = ui.closing?.number === item.number && ui.closing.root === ui.root;
+  return { number: item.number, ref: `#${item.number}`, verb: "Close", doing: "Closing", armed: askingClose(item.number), closing };
+}
+
+// A Close button pressed. The issue is found again by its number, so only that one
+// is ever closed. One close, merge or launch at a time.
+function pressClose(number) {
+  if (ui.acting || ui.menu) return ui.acting;
+  const index = ui.issues.findIndex((i) => i.number === number);
+  const close = index >= 0 ? closeFor(index) : null;
+  if (!close) return null;
+  if (askingClose(number)) {
+    if (Date.now() - ui.confirm.at < MERGE_GAP) return null;
+    ui.confirm = null;
+    ui.sel.issues = index;
+    return closeNow(number);
+  }
+  // As with Merge, the question scrolls the list only when the notice would cover
+  // the button, so Confirm close is drawn where Close was pressed.
+  const shown = ui.buttons.some((b) => b.close === number);
+  ui.confirm = { kind: "close", number, notice: null, at: Date.now() };
+  ui.notice = { tone: "info", text: clean(`Press Confirm close ${close.ref} to close it. Any other key or click cancels.`), url: null };
+  ui.confirm.notice = ui.notice;
+  draw();
+  for (let i = 0; shown && i < 12 && !ui.buttons.some((b) => b.close === number); i++) { ui.top.issues++; draw(); }
+  return null;
+}
+
+// The second press: it holds ui.acting while the CLI runs, like a merge.
+function closeNow(number) {
+  ui.acting = closeIssue(number)
+    .catch((e) => { ui.closing = null; say("error", `Can't close #${number}: ${e.message}`); })
+    .finally(() => { ui.acting = null; if (ui.closing) { ui.closing = null; draw(); } });
+  return ui.acting;
+}
+
+async function closeIssue(number) {
+  const forge = ui.forge, root = ui.root, ref = `#${number}`;
+  if (!ui.issues.some((i) => i.number === number) || !forge?.closeArgs || !root) return say("error", `The issue ${ref} isn't in the list any more, so nothing was closed.`);
+  // Its button reads Closing #N… until the CLI answers, and takes no press.
+  ui.closing = { root, number };
+  say("info", `Closing ${ref}…`);
+  const r = await run(forge.cli, forge.closeArgs(number), { cwd: root }).catch((e) =>
+    ({ code: -1, stdout: "", stderr: e.code === "ENOENT" ? `${forge.cli} isn't installed` : e.message }));
+  ui.closing = null;
+  if (r.code !== 0) return say("error", `Can't close ${ref}: ${firstLine(r.stderr) || firstLine(r.stdout) || `${forge.cli} exited ${r.code}`}`);
+  // Out of the list now, and out of a refresh that was already running.
+  closes.add(root, number);
+  if (ui.root === root) {
+    ui.issues = ui.issues.filter((i) => i.number !== number);
+    ui.sel.issues = Math.min(ui.sel.issues, Math.max(0, ui.issues.length - 1));
+  }
+  say("ok", `Closed ${ref}`);
   ui.fetchedAt = 0;
   refresh();
 }
@@ -862,6 +949,8 @@ async function launch(action, root, profile, template = null) {
 // ({ number, ref, armed, merging }), a pull request's Merge button (#13) follows it,
 // and the lines carry `mergeHit` too. While its merge runs it reads Merging #N…, in
 // yellow like the header's spinner and not inverted, as a button no press acts on (#20).
+// An issue's Close button (#27) comes the same way, with `verb` "Close", `doing`
+// "Closing" and `closing` in place of `merging`.
 function rowLines(item, selected, cols, icon, meta, trailing, action = null, merge = null) {
   const inner = Math.max(10, cols - 5);
   const bar = selected ? accent("▌") : " ";
@@ -884,13 +973,14 @@ function rowLines(item, selected, cols, icon, meta, trailing, action = null, mer
     // Beside the Review button when its asking form, Confirm merge #N, fits there
     // too, so the second press finds the button where the first one did; on a line
     // of its own in a narrower pane, and on GitLab, whose rows have no Review.
-    const asking = ` Confirm merge ${merge.ref} `;
-    const label = merge.merging ? `Merging ${merge.ref}…` : merge.armed ? `Confirm merge ${merge.ref}` : `Merge ${merge.ref}`;
+    const verb = merge.verb ?? "Merge", doing = merge.doing ?? "Merging", running = merge.merging || merge.closing;
+    const asking = ` Confirm ${verb.toLowerCase()} ${merge.ref} `;
+    const label = running ? `${doing} ${merge.ref}…` : merge.armed ? `Confirm ${verb.toLowerCase()} ${merge.ref}` : `${verb} ${merge.ref}`;
     const text = ` ${fit(label, cols - 6)} `;
     const beside = lines.hit && lines.hit.to + 1 + width(asking) <= cols;
     const from = beside ? lines.hit.to + 1 : 4;
     lines.mergeHit = { line: beside ? lines.length - 1 : lines.length, from, to: from + width(text) };
-    const button = merge.merging ? yellow(text) : merge.armed ? invert(red(text)) : invert(text);
+    const button = running ? yellow(text) : merge.armed ? invert(red(text)) : invert(text);
     if (beside) lines[lines.length - 1] += ` ${button}`;
     else lines.push(`${bar}   ${button}`);
   }
@@ -925,13 +1015,13 @@ function prRow(p, selected, cols, action = null, merge = null) {
     [p.ref, p.author ?? "?", p.branch].filter(Boolean).join(" · "), trailing, action, merge);
 }
 
-function issueRow(i, selected, cols, action = null) {
+function issueRow(i, selected, cols, action = null, close = null) {
   const trailing = (i.labels ?? []).slice(0, 3).map((l) => {
     const name = fit(clean(l.name), 14);
     return { w: width(name) + 2, s: `${rgb(l.color)("●")} ${dim(name)}` };
   });
   trailing.push(part(ago(i.updatedAt)));
-  return rowLines(i, selected, cols, green("◉"), `${i.ref} · ${i.author ?? "?"}`, trailing, action);
+  return rowLines(i, selected, cols, green("◉"), `${i.ref} · ${i.author ?? "?"}`, trailing, action, close);
 }
 
 const SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
@@ -1031,7 +1121,7 @@ function draw() {
   items.forEach((x, i) => {
     if (i) { lines.push(""); owner.push(-1); }
     if (i === ui.sel[view]) selStart = lines.length;
-    const a = actionFor(view, i), row = view === "prs" ? prRow(x, i === ui.sel[view], cols, a, mergeFor(i)) : issueRow(x, i === ui.sel[view], cols, a);
+    const a = actionFor(view, i), row = view === "prs" ? prRow(x, i === ui.sel[view], cols, a, mergeFor(i)) : issueRow(x, i === ui.sel[view], cols, a, closeFor(i));
     if (row.hit) hits[lines.length + row.hit.line] = { ...row.hit, index: i };
     if (row.mergeHit) mergeHits[lines.length + row.mergeHit.line] = { ...row.mergeHit, number: x.number };
     for (const l of row) { lines.push(l); owner.push(i); }
@@ -1056,10 +1146,12 @@ function draw() {
     // A row's own Resolve or Review button acts on that row.
     const hit = hits[ui.top[view] + r];
     if (hit) ui.buttons.push({ row: listTop + r, from: hit.from, to: hit.to, action: () => { ui.sel[view] = hit.index; draw(); return act(view, hit.index, "row"); } });
-    // A pull request's Merge button merges that pull request (#13); `merge` names it,
-    // so a click there doesn't take back the press that asked.
+    // A pull request's Merge button merges that pull request (#13), and an issue's
+    // Close button closes that issue (#27); `merge` or `close` names it, so a click
+    // there doesn't take back the press that asked.
     const mh = mergeHits[ui.top[view] + r];
-    if (mh) ui.buttons.push({ row: listTop + r, from: mh.from, to: mh.to, merge: mh.number, action: () => pressMerge(mh.number) });
+    if (mh && view === "prs") ui.buttons.push({ row: listTop + r, from: mh.from, to: mh.to, merge: mh.number, action: () => pressMerge(mh.number) });
+    else if (mh) ui.buttons.push({ row: listTop + r, from: mh.from, to: mh.to, close: mh.number, action: () => pressClose(mh.number) });
   }
 
   // The profile menu, over the list: under the button pressed, or above it when
@@ -1665,8 +1757,8 @@ function click(x, y) {
   // draws a frame without its notice, whose rows can be other items (#13).
   const button = ui.buttons.find((b) => b.row === y && x >= b.from && x < b.to);
   const i = ui.rows[y];
-  // A click anywhere but on the Merge button that asked takes the question back (#13).
-  if (ui.confirm && button?.merge !== ui.confirm.number) cancelMerge();
+  // A click anywhere but on the Merge or Close button that asked takes the question back (#13, #27).
+  if (ui.confirm && (ui.confirm.kind === "close" ? button?.close : button?.merge) !== ui.confirm.number) cancelMerge();
   if (button) return button.action();
   // Anywhere but on one of its profiles, a click closes the menu, and nothing else.
   if (ui.menu) return closeMenu();
@@ -1745,12 +1837,12 @@ function onInput(data) {
       else if (button === 0 && m[4] === "M") click(x, y);
       continue;
     }
-    // While a Merge press asks, esc and q take it back rather than close the panel (#13).
+    // While a Merge or Close press asks, esc and q take it back rather than close the panel (#13, #27).
     if (ui.confirm && (k === "q" || (k === "\x1b" && data.length === 1))) { cancelMerge(); continue; }
     if (k === "q" || k === "\x03" || (k === "\x1b" && data.length === 1)) return quit();
-    // Any key clears a notice, except the progress of a launch or merge still under way.
+    // Any key clears a notice, except the progress of a launch, merge or close still under way.
     if (ui.notice && !(ui.acting && ui.notice.tone === "info")) { ui.notice = null; draw(); }
-    // And takes back a Merge press that only asked (#13).
+    // And takes back a Merge or Close press that only asked (#13, #27).
     if (ui.confirm) cancelMerge();
     if (k === "\x1b[A" || k === "\x1bOA" || k === "k") move(-1);
     else if (k === "\x1b[B" || k === "\x1bOB" || k === "j") move(1);
@@ -1976,6 +2068,8 @@ else {
     // A pull request's Merge button (#13): its press, the rules it builds the CLI's
     // arguments by, and the refresh a merge starts.
     pressMerge, MERGE_GAP, mergeStrategy, mergeArgs, mergeGuard, refresh,
+    // An issue's Close button (#27): its press.
+    pressClose,
     state: () => ({ cwd, target }),
     // Tests point the panel at another followed pane, or none.
     follow: (pane) => { target = pane; },

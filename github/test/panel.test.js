@@ -251,7 +251,7 @@ function setup(view) {
   Object.assign(ui, {
     view, prs: items("pull"), issues: items("issues"), errors: {}, error: null, repo: { name: "o/p", url: "https://x/o/p" },
     loading: false, fetched: true, follow: false, sel: { prs: 0, issues: 0 }, top: { prs: 0, issues: 0 }, notice: null,
-    forge: null, root: null, settings: null, acting: null, menu: null, confirm: null, merging: null, pasting: false, pasteCR: false,
+    forge: null, root: null, settings: null, acting: null, menu: null, confirm: null, merging: null, closing: null, pasting: false, pasteCR: false,
   });
   follow("block:agent");
   opened.length = 0;
@@ -520,7 +520,7 @@ test("a Ctrl-click on a title is left to the terminal", () => {
 function setupGitHub(view) {
   setup(view);
   for (const v of ["prs", "issues"]) ui[v].forEach((x, i) => Object.assign(x, { ref: `#${10 + i}`, number: 10 + i }));
-  Object.assign(ui, { forge: FORGES.github, root: "/repo", tab: "window:w1", sel: { prs: 2, issues: 2 }, acting: null, merging: null });
+  Object.assign(ui, { forge: FORGES.github, root: "/repo", tab: "window:w1", sel: { prs: 2, issues: 2 }, acting: null, merging: null, closing: null });
   calls.length = 0;
   callOpts.length = 0;
   return screen(draw);
@@ -957,7 +957,8 @@ test("each harness starts with its own model and thinking flags; empty ones add 
 test("each issue row has its own Resolve button, which resolves that issue", async (t) => {
   claudeHome(t, { ".claude/skills/issue-resolver/SKILL.md": "x" });
   const lines = setupGitHub("issues");
-  const y = lines.findIndex((l) => l?.trim() === "Resolve #11");
+  // Its Close button sits beside it (#27).
+  const y = lines.findIndex((l) => l?.trim() === "Resolve #11   Close #11");
   assert.ok(y > LIST.from, lines.join("\n"));
   fakeRex(agentHere());
   const x = lines[y].indexOf("Resolve");
@@ -2011,7 +2012,7 @@ const CC = { id: "cc", name: "Claude Code", harness: "claude" }, CX = { id: "cx"
 // The box's line for a profile, as drawn: its marker, name and hint, then the border.
 const entryLine = (lines, label) => lines.findIndex((l) => l?.includes(`│ ▸ ${label}`) || l?.includes(`│   ${label}`));
 const resolveButton = (lines, n) => {
-  const y = lines.findIndex((l) => l?.trim() === `Resolve #${n}`);
+  const y = lines.findIndex((l) => l?.trim() === `Resolve #${n}   Close #${n}`);
   return [lines[y]?.indexOf("Resolve"), y];
 };
 
@@ -2136,13 +2137,13 @@ test("a opens the menu under the selected row's button, a row's button under its
   lines = screen(() => click(x, y));
   assert.equal(ui.menu?.anchor, "row");
   assert.equal(ui.menu.number, 11);
-  assert.match(lines[y], /^▌ +Resolve #11 $/);
+  assert.match(lines[y], /^▌ +Resolve #11 {3}Close #11 $/);
   assert.equal(lines[y + 1].indexOf("┌ Resolve #11 with"), x - 1, lines.join("\n"));
   // The last row's button sits low: the menu goes above it.
   setupGitHub("issues");
   ui.sel.issues = 9;
   lines = screen(() => onInput(Buffer.from("a")));
-  const at = lines.findIndex((l) => /Resolve #19 $/.test(l ?? ""));
+  const at = lines.findIndex((l) => /Resolve #19 {3}Close #19 $/.test(l ?? ""));
   assert.ok(at > LIST.from && lines[at - 1].trimStart().startsWith("└"), lines.join("\n"));
   assert.ok(lines.slice(LIST.from, at).some((l) => l?.includes("┌ Resolve #19 with")), lines.join("\n"));
 });
