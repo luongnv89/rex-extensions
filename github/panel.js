@@ -475,11 +475,14 @@ function dropAutopilot() {
 
 // Whether the mode is on. Every look at it keeps it true to the list: off where it
 // isn't offered (the pull requests, another forge, another repo), and an issue gone
-// from the list (closed, or not in a refresh's answer) no longer checked.
+// from the list (closed, or not in a refresh's answer) no longer checked. A failed
+// fetch of the issues leaves the list empty: that says nothing of what is open, so
+// what is checked stays checked until a fetch answers.
 function autopilotOn() {
   const ap = ui.autopilot;
   if (!ap.on) return false;
   if (!autopilotOffered()) { dropAutopilot(); return false; }
+  if (ui.errors?.issues) return true;
   const open = new Set(ui.issues.map((i) => i.number));
   for (const n of ap.checked) if (!open.has(n)) ap.checked.delete(n);
   return true;

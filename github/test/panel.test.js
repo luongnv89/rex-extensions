@@ -4208,6 +4208,29 @@ test("the bar's key hints keep q, which cancels, in view at 36 cells, with 1 or 
   assert.match(lines[FOOTER], /✕ Cancel {2}⏎ start · ␣\/x check · ↑↓\/jk select · esc\/q cancel$/, lines[FOOTER]);
 });
 
+test("a failed fetch of the issues unchecks nothing; the next one that answers unchecks only the issues gone (#31)", async (t) => {
+  const { state } = await loadIssues(t);
+  checkRows(screen(draw), "Issue 21", "Issue 23", "Issue 24");
+  assert.deepEqual(checkedNumbers(), [21, 23, 24]);
+  // gh's issue list fails, its repo call still answering: the list is empty, with the error.
+  const answers = gh;
+  gh = (args) => (args[0] === "issue" && args[1] === "list" ? { code: 1, stderr: "HTTP 502" } : answers(args));
+  await quietly(() => refresh());
+  assert.equal(ui.issues.length, 0);
+  assert.ok(ui.errors.issues, "the fetch failed");
+  let lines = screen(draw);
+  assert.equal(ui.autopilot.on, true);
+  assert.deepEqual([...ui.autopilot.checked].sort((a, b) => a - b), [21, 23, 24]);
+  assert.match(lines[FOOTER], /▶ Start 3 /, lines.join("\n"));
+  // It answers again, without #23: only #23 is unchecked.
+  gh = answers;
+  state.issues = state.issues.filter((n) => n !== 23);
+  await quietly(() => refresh());
+  lines = screen(draw);
+  assert.deepEqual(checkedNumbers(), [21, 24]);
+  assert.match(lines[FOOTER], /▶ Start 2 /);
+});
+
 test("at 28, 30, 40 and 60 cells, with the mode on or off, nothing is wider than the pane, no buttons overlap, and Start stays whole and clickable (#31)", (t) => {
   claudeHome(t);
   for (const cols of [28, 30, 40, 60]) {
