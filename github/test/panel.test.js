@@ -3905,7 +3905,7 @@ test("Start is shown only in Auto-pilot mode, in place of the key hints (#31)", 
   assert.match(lines[FOOTER], /^ a resolve #12 · ↑↓ select · ⏎ open · p auto-pilot · ⇥ swit/);
   assert.ok(!ui.buttons.some((b) => b.row === FOOTER), "no button on the key hints");
   lines = screen(() => onInput(mouse(...toggleAt(lines))));
-  assert.match(lines[FOOTER], /^ {2}▶ Start {3}✕ Cancel {2}⏎ start · ␣ check · ↑↓ select/);
+  assert.match(lines[FOOTER], /^ {2}▶ Start {3}✕ Cancel {2}⏎ start · ␣ check · ↑↓ · q cancel$/);
   assert.deepEqual(startAt(lines), [2, FOOTER]);
   // Cancel leaves the mode, and Start goes with it.
   lines = screen(() => onInput(mouse(...find(lines, "✕ Cancel"))));
@@ -4190,6 +4190,22 @@ test("at the panel's default 36 cells, the bar keeps ⏎ start in view (#31)", (
     const lines = screenAt(36, 24, draw);
     assert.match(lines[FOOTER], /✕ Cancel {2}⏎ start/, lines[FOOTER]);
   }
+});
+
+test("the bar's key hints keep q, which cancels, in view at 36 cells, with 1 or 10 issues checked, and name every key in a wide pane (#31)", (t) => {
+  claudeHome(t);
+  setupGitHub("issues");
+  screenAt(36, 24, () => onInput(Buffer.from("p")));
+  for (const n of [1, 10]) {
+    ui.autopilot.checked.clear();
+    for (const i of ui.issues.slice(0, n)) ui.autopilot.checked.add(i.number);
+    assert.equal(ui.autopilot.checked.size, n);
+    const lines = screenAt(36, 24, draw);
+    for (const l of lines) assert.ok(width(l ?? "") <= 36, `${n}: ${l}`);
+    assert.match(lines[FOOTER], new RegExp(`▶ Start ${n} {3}✕ Cancel {2}⏎ start · q$`), lines[FOOTER]);
+  }
+  const lines = screenAt(80, 24, draw);
+  assert.match(lines[FOOTER], /✕ Cancel {2}⏎ start · ␣\/x check · ↑↓\/jk select · esc\/q cancel$/, lines[FOOTER]);
 });
 
 test("at 28, 30, 40 and 60 cells, with the mode on or off, nothing is wider than the pane, no buttons overlap, and Start stays whole and clickable (#31)", (t) => {

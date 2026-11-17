@@ -1217,9 +1217,13 @@ const MENU_KEYS = [" ↑↓/jk choose · ⏎ start · esc/q cancel", " ↑↓ ·
 // how many issues are checked, dimmed and doing nothing while there are none; Cancel;
 // then the keys, as far as they fit, ⏎ first: in the mode it starts rather than opens,
 // so it is the hint a default 36-column pane must keep. Start comes first, so it stays
-// whole however narrow the pane. Returns { text, hits: [{ from, to, action }] }, each
-// hit a whole button as drawn.
-const AUTOPILOT_KEYS = " ⏎ start · ␣ check · ↑↓ select · esc cancel";
+// whole however narrow the pane. The keys are the longest of these that fits after
+// Cancel: 50 cells, 34, 29, 19, and 12, which a default 36-column pane keeps with up to
+// 99 issues checked, q there right after ✕ Cancel, so a key that cancels stays in view
+// on a phone, whose keyboard may have no esc (#28). Returns { text, hits: [{ from,
+// to, action }] }, each hit a whole button as drawn.
+const AUTOPILOT_KEYS = [" ⏎ start · ␣/x check · ↑↓/jk select · esc/q cancel", " ⏎ start · ␣ check · ↑↓ · q cancel",
+  " ⏎ start · ␣ check · q cancel", " ⏎ start · q cancel", " ⏎ start · q"];
 function autopilotBar(cols, count) {
   const hits = [];
   const start = ` ${fit(count ? `▶ Start ${count}` : "▶ Start", Math.max(1, cols - 3))} `;
@@ -1231,7 +1235,7 @@ function autopilotBar(cols, count) {
     text += " " + invert(cancel);
     x += 1 + width(cancel);
   }
-  if (cols - x >= 8) text += dim(fit(AUTOPILOT_KEYS, cols - x));
+  if (cols - x >= 8) text += dim(fit(AUTOPILOT_KEYS.find((k) => width(k) <= cols - x) ?? AUTOPILOT_KEYS.at(-1), cols - x));
   return { text, hits };
 }
 
