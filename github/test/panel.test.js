@@ -49,7 +49,7 @@ process.on("exit", () => fs.rmSync(stateHome, { recursive: true, force: true }))
 Object.assign(process.env, { REX_GITHUB_REX: "rex", REX_SESSION: "session:s", REX_BLOCK: "block:panel", REX_GITHUB_STARTUP_MS: "1", XDG_STATE_HOME: stateHome });
 process.argv.push("--target", "block:agent", "--cwd", "/start");
 const P = require("../profiles.cjs");
-const { width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput, MODES_ON, MODES_OFF, act, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, flags, locate, state, follow, splitLeft, ratioFor, fitWidth, COLUMNS, MAX_SHARE, settleResize, savedWidth, resetWidth, pressMerge, MERGE_GAP, mergeStrategy, mergeArgs, mergeGuard, refresh, pressClose } = require("../panel.js");
+const { width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput, MODES_ON, MODES_OFF, act, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, flags, locate, state, follow, splitLeft, ratioFor, fitWidth, COLUMNS, MAX_SHARE, settleResize, savedWidth, resetWidth, pressMerge, MERGE_GAP, mergeStrategy, mergeArgs, mergeGuard, refresh, pressClose, checkedNumbers, paneLabel } = require("../panel.js");
 
 // Drops colors and OSC 8 hyperlinks, leaving the text a terminal shows.
 const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b\]8;[^\x07\x1b]*(?:\x1b\\|\x07)/g, "");
@@ -632,8 +632,9 @@ const text = (lines) => lines.map((l) => l?.trim()).join(" ");
 
 test("the header has no Resolve or Review button; the rows do, and a acts on the selected one, on GitHub only (#13)", () => {
   let lines = setupGitHub("issues");
-  // Only the profiles, refresh and open buttons are left in the header.
-  assert.match(lines[0], /^ o\/p +⚙ {2}↻ {2}↗ $/);
+  // Only the profiles, refresh and open buttons are left in the header, after
+  // Auto-pilot's ☑ on the issues (#31).
+  assert.match(lines[0], /^ o\/p +☑ {2}⚙ {2}↻ {2}↗ $/);
   assert.doesNotMatch(lines[0], /Resolve|Review/);
   assert.ok(find(lines, "Resolve #12")[1] > LIST.from, lines.join("\n"));
   assert.match(lines[FOOTER], /^ a resolve #12 · ↑↓ select · ⏎ open ·/);
@@ -1203,7 +1204,7 @@ test("a store changed elsewhere since it was read isn't overwritten", (t) => {
 
 test("a corrupt or newer store is shown read only, and actions use the default", async (t) => {
   const dir = home(t, { ".claude/skills/issue-resolver/SKILL.md": "x" });
-  for (const bad of ["{ not json", JSON.stringify({ version: 4, profiles: [], assign: {} })]) {
+  for (const bad of ["{ not json", JSON.stringify({ version: 5, profiles: [], assign: {} })]) {
     const file = useProfiles(dir, []);
     fs.writeFileSync(file, bad);
     setupGitHub("issues");
@@ -1492,11 +1493,11 @@ test("at 28, 30 and 40 cells the profiles show each warning, note and question w
     assert.ok(lines.at(-1).trimEnd().endsWith("esc back"), `${cols}:\n${lines.join("\n")}`);
     at(() => onInput(Buffer.from("\x1b")));
 
-    // A file from another version: 1, 2 and 3 are read (2 since #20's prompts, 3 since #24's models).
-    fs.writeFileSync(useProfiles(dir, []), JSON.stringify({ version: 4, profiles: [], assign: {} }));
+    // A file from another version: 1 to 4 are read (2 since #20's prompts, 3 since #24's models, 4 since #31's Auto-pilot prompt).
+    fs.writeFileSync(useProfiles(dir, []), JSON.stringify({ version: 5, profiles: [], assign: {} }));
     setupGitHub("issues");
     lines = at(() => onInput(Buffer.from("s")));
-    assert.ok(shows(lines, "The profiles file is version 4, not 1, 2 or 3: it is read only here"), `${cols}:\n${lines.join("\n")}`);
+    assert.ok(shows(lines, "The profiles file is version 5, not 1, 2, 3 or 4: it is read only here"), `${cols}:\n${lines.join("\n")}`);
     at(() => onInput(Buffer.from("\x1b")));
 
     // A 40-character name in what a change did, and in the delete question.
@@ -1920,12 +1921,16 @@ test("the wheel reaches the prompt rows and the prompt's buttons in a short pane
     let lines;
     for (let i = 0; i <= n; i++) lines = at(wheel(true));
     assert.equal(ui.settings.promptSel, "resolve", where(lines));
-    lines = at(wheel(true) + wheel(true));
+    lines = at(wheel(true));
     assert.equal(ui.settings.promptSel, "review", where(lines));
     assert.ok(lines.some((l) => /^▌ Review prompt +Edit $/.test(l ?? "")), where(lines));
+    // On to the last, Auto-pilot's (#31), where the wheel stops.
+    lines = at(wheel(true) + wheel(true));
+    assert.equal(ui.settings.promptSel, "autopilot", where(lines));
+    assert.ok(lines.some((l) => /^▌ Auto-pilot prompt +Edit $/.test(l ?? "")), where(lines));
     fitsWithHints(lines, cols, rows, "↑↓ select", "esc back");
     // And back up to the profiles.
-    for (let i = 0; i < 2; i++) lines = at(wheel(false));
+    for (let i = 0; i < 3; i++) lines = at(wheel(false));
     assert.equal(ui.settings.promptSel, null, where(lines));
     assert.equal(ui.settings.sel, n, where(lines));
     lines = at(wheel(true));
@@ -3468,12 +3473,12 @@ test("a model that breaks the MODEL rule, or is already offered, isn't added; - 
 test("a model isn't added to a read-only file, or over a change made elsewhere", (t) => {
   const dir = home(t);
   // Read only: from a newer version, the file kept as it is.
-  const newer = JSON.stringify({ version: 4, profiles: [], assign: {} });
+  const newer = JSON.stringify({ version: 5, profiles: [], assign: {} });
   fs.writeFileSync(useProfiles(dir, []), newer);
   setupGitHub("issues");
   screen(() => onInput(Buffer.from("sn" + TO_MODEL)));
   let lines = screen(() => onInput(Buffer.from("+mine\r")));
-  assert.ok(shows(lines, "Not saved: The profiles file is version 4, not 1, 2 or 3: it is read only here"), lines.join("\n"));
+  assert.ok(shows(lines, "Not saved: The profiles file is version 5, not 1, 2, 3 or 4: it is read only here"), lines.join("\n"));
   assert.equal(fs.readFileSync(storeFile(), "utf8"), newer);
   assert.equal(ui.settings.form.adding, "mine");
   screen(() => onInput(Buffer.from("\x1b\x1b\x1b")));
@@ -3835,4 +3840,370 @@ test("the CLIs' close arguments come from an integer only (#27)", () => {
     assert.throws(() => FORGES.github.closeArgs(bad), /not a number/, String(bad));
     assert.throws(() => FORGES.gitlab.closeArgs(bad), /not a number/, String(bad));
   }
+});
+
+// ── Auto-pilot (#31) ────────────────────────────────────────────────────────
+
+// Where things are in a frame: the header's ☑, an issue row's checkbox (its title
+// line, by the issue's title), and the Start bar's buttons.
+const toggleAt = (lines) => { const x = lines[0].indexOf("☑"); assert.ok(x > 0, lines[0]); return [x, 0]; };
+const rowAt = (lines, title) => { const y = lines.findIndex((l) => new RegExp(`[☐☑◉] ${title}$`).test(l?.trimEnd() ?? "")); assert.ok(y > 0, `${title}\n${lines.join("\n")}`); return [10, y]; };
+// A click on a title's row, the wheel first scrolling down to it when it's out of view.
+function clickRow(lines, title) {
+  for (let i = 0; i < 10 && !lines.slice(LIST.from, FOOTER).some((l) => l?.trimEnd().endsWith(` ${title}`)); i++) lines = screen(() => onInput(Buffer.from(wheelDown)));
+  return screen(() => onInput(mouse(...rowAt(lines, title))));
+}
+const boxOf = (lines, title) => lines.find((l) => new RegExp(` ${title}$`).test(l?.trimEnd() ?? ""))?.match(/[☐☑◉](?= )/)?.[0];
+const startAt = (lines) => { const [x, y] = find(lines, "▶ Start"); assert.ok(y > 0, lines.join("\n")); return [x, y]; };
+const mouse = (x, y) => Buffer.from(pressAt(x, y));
+const splits = () => calls.filter((c) => c[0] === "rex" && c[1] === "split");
+// Into Auto-pilot mode with a click on the header's ☑, then a click on each title's row.
+function checkRows(lines, ...titles) {
+  if (!ui.autopilot.on) lines = screen(() => onInput(mouse(...toggleAt(lines))));
+  for (const title of titles) lines = clickRow(lines, title);
+  return lines;
+}
+
+test("the header's ☑ enters Auto-pilot mode on GitHub's issues, and every issue row then shows a checkbox (#31)", (t) => {
+  claudeHome(t);
+  let lines = setupGitHub("issues");
+  assert.equal(boxOf(lines, "Title 0"), "◉");
+  lines = screen(() => onInput(mouse(...toggleAt(lines))));
+  assert.equal(ui.autopilot.on, true);
+  assert.deepEqual(opened, [], "the ☑ opens nothing");
+  // Every issue's row, in a pane tall enough for all of them: a ☐, and no Resolve or Close.
+  const all = screenAt(60, 200, draw);
+  for (let i = 0; i < 10; i++) assert.equal(boxOf(all, `Title ${i}`), "☐", all.join("\n"));
+  assert.ok(!all.some((l) => /Resolve|Close/.test(l ?? "")), all.join("\n"));
+  // The list keeps its place: from under the switch down to the line above Start.
+  const off = setupGitHub("issues");
+  lines = screen(() => onInput(mouse(...toggleAt(off))));
+  assert.equal(lines.length, off.length);
+  assert.match(lines[LIST.from], /☐ Title 0$/);
+  assert.match(off[LIST.from], /◉ Title 0$/);
+  // A second click on ☑ leaves the mode: the rows are as before.
+  lines = screen(() => onInput(mouse(...toggleAt(lines))));
+  assert.equal(ui.autopilot.on, false);
+  assert.equal(boxOf(lines, "Title 0"), "◉");
+  assert.ok(lines.some((l) => /Resolve #12/.test(l ?? "")), lines.join("\n"));
+  // Not on the pull requests, nor on GitLab: no ☑, and p does nothing.
+  for (const where of ["prs", "gitlab"]) {
+    setupGitHub(where === "prs" ? "prs" : "issues");
+    if (where === "gitlab") ui.forge = FORGES.gitlab;
+    screen(() => onInput(Buffer.from("p")));
+    lines = screen(draw);
+    assert.ok(!lines[0].includes("☑"), lines[0]);
+    assert.equal(ui.autopilot.on, false, where);
+    assert.ok(!lines.some((l) => /[☐☑]/.test(l ?? "")), lines.join("\n"));
+  }
+});
+
+test("Start is shown only in Auto-pilot mode, in place of the key hints (#31)", (t) => {
+  claudeHome(t);
+  let lines = setupGitHub("issues");
+  assert.ok(!lines.some((l) => /Start/.test(l ?? "")), lines.join("\n"));
+  assert.match(lines[FOOTER], /^ a resolve #12 · ↑↓ select · ⏎ open · p auto-pilot · ⇥ swit/);
+  assert.ok(!ui.buttons.some((b) => b.row === FOOTER), "no button on the key hints");
+  lines = screen(() => onInput(mouse(...toggleAt(lines))));
+  assert.match(lines[FOOTER], /^ {2}▶ Start {3}✕ Cancel {2}␣ check · ↑↓ select/);
+  assert.deepEqual(startAt(lines), [2, FOOTER]);
+  // Cancel leaves the mode, and Start goes with it.
+  lines = screen(() => onInput(mouse(...find(lines, "✕ Cancel"))));
+  assert.equal(ui.autopilot.on, false);
+  assert.ok(!lines.some((l) => /Start/.test(l ?? "")), lines.join("\n"));
+});
+
+test("Start stays disabled while no issue is checked, and is enabled once one is (#31)", (t) => {
+  claudeHome(t, { ".claude/skills/auto-pilot/SKILL.md": "x" });
+  let lines = setupGitHub("issues");
+  fakeRex(agentHere());
+  lines = screen(() => onInput(mouse(...toggleAt(lines))));
+  // Dimmed, with no count: a click on it, or enter, starts nothing and opens no menu.
+  assert.match(rawScreen(draw)[FOOTER], /^ \x1b\[90m ▶ Start \x1b\[0m/);
+  screen(() => onInput(mouse(...startAt(lines))));
+  screen(() => onInput(Buffer.from("\r")));
+  lines = screen(draw);
+  assert.deepEqual(calls, []);
+  assert.equal(ui.menu, null);
+  assert.equal(ui.acting, null);
+  assert.deepEqual(opened, [], "enter opens no issue in the mode");
+  assert.equal(ui.autopilot.on, true);
+  // One checked: Start counts it, and is a button.
+  lines = screen(() => onInput(mouse(...rowAt(lines, "Title 3"))));
+  assert.equal(boxOf(lines, "Title 3"), "☑");
+  assert.deepEqual([...ui.autopilot.checked], [13], "checked by number, not by row");
+  assert.deepEqual(opened, [], "a click on a row in the mode opens nothing");
+  assert.match(lines[FOOTER], /^ {2}▶ Start 1 {3}✕ Cancel/);
+  assert.match(rawScreen(draw)[FOOTER], /^ \x1b\[7m\x1b\[1m ▶ Start 1 /);
+  // A second click unchecks it: disabled again.
+  lines = screen(() => onInput(mouse(...rowAt(lines, "Title 3"))));
+  assert.equal(boxOf(lines, "Title 3"), "☐");
+  assert.match(lines[FOOTER], /^ {2}▶ Start {3}✕/);
+  screen(() => onInput(mouse(...startAt(lines))));
+  assert.deepEqual(calls, []);
+  assert.equal(ui.menu, null);
+  // Checked again, Start opens the profile menu (this HOME has two profiles).
+  lines = screen(() => onInput(mouse(...rowAt(lines, "Title 3"))));
+  lines = screen(() => onInput(mouse(...startAt(lines))));
+  assert.ok(ui.menu?.autopilot, lines.join("\n"));
+  assert.ok(lines.some((l) => /┌ Auto-pilot 1 issue with/.test(l ?? "")), lines.join("\n"));
+  screen(() => onInput(Buffer.from("\x1b")));
+  assert.equal(ui.menu, null);
+});
+
+test("Start runs the IDD auto-pilot skill on exactly the issues checked, in the list's order, then leaves the mode (#31)", async (t) => {
+  const dir = home(t, { ".mcc/profiles/work/skills/auto-pilot/SKILL.md": "x" });
+  const bin = mccOnPath(t);
+  mccEnv(path.join(dir, ".mcc/profiles/work"));
+  let lines = setupGitHub("issues");
+  fakeRex(agentHere());
+  // Checked #15 first, then #12; #13 checked and unchecked again.
+  lines = checkRows(lines, "Title 5", "Title 3", "Title 2", "Title 3");
+  assert.deepEqual(splits(), []);
+  // Only the default profile: Start starts at once, with no menu.
+  let menu = "unset";
+  const after = await screenAsync(() => { onInput(mouse(...startAt(lines))); menu = ui.menu; });
+  assert.equal(menu, null);
+  assert.equal(splits().length, 1, "one pane for all the issues");
+  assert.equal(splitArgs(), SPLIT("block:agent", "autopilot-12-15"));
+  assert.deepEqual(splitCommand(), [bin, "run", "--", "/auto-pilot --issues 12,15"]);
+  assert.ok(text(after).includes(`${OPENED_MCC} /auto-pilot --issues 12,15`), after.join("\n"));
+  // Started: out of the mode, nothing checked.
+  assert.equal(ui.autopilot.on, false);
+  assert.deepEqual([...ui.autopilot.checked], []);
+  assert.ok(!after.some((l) => /[☐☑] Title|▶ Start/.test(l ?? "")), after.join("\n"));
+});
+
+test("Auto-pilot finds the skill under its plugin's name, and other harnesses get it in words (#31)", async (t) => {
+  const cache = ".claude/plugins/cache/market/idd/0.20.1";
+  const dir = home(t, {
+    [`${cache}/skills/auto-pilot/SKILL.md`]: "x",
+    [`${cache}/.claude-plugin/plugin.json`]: JSON.stringify({ name: "idd" }),
+  });
+  fs.writeFileSync(path.join(dir, ".claude/plugins/installed_plugins.json"), JSON.stringify({ version: 2, plugins: { "idd@market": [{ scope: "user", installPath: path.join(dir, cache) }] } }));
+  // Auto-pilot starts the profile Resolve does: the menu highlights it.
+  useProfiles(dir, [CC, CX], { resolve: "cc", review: "cx" });
+  let lines = setupGitHub("issues");
+  fakeRex(agentHere());
+  lines = checkRows(lines, "Title 5", "Title 2");
+  await screenAsync(() => clickWithMenu(...startAt(lines)));
+  assert.deepEqual(splitCommand(), ["claude", "/idd:auto-pilot --issues 12,15"]);
+  fs.mkdirSync(path.join(dir, ".agents/skills/auto-pilot"), { recursive: true });
+  fs.writeFileSync(path.join(dir, ".agents/skills/auto-pilot/SKILL.md"), "x");
+  useProfiles(dir, [CC, CX], { resolve: "cx" });
+  lines = setupGitHub("issues");
+  fakeRex(agentHere());
+  lines = checkRows(lines, "Title 0", "Title 1", "Title 2", "Title 3");
+  await screenAsync(() => clickWithMenu(...startAt(lines)));
+  assert.deepEqual(splitCommand(), ["codex", "Use the auto-pilot skill with --issues 10,11,12,13."]);
+  assert.equal(splitArgs(), SPLIT("block:agent", "autopilot-10+3"));
+});
+
+test("without the auto-pilot skill nothing starts, the notice points to IDD, and the issues stay checked (#31)", async (t) => {
+  claudeHome(t, { ".claude/skills/issue-resolver/SKILL.md": "x" });
+  let lines = setupGitHub("issues");
+  fakeRex(agentHere());
+  lines = checkRows(lines, "Title 4");
+  const after = await screenAsync(() => clickWithMenu(...startAt(lines)));
+  assert.deepEqual(splits(), []);
+  assert.ok(text(after).includes("The auto-pilot skill isn't installed for Claude Code. Install the skills from:"), after.join("\n"));
+  assert.ok(after.some((l) => l?.includes(IDD)), after.join("\n"));
+  assert.equal(ui.autopilot.on, true);
+  assert.deepEqual([...ui.autopilot.checked], [14]);
+});
+
+test("a custom Auto-pilot prompt saved in the profiles view is what Start then runs, its {numbers} filled in (#31)", async (t) => {
+  claudeHome(t);
+  setupGitHub("issues");
+  // Under the profiles, after Resolve's and Review's: the Auto-pilot prompt and its default.
+  let lines = screen(() => onInput(Buffer.from("s")));
+  const at = (label) => lines.findIndex((l) => l?.replace(/^[▌ ] /, "").startsWith(label));
+  assert.ok(at("Auto-pilot prompt") > at("Review prompt"), lines.join("\n"));
+  assert.equal(lines[at("Auto-pilot prompt") + 1].trim(), "default: /auto-pilot --issues {numbers}");
+  // ↓ past the last profile and the other prompts; Edit, with the mouse.
+  lines = screen(() => onInput(Buffer.from("jjjj")));
+  assert.equal(ui.settings.promptSel, "autopilot");
+  lines = screen(() => onInput(mouse(...find(lines, " Edit "))));
+  assert.equal(ui.settings.mode, "prompt");
+  assert.match(lines[0], /^ Auto-pilot prompt +✕ $/);
+  assert.ok(text(lines).includes("{numbers} becomes the checked issues' numbers, as 12,15; nothing else from them goes in."), lines.join("\n"));
+  // {number} alone isn't enough: it is refused, with the reason under it.
+  lines = screen(() => onInput(Buffer.from("Fix {number}\r")));
+  assert.ok(text(lines).includes("Auto-pilot prompt: must contain {numbers}, where the issues' numbers go"), lines.join("\n"));
+  lines = screen(() => onInput(Buffer.from("\x7f".repeat(20) + "Run auto-pilot on {numbers}, then report")));
+  lines = screen(() => onInput(mouse(...find(lines, " Save "))));
+  assert.equal(ui.settings.mode, "list");
+  assert.ok(text(lines).includes("Auto-pilot now sends: Run auto-pilot on {numbers}, then report"), lines.join("\n"));
+  const stored = JSON.parse(fs.readFileSync(storeFile(), "utf8"));
+  assert.equal(stored.version, 4);
+  assert.deepEqual(stored.prompts, { resolve: null, review: null, autopilot: "Run auto-pilot on {numbers}, then report" });
+  screen(() => onInput(Buffer.from("\x1b")));
+  assert.equal(ui.settings, null);
+  // Start runs it, with no skill installed, on the issues checked.
+  lines = checkRows(screen(draw), "Title 5", "Title 2");
+  fakeRex(agentHere());
+  const after = await screenAsync(() => clickWithMenu(...startAt(lines)));
+  assert.deepEqual(splitCommand(), ["claude", "Run auto-pilot on 12,15, then report"]);
+  assert.ok(text(after).includes("Started Claude Code in a new pane: Run auto-pilot on 12,15, then report"), after.join("\n"));
+  assert.equal(ui.autopilot.on, false);
+});
+
+test("an Auto-pilot prompt too long once the issues are filled in is refused before anything runs (#31)", async (t) => {
+  const dir = home(t);
+  // 473 + a 16-digit number fits when saved, as do nine issues' numbers (26 characters); ten, 10,11,…,19, don't.
+  fs.writeFileSync(useProfiles(dir, []), JSON.stringify({ version: 4, profiles: [], assign: {}, prompts: { autopilot: `${"x".repeat(473)} {numbers}` } }));
+  assert.equal(readStore().readOnly, false);
+  mccOnPath(t);
+  let lines = setupGitHub("issues");
+  fakeRex(agentHere());
+  lines = checkRows(lines, ...Array.from({ length: 10 }, (_, i) => `Title ${i}`));
+  calls.length = 0;
+  const after = await screenAsync(() => onInput(mouse(...startAt(lines))));
+  assert.deepEqual(calls, []);
+  assert.ok(shows(after, "The Auto-pilot prompt is 503 characters with 10 issues in it, more than 500: check fewer issues, or shorten it"), after.join("\n"));
+  assert.equal(ui.autopilot.on, true, "the mode stays, so fewer can be checked");
+  assert.equal(ui.autopilot.checked.size, 10);
+  // With nine, it fits.
+  lines = clickRow(screen(draw), "Title 9");
+  const fits = await screenAsync(() => onInput(mouse(...startAt(lines))));
+  assert.equal(ui.autopilot.checked.size, 0, fits.join("\n"));
+  assert.equal(splitCommand()?.at(-1), `${"x".repeat(473)} 10,11,12,13,14,15,16,17,18`);
+});
+
+test("from the keyboard: p enters the mode, space and x check, enter starts, a does nothing (#31)", async (t) => {
+  const dir = home(t, { ".mcc/profiles/work/skills/auto-pilot/SKILL.md": "x" });
+  const bin = mccOnPath(t);
+  mccEnv(path.join(dir, ".mcc/profiles/work"));
+  setupGitHub("issues");
+  fakeRex(agentHere());
+  screen(() => onInput(Buffer.from("p")));
+  assert.equal(ui.autopilot.on, true);
+  // #12 is selected: space checks it; ↓ then x checks #13; x again unchecks it; j x checks #14.
+  let lines = screen(() => onInput(Buffer.from(" jxxjx")));
+  assert.deepEqual(checkedNumbers(), [12, 14]);
+  assert.equal(boxOf(lines, "Title 3"), "☐");
+  screen(() => onInput(Buffer.from("a")));
+  assert.deepEqual(calls, [], "a starts no Resolve in the mode");
+  await screenAsync(() => onInput(Buffer.from("\r")));
+  assert.deepEqual(splitCommand(), [bin, "run", "--", "/auto-pilot --issues 12,14"]);
+  assert.equal(ui.autopilot.on, false);
+  // p again leaves it.
+  screen(() => onInput(Buffer.from("p")));
+  assert.equal(ui.autopilot.on, true);
+  screen(() => onInput(Buffer.from("p")));
+  assert.equal(ui.autopilot.on, false);
+});
+
+test("esc and q leave Auto-pilot mode, clearing what was checked, and the panel stays; ctrl-c still quits (#31)", (t) => {
+  claudeHome(t);
+  for (const key of ["\x1b", "q"]) {
+    const lines = checkRows(setupGitHub("issues"), "Title 1", "Title 4");
+    assert.equal(ui.autopilot.checked.size, 2);
+    let after;
+    const exit = noExit(() => { after = screen(() => onInput(Buffer.from(key))); });
+    assert.equal(exit, null, JSON.stringify(key));
+    assert.equal(ui.autopilot.on, false);
+    assert.equal(ui.autopilot.checked.size, 0);
+    assert.match(after[FOOTER], /^ a resolve #14 · /, "the row clicked last is selected");
+    assert.ok(lines.length);
+    // Back in, nothing is checked.
+    assert.match(screen(() => onInput(Buffer.from("p")))[FOOTER], /^ {2}▶ Start {3}/);
+  }
+  assert.equal(noExit(() => screen(() => onInput(Buffer.from("\x03")))), 0);
+});
+
+test("what is checked follows the list: a refresh or close drops the issues gone, and another view or repo leaves the mode (#31)", async (t) => {
+  const { state } = await loadIssues(t);
+  let lines = checkRows(screen(draw), "Issue 21", "Issue 23", "Issue 24");
+  assert.deepEqual(checkedNumbers(), [21, 23, 24]);
+  // #23 closed elsewhere: the next refresh's list hasn't it, so it isn't checked any more.
+  state.issues = state.issues.filter((n) => n !== 23);
+  await quietly(() => refresh());
+  lines = screen(draw);
+  assert.deepEqual(checkedNumbers(), [21, 24]);
+  assert.match(lines[FOOTER], /▶ Start 2 /);
+  // An issue closed from the panel, its close begun before the mode, is dropped too.
+  ui.autopilot.on = false;
+  lines = screen(draw);
+  pressButton(lines, "Close #24");
+  later();
+  pressButton(screen(draw), "Confirm close #24");
+  const closing = ui.acting;
+  ui.autopilot.on = true;
+  ui.autopilot.checked.add(24);
+  await quietly(() => closing);
+  await idle();
+  assert.deepEqual(checkedNumbers(), [21]);
+  // The pull requests leave the mode, nothing checked.
+  screen(() => onInput(Buffer.from("\t")));
+  assert.equal(ui.autopilot.on, false);
+  assert.equal(ui.autopilot.checked.size, 0);
+  // So does another repo.
+  screen(() => onInput(Buffer.from("\t")));
+  checkRows(screen(draw), "Issue 21");
+  assert.equal(ui.autopilot.checked.size, 1);
+  fakeRex({ "block:agent": shellProc("/elsewhere") });
+  await locate();
+  await quietly(() => refresh());
+  assert.equal(ui.autopilot.on, false);
+  assert.equal(ui.autopilot.checked.size, 0);
+});
+
+test("at 28, 30, 40 and 60 cells, with the mode on or off, nothing is wider than the pane, no buttons overlap, and Start stays whole and clickable (#31)", (t) => {
+  claudeHome(t);
+  for (const cols of [28, 30, 40, 60]) {
+    for (const on of [false, true]) {
+      setupGitHub("issues");
+      if (on) {
+        screenAt(cols, 24, () => onInput(Buffer.from("p")));
+        ui.autopilot.checked.add(12);
+      }
+      const lines = screenAt(cols, 24, draw);
+      const where = `${cols} ${on ? "on" : "off"}:\n${lines.join("\n")}`;
+      for (const l of lines) assert.ok(width(l ?? "") <= cols, `${where}\n${l}`);
+      for (const row of new Set(ui.buttons.map((b) => b.row))) {
+        const here = ui.buttons.filter((b) => b.row === row).sort((a, b) => a.from - b.from);
+        for (let k = 1; k < here.length; k++) assert.ok(here[k - 1].to <= here[k].from, `row ${row}\n${where}`);
+        for (const b of here) assert.ok(b.to <= cols, `row ${row}\n${where}`);
+      }
+      // The header's ☑ is a button, as are Start and Cancel in the mode.
+      const [tx] = toggleAt(lines);
+      assert.ok(ui.buttons.some((b) => b.row === 0 && b.from === tx - 1 && b.to === tx + 2), where);
+      if (!on) { assert.match(lines[FOOTER], /^ a resolve #12 · /, where); continue; }
+      const start = ui.buttons.find((b) => b.row === FOOTER && b.from === 1);
+      assert.equal(lines[FOOTER].slice(start.from, start.to), " ▶ Start 1 ", where);
+      assert.equal(lines[FOOTER].slice(start.to + 1, start.to + 11), " ✕ Cancel ", where);
+      assert.match(lines[0], /☑ {2}⚙ {2}↻ {2}↗ $/, where);
+      // A click on it at this width starts: here, the profile menu opens.
+      screenAt(cols, 24, () => onInput(mouse(start.from + 1, FOOTER)));
+      assert.ok(ui.menu?.autopilot, where);
+      screenAt(cols, 24, () => onInput(Buffer.from("\x1b")));
+    }
+  }
+});
+
+test("the new pane's label is bounded, and the prompt takes integers only (#31)", () => {
+  assert.equal(paneLabel({ key: "resolve", number: 12 }), "resolve-12");
+  assert.equal(paneLabel({ key: "autopilot", numbers: [12] }), "autopilot-12");
+  assert.equal(paneLabel({ key: "autopilot", numbers: [12, 15, 16] }), "autopilot-12-15-16");
+  assert.equal(paneLabel({ key: "autopilot", numbers: Array.from({ length: 50 }, (_, i) => i + 1) }), "autopilot-1+49");
+  assert.equal(promptFor("claude", "auto-pilot", { numbers: [3, 1] }), "/auto-pilot --issues 3,1");
+  assert.equal(promptFor("pi", "auto-pilot", { numbers: [3] }), "Use the auto-pilot skill with --issues 3.");
+  assert.equal(promptFor("claude", null, { numbers: [3, 1] }, "Go {numbers}"), "Go 3,1");
+  assert.throws(() => promptFor("claude", "auto-pilot", { numbers: [3, "1; id"] }), /not a list of numbers/);
+  assert.throws(() => promptFor("claude", "auto-pilot", { numbers: [] }), /not a list of numbers/);
+});
+
+test("a profile deleted while Auto-pilot's menu is open starts nothing and says so; the issues stay checked (#31)", (t) => {
+  const dir = claudeHome(t);
+  let lines = setupGitHub("issues");
+  fakeRex(agentHere());
+  lines = checkRows(lines, "Title 1");
+  screen(() => onInput(mouse(...startAt(lines))));
+  assert.ok(ui.menu?.autopilot);
+  useProfiles(dir, []);
+  const after = screen(() => onInput(Buffer.from("\r")));
+  assert.deepEqual(splits(), []);
+  assert.ok(text(after).includes("The profile Claude Code isn't there any more, so nothing started: press Start to choose another."), after.join("\n"));
+  assert.deepEqual(checkedNumbers(), [11]);
 });
