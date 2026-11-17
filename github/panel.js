@@ -1231,6 +1231,12 @@ function editProfile(p) {
 
 function saveForm() {
   const st = ui.settings, f = st.form;
+  // A model still being typed after + is added first, as enter would; the profile
+  // is saved only once it is, so a click on Save doesn't drop it.
+  if (f.adding !== null) {
+    addModel();
+    if (f.adding !== null) return;
+  }
   const profile = { id: f.id, name: f.name.trim(), harness: f.harness, model: f.model, thinking: f.thinking };
   change(() => {
     saveStore(P.upsertProfile(st.store, profile, f.prev));

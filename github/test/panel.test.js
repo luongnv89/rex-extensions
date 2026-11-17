@@ -3270,6 +3270,35 @@ test("+ on Model adds a model for the harness: saved to the file, chosen, and of
   assert.deepEqual(splitCommand(), ["codex", "-m", "gpt-mine", "Use the issue-resolver skill on issue #12."]);
 });
 
+test("Save while a model is typed after + adds it first, then saves the profile with it; an invalid one saves nothing", (t) => {
+  useProfiles(home(t), []);
+  setupGitHub("issues");
+  screen(() => onInput(Buffer.from("snMine")));
+  screen(() => onInput(Buffer.from("\x1b[Bmine\x1b[B\x1b[C\x1b[C\x1b[B")));
+  assert.equal(ui.settings.form.harness, "codex");
+  screen(() => onInput(Buffer.from("+gpt-typed")));
+  assert.equal(ui.settings.form.adding, "gpt-typed");
+  let lines = screen(draw);
+  let [x, y] = find(lines, " Save ");
+  lines = screen(() => click(x + 2, y));
+  assert.equal(ui.settings.mode, "list");
+  assert.deepEqual(stored().customModels, { codex: ["gpt-typed"] });
+  assert.deepEqual(stored().profiles, [{ id: "mine", name: "Mine", harness: "codex", model: "gpt-typed" }]);
+  assert.ok(text(lines).includes("Saved Mine"), lines.join("\n"));
+  // An invalid name: the reason shows under Model, the form stays open, nothing is saved.
+  screen(() => onInput(Buffer.from("nOther")));
+  screen(() => onInput(Buffer.from("\x1b[Bother\x1b[B\x1b[C\x1b[C\x1b[B")));
+  screen(() => onInput(Buffer.from("+opus[1m]")));
+  const before = fs.readFileSync(storeFile(), "utf8");
+  lines = screen(draw);
+  [x, y] = find(lines, " Save ");
+  lines = screen(() => click(x + 2, y));
+  assert.deepEqual([ui.settings.mode, ui.settings.form.adding], ["edit", "opus[1m]"]);
+  const at = lines.findIndex((l) => l?.startsWith("▌ Model"));
+  assert.ok(text(lines.slice(at + 1, at + 4)).replace(/\s+/g, " ").includes("Model: letters, digits"), lines.join("\n"));
+  assert.equal(fs.readFileSync(storeFile(), "utf8"), before);
+});
+
 test("a model that breaks the MODEL rule, or is already offered, isn't added; - removes only one you added", (t) => {
   useProfiles(home(t), []);
   setupGitHub("issues");
