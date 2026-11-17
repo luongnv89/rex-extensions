@@ -836,6 +836,10 @@ test("agentOf names the agent a terminal runs, to place the new pane beside it",
   assert.equal(agentOf(nodeProc("/home/u/.local/bin/pi")), "pi");
   assert.equal(agentOf({ foreground: { name: "opencode", argv0: "opencode" } }), "opencode");
   assert.equal(agentOf(nodeProc("/x/codex.js")), "codex");
+  // `vibe` is a Python script that runs Mistral Vibe's own binary, vibe-rs.
+  const vibeRs = "/home/u/.local/share/uv/tools/mistral-vibe/lib/python3.14/site-packages/vibe/_bin/vibe-rs";
+  assert.equal(agentOf({ foreground: { name: "vibe-rs", path: vibeRs, invoked_path: vibeRs, argv0: vibeRs } }), "vibe");
+  assert.equal(agentOf({ foreground: { name: "vibe", argv0: "vibe" } }), "vibe");
   for (const p of [shellProc(), nodeProc("/x/panel.js"), { foreground: null }, null, { foreground: { name: "vim", argv0: "vim" } }]) assert.equal(agentOf(p), null);
   assert.equal(agentOf({ foreground: { name: "toString" } }), null, "an inherited property isn't an agent");
 });
@@ -847,6 +851,9 @@ test("agentArgv puts each harness's flags first and the prompt last, as one word
   assert.deepEqual(argv({ harness: "codex", model: "gpt-5", thinking: "low" }), ["codex", "-m", "gpt-5", "-c", 'model_reasoning_effort="low"', "Fix #12: it's $(bad)"]);
   assert.deepEqual(argv({ harness: "pi", thinking: "off" }), ["pi", "--thinking", "off", "Fix #12: it's $(bad)"]);
   assert.deepEqual(argv({ harness: "opencode", model: "x" }), ["opencode", "--prompt", "Fix #12: it's $(bad)"]);
+  // Mistral Vibe runs as a command: its model is an environment variable, set by env(1).
+  assert.deepEqual(argv({ harness: "vibe" }), ["vibe", "Fix #12: it's $(bad)"]);
+  assert.deepEqual(argv({ harness: "vibe", model: "mistral-medium-3.5" }), ["env", "VIBE_ACTIVE_MODEL=mistral-medium-3.5", "vibe", "Fix #12: it's $(bad)"]);
 });
 
 // ── Profiles: per-row buttons, harnesses, mcc ───────────────────────────────
@@ -934,6 +941,8 @@ test("each harness starts with its own model and thinking flags; empty ones add 
     [{ harness: "pi", model: "anthropic/claude-x", thinking: "minimal" }, ["pi", "--model", "anthropic/claude-x", "--thinking", "minimal", use]],
     [{ harness: "pi" }, ["pi", use]],
     [{ harness: "opencode", model: "x" }, ["opencode", "--prompt", use]],
+    [{ harness: "vibe", model: "mistral-medium-3.5" }, ["env", "VIBE_ACTIVE_MODEL=mistral-medium-3.5", "vibe", use]],
+    [{ harness: "vibe" }, ["vibe", use]],
   ];
   for (const [p, command] of cases) {
     useProfiles(dir, [{ id: "p", name: "P", ...p }], { resolve: "p" });
@@ -1447,10 +1456,11 @@ test("at 28, 30 and 40 cells the profiles show each warning, note and question w
       for (const l of lines) assert.ok(width(l ?? "") <= cols, `${cols}: ${l}`);
       return lines;
     };
-    // The OpenCode note, in the form, under an OpenCode profile with a model.
+    // The OpenCode note, in the form, under an OpenCode profile with a model
+    // (← twice from the first harness: Mistral Vibe, then OpenCode).
     useProfiles(dir, []);
     setupGitHub("issues");
-    let lines = at(() => onInput(Buffer.from("sn\x1b[B\x1b[B\x1b[D\x1b[Bx")));
+    let lines = at(() => onInput(Buffer.from("sn\x1b[B\x1b[B\x1b[D\x1b[D\x1b[Bx")));
     assert.equal(ui.settings.form.harness, "opencode");
     assert.ok(shows(lines, note), `${cols}:\n${lines.join("\n")}`);
     assert.ok(lines.at(-1).trimEnd().endsWith("esc back"), `${cols}:\n${lines.join("\n")}`);
@@ -1562,7 +1572,7 @@ test("the profiles keep their key hints however much there is to say, and cut it
   // The OpenCode form on a 28x10 pane: the field, the note cut, the key hints whole.
   useProfiles(dir, []);
   setupGitHub("issues");
-  const lines = screenAt(28, 10, () => onInput(Buffer.from("sn\x1b[B\x1b[B\x1b[D\x1b[Bx")));
+  const lines = screenAt(28, 10, () => onInput(Buffer.from("sn\x1b[B\x1b[B\x1b[D\x1b[D\x1b[Bx")));
   assert.equal(ui.settings.form.harness, "opencode");
   fitsWithHints(lines, 28, 10, "↑↓ field", "esc back");
   assert.ok(lines.some((l) => l?.startsWith("▌ Model")), lines.join("\n"));

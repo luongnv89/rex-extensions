@@ -750,7 +750,10 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // The agents the panel recognizes in a pane, by the name you run them with: the
 // new pane goes to the right of yours. Which agent starts is the profile's, not this list's.
-const AGENT_NAMES = ["claude", "codex", "gemini", "opencode", "pi"];
+const AGENT_NAMES = ["claude", "codex", "gemini", "opencode", "pi", "vibe"];
+// Agents whose running program has another name than the command: `vibe` is a
+// Python script that runs Mistral Vibe's own binary, vibe-rs.
+const AGENT_ALIASES = { "vibe-rs": "vibe" };
 
 // Which agent a terminal runs, from its foreground process: the name it was run
 // by (Claude's executable is named after its version), or a node script's name.
@@ -759,7 +762,8 @@ function agentOf(proc) {
   if (!fg) return null;
   for (const p of [fg.script, fg.invoked_path, fg.argv0, fg.path, fg.name]) {
     if (typeof p !== "string") continue;
-    const name = path.basename(p).replace(/^-/, "").replace(/\.[cm]?js$/, "");
+    const base = path.basename(p).replace(/^-/, "").replace(/\.[cm]?js$/, "");
+    const name = Object.hasOwn(AGENT_ALIASES, base) ? AGENT_ALIASES[base] : base;
     if (AGENT_NAMES.includes(name)) return name;
   }
   return null;
@@ -770,9 +774,11 @@ function agentOf(proc) {
 // so nothing has to be typed: an agent that first asks something, such as whether
 // you trust the folder, takes the prompt once you answer. `plan` is
 // P.buildLaunch's, so the flags come from a checked profile only. Rex passes the
-// words as they are: no shell reads them.
+// words as they are: no shell reads them. A command plan runs as it is, but for
+// mcc, which runs from its full path: Mistral Vibe's is `vibe <prompt>`, or
+// `env VIBE_ACTIVE_MODEL=M vibe <prompt>` with a model.
 function agentArgv(plan, prompt, mcc = "mcc") {
-  if (plan.mode === "command") return [mcc, ...plan.argv.slice(1)];
+  if (plan.mode === "command") return plan.argv[0] === "mcc" ? [mcc, ...plan.argv.slice(1)] : plan.argv.slice();
   if (plan.kind === "opencode") return ["opencode", ...plan.extraArgs, "--prompt", prompt];
   return [plan.kind, ...plan.extraArgs, prompt];
 }

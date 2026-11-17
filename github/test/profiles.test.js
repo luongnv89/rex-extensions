@@ -46,6 +46,7 @@ test("each harness's launch: flags after --, or mcc run with the prompt last", (
   assert.deepEqual(launch({ harness: "mcc", model: "opus", thinking: "max" }), { mode: "command", argv: ["mcc", "run", "--", "--model", "opus", "--effort", "max", PROMPT], warnings: [] });
   // Empty model and thinking: no flags, so the harness's own defaults hold.
   for (const harness of ["claude", "codex", "pi", "opencode"]) assert.deepEqual(launch({ harness, model: "", thinking: "" }).extraArgs, [], harness);
+  assert.deepEqual(launch({ harness: "vibe", model: "", thinking: "" }).argv, ["vibe", PROMPT]);
   assert.deepEqual(launch({ harness: "mcc" }).argv, ["mcc", "run", "--", PROMPT]);
   assert.deepEqual(launch({ harness: "claude", model: "sonnet" }).extraArgs, ["--model", "sonnet"]);
   assert.deepEqual(launch({ harness: "codex", thinking: "low" }).extraArgs, ["-c", 'model_reasoning_effort="low"']);
@@ -57,6 +58,20 @@ test("OpenCode starts without flags, and says its model and thinking level are i
   assert.equal(l.warnings.length, 1);
   assert.equal(l.warnings[0], "OpenCode ignores this profile's model and thinking level: it has no flag for them when it starts");
   assert.deepEqual(P.buildLaunch(ok({ harness: "opencode" }), PROMPT).warnings, []);
+});
+
+test("Mistral Vibe runs as a command, its model in VIBE_ACTIVE_MODEL, with no thinking levels", () => {
+  // herdr has no agent kind for Vibe, and its --model flag works only in headless mode.
+  assert.deepEqual(P.buildLaunch(ok({ harness: "vibe", model: "mistral-medium-3.5" }), PROMPT),
+    { mode: "command", argv: ["env", "VIBE_ACTIVE_MODEL=mistral-medium-3.5", "vibe", PROMPT], warnings: [] });
+  assert.equal(P.HARNESS_NAMES.vibe, "Mistral Vibe");
+  assert.deepEqual(P.THINKING.vibe, []);
+  // Its thinking level is set per model in Vibe's own config: the profile takes none.
+  for (const thinking of ["high", "off", "max"]) {
+    assert.deepEqual(P.validateProfile(ok({ harness: "vibe", thinking })), ["Thinking: not available for this harness"], thinking);
+  }
+  // A model is one env(1) word: no = or space can split it.
+  for (const model of ["a=b", "a b", "-x"]) assert.ok(P.validateProfile(ok({ harness: "vibe", model })).some((e) => e.startsWith("Model")), model);
 });
 
 test("buildLaunch checks its own input and throws on a bad profile or prompt", () => {
