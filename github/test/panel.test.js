@@ -2252,16 +2252,111 @@ test("a menu longer than the room shows a window of it that follows the highligh
   assert.match(lines[rows - 1], /^ ↑↓\/jk choose/);
   assert.ok(shown.some(([l]) => l.includes("▸ Profile 0")), lines.join("\n"));
   assert.ok(lines.some((l) => /^ *└─*↓┘$/.test(l ?? "")), lines.join("\n"));
+  // Opened by a, it sits at the bottom: its last line right above the key hints (#28).
+  assert.equal(ui.menu.anchor, "keys");
+  assert.match(lines[lastList], /^ *└─*↓┘$/, lines.join("\n"));
   // Down past the window: it scrolls, keeping the highlight in view.
   lines = at(() => onInput(Buffer.from("j".repeat(10))));
   shown = inBox(lines);
   assert.ok(shown.some(([l]) => l.includes("▸ Profile 9")), lines.join("\n"));
   assert.ok(!shown.some(([l]) => l.includes("Claude Code via mcc run")), lines.join("\n"));
   assert.ok(lines.some((l) => /┌ Resolve #12 with ─*↑┐$/.test(l ?? "")), lines.join("\n"));
+  assert.match(lines[lastList], /^ *└─*┘$/, lines.join("\n"));
   // A click on a profile in view starts that one.
   const [l, y] = shown.find(([x]) => x.includes("│   Profile 8"));
   await screenAsync(() => click(l.indexOf("│") + 3, y));
   assert.deepEqual(splitCommand(), ["pi", "--model", "m8", "Use the issue-resolver skill on issue #12."]);
+});
+
+// ── The keyboard path, for a phone over remote access (#28) ─────────────────
+// A phone shows only the bottom rows of the pane, above its keyboard, and may send
+// no clicks at all: a, its menu and its hints must all be there.
+
+// A tall pane with a short list: the bottom of the list is empty.
+const shortList = (view) => {
+  setupGitHub(view);
+  ui[view] = ui[view].slice(0, 2);
+  ui.sel[view] = 1;
+};
+
+test("in a tall pane with a short list, a opens the menu in the rows right above the key hints, on both lists (#28)", (t) => {
+  const dir = claudeHome(t);
+  useProfiles(dir, [CC, CX], {});
+  const rows = 40, footer = rows - 1;
+  for (const [view, title] of [["issues", "Resolve #11 with"], ["prs", "Review #11 with"]]) for (const cols of [28, 36, 60]) {
+    shortList(view);
+    const before = screenAt(cols, rows, draw);
+    const button = before.findIndex((l) => l?.includes(view === "issues" ? "Resolve #11" : "Review #11"));
+    const lines = screenAt(cols, rows, () => onInput(Buffer.from("a")));
+    const where = `${view} ${cols}:\n${lines.join("\n")}`;
+    assert.equal(ui.menu?.anchor, "keys", where);
+    const n = ui.menu.entries.length, top = lines.findIndex((l) => l?.includes(`┌ ${title}`));
+    // Its last line is the one above the key hints, and the whole box is in the last rows.
+    assert.match(lines[footer - 1], /^ *└─*┘$/, where);
+    assert.equal(top, footer - n - 2, where);
+    assert.ok(top > button + 1, where);
+    for (let y = top + 1; y < footer - 1; y++) assert.match(lines[y], /│ [▸ ] /, where);
+    assert.match(lines[footer], /^ ↑↓/, where);
+    for (const l of lines) assert.ok(width(l ?? "") <= cols, `${where}\n${l}`);
+    screenAt(cols, rows, () => onInput(Buffer.from("q")));
+  }
+});
+
+test("from the keyboard only: a, then j or ↓, then enter starts the highlighted profile; q and esc start nothing (#28)", async (t) => {
+  const dir = home(t, { ".agents/skills/issue-resolver/SKILL.md": "x" });
+  useProfiles(dir, [CC, CX], { resolve: "cc" });
+  for (const down of ["j", "\x1b[B"]) {
+    shortList("issues");
+    fakeRex(agentHere());
+    await screenAsync(() => { onInput(Buffer.from("a")); assert.equal(ui.menu.sel, 1); onInput(Buffer.from(down)); onInput(Buffer.from("\r")); });
+    assert.equal(ui.menu, null);
+    assert.deepEqual(splitCommand(), ["codex", "Use the issue-resolver skill on issue #11."], JSON.stringify(down));
+  }
+  for (const cancel of ["q", "\x1b"]) {
+    shortList("issues");
+    fakeRex(agentHere());
+    screenAt(36, 40, () => onInput(Buffer.from("a")));
+    assert.ok(ui.menu);
+    const exit = noExit(() => screenAt(36, 40, () => onInput(Buffer.from(cancel))));
+    assert.equal(exit, null, `${JSON.stringify(cancel)} closed the panel`);
+    assert.equal(ui.menu, null);
+    assert.deepEqual(rexCalls(), [], JSON.stringify(cancel));
+  }
+});
+
+test("the key hints lead with a and the issue or pull request it acts on, however narrow the pane (#28)", (t) => {
+  claudeHome(t);
+  for (const cols of [20, 28, 36, 60]) {
+    setupGitHub("issues");
+    let lines = screenAt(cols, 24, draw);
+    assert.match(lines[FOOTER], /^ a resolve #12 · /, `${cols}: ${lines[FOOTER]}`);
+    // The selected row is what a acts on.
+    lines = screenAt(cols, 24, () => onInput(Buffer.from("j")));
+    assert.match(lines[FOOTER], /^ a resolve #13 · /, `${cols}: ${lines[FOOTER]}`);
+    setupGitHub("prs");
+    lines = screenAt(cols, 24, draw);
+    assert.match(lines[FOOTER], /^ a review #12 · /, `${cols}: ${lines[FOOTER]}`);
+    for (const l of lines) assert.ok(width(l ?? "") <= cols, `${cols}: ${l}`);
+  }
+  // No row to act on, or no action on GitLab: the hints as before.
+  setupGitHub("issues");
+  ui.issues = [];
+  assert.match(screen(draw)[FOOTER], /^ ↑↓ select · ⏎ open · ⇥ switch/);
+  setupGitHub("issues");
+  ui.forge = FORGES.gitlab;
+  assert.match(screen(draw)[FOOTER], /^ ↑↓ select · ⏎ open · ⇥ switch/);
+});
+
+test("the menu's key hints name j/k and q, and keep a key that cancels at any width (#28)", (t) => {
+  const dir = claudeHome(t);
+  useProfiles(dir, [CC, CX], {});
+  const expect = { 20: " ⏎ start · q cancel", 28: " ↑↓ · ⏎ start · esc/q cancel", 36: " ↑↓ · ⏎ start · esc/q cancel", 60: " ↑↓/jk choose · ⏎ start · esc/q cancel" };
+  for (const [cols, hint] of Object.entries(expect)) {
+    setupGitHub("issues");
+    const lines = screenAt(Number(cols), 24, () => onInput(Buffer.from("a")));
+    assert.equal(lines[FOOTER].trimEnd(), hint, `${cols}:\n${lines.join("\n")}`);
+    screenAt(Number(cols), 24, () => onInput(Buffer.from("q")));
+  }
 });
 
 // ── Following the focused pane ──────────────────────────────────────────────
