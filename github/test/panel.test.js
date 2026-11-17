@@ -4181,28 +4181,32 @@ test("leaving Auto-pilot by switching lists says how many issues were unchecked,
   }
 });
 
-test("at the panel's default 36 cells, the bar keeps ⏎ start in view (#31)", (t) => {
+test("at the panel's default 36 cells, the bar keeps the keys that start, check and cancel in view (#31)", (t) => {
   claudeHome(t);
   setupGitHub("issues");
   screenAt(36, 24, () => onInput(Buffer.from("p")));
   for (const n of [0, 2]) {
     if (n) { ui.autopilot.checked.add(12); ui.autopilot.checked.add(15); }
     const lines = screenAt(36, 24, draw);
-    assert.match(lines[FOOTER], /✕ Cancel {2}⏎ start/, lines[FOOTER]);
+    assert.match(lines[FOOTER], /✕ Cancel {2}⏎▶ · ␣☑ · q✕$/, lines[FOOTER]);
   }
 });
 
-test("the bar's key hints keep q, which cancels, in view at 36 cells, with 1 or 10 issues checked, and name every key in a wide pane (#31)", (t) => {
+test("the bar's key hints name a key that checks and one that cancels at 36 and 40 cells, with 0, 1 or 10 issues checked, and every key in a wide pane (#31)", (t) => {
   claudeHome(t);
   setupGitHub("issues");
   screenAt(36, 24, () => onInput(Buffer.from("p")));
-  for (const n of [1, 10]) {
-    ui.autopilot.checked.clear();
-    for (const i of ui.issues.slice(0, n)) ui.autopilot.checked.add(i.number);
-    assert.equal(ui.autopilot.checked.size, n);
-    const lines = screenAt(36, 24, draw);
-    for (const l of lines) assert.ok(width(l ?? "") <= 36, `${n}: ${l}`);
-    assert.match(lines[FOOTER], new RegExp(`▶ Start ${n} {3}✕ Cancel {2}⏎ start · q$`), lines[FOOTER]);
+  for (const cols of [36, 40]) {
+    for (const n of [0, 1, 10]) {
+      ui.autopilot.checked.clear();
+      for (const i of ui.issues.slice(0, n)) ui.autopilot.checked.add(i.number);
+      assert.equal(ui.autopilot.checked.size, n);
+      const lines = screenAt(cols, 24, draw);
+      for (const l of lines) assert.ok(width(l ?? "") <= cols, `${cols} ${n}: ${l}`);
+      const keys = lines[FOOTER].slice(lines[FOOTER].indexOf("✕ Cancel") + 9);
+      for (const key of ["⏎", "␣", "q"]) assert.ok(keys.includes(key), `${cols} ${n}: ${lines[FOOTER]}`);
+      assert.match(lines[FOOTER], n ? new RegExp(`▶ Start ${n} {3}✕ Cancel`) : /▶ Start {3}✕ Cancel/, lines[FOOTER]);
+    }
   }
   const lines = screenAt(80, 24, draw);
   assert.match(lines[FOOTER], /✕ Cancel {2}⏎ start · ␣\/x check · ↑↓\/jk select · esc\/q cancel$/, lines[FOOTER]);

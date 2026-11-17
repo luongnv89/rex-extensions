@@ -1218,15 +1218,15 @@ const MENU_KEYS = [" ↑↓/jk choose · ⏎ start · esc/q cancel", " ↑↓ ·
 
 // Auto-pilot's bar, in place of the key hints while the mode is on (#31): Start, with
 // how many issues are checked, dimmed and doing nothing while there are none; Cancel;
-// then the keys, as far as they fit, ⏎ first: in the mode it starts rather than opens,
-// so it is the hint a default 36-column pane must keep. Start comes first, so it stays
-// whole however narrow the pane. The keys are the longest of these that fits after
-// Cancel: 50 cells, 34, 29, 19, and 12, which a default 36-column pane keeps with up to
-// 99 issues checked, q there right after ✕ Cancel, so a key that cancels stays in view
-// on a phone, whose keyboard may have no esc (#28). Returns { text, hits: [{ from,
-// to, action }] }, each hit a whole button as drawn.
+// then the keys, ⏎ first: in the mode it starts rather than opens. Start comes first,
+// so it stays whole however narrow the pane. The keys are the longest of these that
+// fits after Cancel: 50 cells, 34, 29, then 13, 9 and 6, each key by the glyph of what
+// it presses (⏎▶ starts, ␣☑ checks, q✕ cancels), so a default 36-column pane, with
+// 12 to 15 cells left, still names a key that checks and one that cancels, and a phone
+// whose keyboard may have no esc, and whose taps may not reach the rows, can use them
+// (#28). Returns { text, hits: [{ from, to, action }] }, each hit a whole button as drawn.
 const AUTOPILOT_KEYS = [" ⏎ start · ␣/x check · ↑↓/jk select · esc/q cancel", " ⏎ start · ␣ check · ↑↓ · q cancel",
-  " ⏎ start · ␣ check · q cancel", " ⏎ start · q cancel", " ⏎ start · q"];
+  " ⏎ start · ␣ check · q cancel", " ⏎▶ · ␣☑ · q✕", " ⏎▶ ␣☑ q✕", " ␣☑ q✕"];
 function autopilotBar(cols, count) {
   const hits = [];
   const start = ` ${fit(count ? `▶ Start ${count}` : "▶ Start", Math.max(1, cols - 3))} `;
@@ -1238,7 +1238,8 @@ function autopilotBar(cols, count) {
     text += " " + invert(cancel);
     x += 1 + width(cancel);
   }
-  if (cols - x >= 8) text += dim(fit(AUTOPILOT_KEYS.find((k) => width(k) <= cols - x) ?? AUTOPILOT_KEYS.at(-1), cols - x));
+  const keys = AUTOPILOT_KEYS.find((k) => width(k) <= cols - x);
+  if (keys) text += dim(keys);
   return { text, hits };
 }
 
