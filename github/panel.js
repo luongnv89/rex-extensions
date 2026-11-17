@@ -1111,18 +1111,31 @@ function paint(out, rows) {
 // was read.
 
 // `word` is how the profiles module names the field in its reasons ("Model: …").
+// A field with `max` is text; one without is a choice.
 const FIELDS = [
   { key: "name", label: "Name", word: "Name", max: 40 },
   { key: "id", label: "Id", word: "Id", max: 32, hint: "a-z 0-9 -" },
   { key: "harness", label: "Harness", word: "Harness" },
-  { key: "model", label: "Model", word: "Model", max: 128, hint: "harness default" },
+  { key: "model", label: "Model", word: "Model" },
   { key: "thinking", label: "Thinking", word: "Thinking" },
 ];
+const MODEL_FIELD = FIELDS.findIndex((f) => f.key === "model");
+// How long a model you add can be, as the profiles module's MODEL rule allows.
+const MODEL_MAX = 128;
 // The form's label column: "▌ ", the widest label, a space.
 const LABEL_W = Math.max(...FIELDS.map((f) => f.label.length)), VALUE_AT = LABEL_W + 3;
 // A choice in `max` cells: its name is cut before the closing ›.
 const choiceText = (name, max) => width(`‹ ${name} ›`) <= max ? `‹ ${name} ›` : `‹ ${fit(name, max - 4)} ›`;
-const choices = (form, key) => key === "harness" ? P.HARNESSES : ["", ...P.THINKING[form.harness]];
+// The models: the harness default, the harness's built-in and added ones, then
+// a model in neither list that the form or the profile holds, so it shows and is
+// kept as it is.
+const choices = (form, key, store = ui.settings.store) => {
+  if (key === "harness") return P.HARNESSES;
+  if (key === "thinking") return ["", ...P.THINKING[form.harness]];
+  const list = ["", ...P.modelChoices(store, form.harness)];
+  for (const m of [form.model, form.saved]) if (m && !list.includes(m)) list.push(m);
+  return list;
+};
 // What OpenCode does with a model or thinking level, in the profiles module's words.
 const OPENCODE_NOTE = P.buildLaunch({ id: "x", name: "x", harness: "opencode", model: "m" }, "x").warnings[0];
 const entries = () => [P.DEFAULT_PROFILE, ...ui.settings.store.profiles];
@@ -1192,31 +1205,72 @@ function splitErrors(message, inForm) {
   return { fieldErrors, error: rest.length ? rest.join("; ") : null };
 }
 
-// Runs a change to the store, then shows what happened.
-function change(fn, info) {
+// Runs a change to the store, then shows what happened. `kept` are the fields'
+// reasons that stay either way.
+function change(fn, info, kept = {}) {
   const st = ui.settings;
   // Back to where the form or the prompt shows what you type, and why it failed.
-  try { fn(); Object.assign(st, { error: null, fieldErrors: {}, info, scroll: 0 }); }
-  catch (e) { Object.assign(st, { info: null, scroll: 0 }, splitErrors(e.message, st.mode === "edit" || st.mode === "prompt")); }
+  try { fn(); Object.assign(st, { error: null, fieldErrors: { ...kept }, info, scroll: 0 }); }
+  catch (e) {
+    const why = splitErrors(e.message, st.mode === "edit" || st.mode === "prompt");
+    Object.assign(st, { info: null, scroll: 0, error: why.error, fieldErrors: { ...kept, ...why.fieldErrors } });
+  }
   selectedEntry(st);
   draw();
 }
 
 function editProfile(p) {
   const st = ui.settings;
-  st.form = { prev: p?.id ?? null, name: p?.name ?? "", id: p?.id ?? "", harness: p?.harness ?? "mcc", model: p?.model ?? "", thinking: p?.thinking ?? "" };
+  // `saved` is the profile's model when its harness doesn't offer it, so it stays
+  // a choice; `adding` is the model being typed after +.
+  const saved = p?.model && !P.modelChoices(st.store, p.harness).includes(p.model) ? p.model : "";
+  st.form = { prev: p?.id ?? null, name: p?.name ?? "", id: p?.id ?? "", harness: p?.harness ?? "mcc", model: p?.model ?? "", thinking: p?.thinking ?? "", saved, adding: null };
   Object.assign(st, { mode: "edit", field: 0, scroll: 0, error: null, fieldErrors: {}, info: null });
   draw();
 }
 
 function saveForm() {
   const st = ui.settings, f = st.form;
+  // A model still being typed after + is added first, as enter would; the profile
+  // is saved only once it is, so a click on Save doesn't drop it.
+  if (f.adding !== null) {
+    addModel();
+    if (f.adding !== null) return;
+  }
   const profile = { id: f.id, name: f.name.trim(), harness: f.harness, model: f.model, thinking: f.thinking };
   change(() => {
     saveStore(P.upsertProfile(st.store, profile, f.prev));
     Object.assign(st, { mode: "list", form: null, promptSel: null });
     st.sel = Math.max(0, entries().findIndex((p) => p.id === profile.id));
   }, `Saved ${profile.name}`);
+}
+
+// A change to the models offered, from the form: its reason shows under Model, and
+// the other fields keep theirs.
+function changeModels(fn, info) {
+  const kept = { ...ui.settings.fieldErrors };
+  delete kept.model;
+  change(fn, info, kept);
+}
+
+// + on Model, then enter: the model typed is added to the harness's, saved, and
+// chosen. It stays open, with the reason, when it can't be.
+function addModel() {
+  const st = ui.settings, f = st.form, name = f.adding.trim();
+  changeModels(() => {
+    saveStore(P.addCustomModel(st.store, f.harness, name));
+    Object.assign(f, { model: name, adding: null });
+  }, `Added ${name} to ${P.HARNESS_NAMES[f.harness]}'s models`);
+}
+
+// - on Model: the chosen model, if you added it, is no longer offered; the field
+// goes back to the harness default.
+function removeModel() {
+  const st = ui.settings, f = st.form, name = f.model;
+  changeModels(() => {
+    saveStore(P.removeCustomModel(st.store, f.harness, name));
+    f.model = "";
+  }, `Removed ${name} from ${P.HARNESS_NAMES[f.harness]}'s models`);
 }
 
 // A prompt row's Edit, e or enter: its text, to change; empty sends the default.
@@ -1330,8 +1384,21 @@ function promptKey(st, k) {
   draw();
 }
 
+// Keys while a model is added: text; enter adds it, esc takes it back.
+function addKey(st, k) {
+  const form = st.form;
+  if (k === "\x1b") { form.adding = null; delete st.fieldErrors.model; return draw(); }
+  if (k === "\r" || k === "\n") return addModel();
+  if (k === "\x7f" || k === "\b") form.adding = [...form.adding].slice(0, -1).join("");
+  else if (!k.startsWith("\x1b") && !/[\x00-\x1f\x7f-\x9f]/.test(k) && form.adding.length < MODEL_MAX) form.adding += k;
+  else return;
+  delete st.fieldErrors.model;
+  draw();
+}
+
 function formKey(st, k) {
   const form = st.form, field = FIELDS[st.field];
+  if (form.adding !== null) return addKey(st, k);
   if (k === "\x1b") return settingsBack();
   if (k === "\r" || k === "\n") return saveForm();
   if (UP.includes(k) || DOWN.includes(k) || k === "\t" || k === "\x1b[Z") {
@@ -1339,12 +1406,28 @@ function formKey(st, k) {
     Object.assign(st, { field: (st.field + by) % FIELDS.length, error: null });
     return draw();
   }
+  if (field.key === "model" && (k === "+" || k === "-")) {
+    if (k === "-") return removeModel();
+    // A harness that takes no model takes none you add either.
+    if (P.NO_MODEL.includes(form.harness)) {
+      st.fieldErrors = { ...st.fieldErrors, model: `Model: ${P.HARNESS_NAMES[form.harness]} takes no model` };
+    } else {
+      form.adding = "";
+      delete st.fieldErrors.model;
+    }
+    Object.assign(st, { error: null, info: null });
+    return draw();
+  }
   if (!field.max) {
     // A choice: ← and → (or space) step through what the harness takes.
     if (k !== "\x1b[C" && k !== "\x1b[D" && k !== " ") return;
     const list = choices(form, field.key), at = Math.max(0, list.indexOf(form[field.key]));
+    // A model the old harness offers and the new one doesn't goes back to the
+    // default; one in neither list is kept.
+    const offered = field.key === "harness" && P.modelChoices(st.store, form.harness).includes(form.model);
     form[field.key] = list[(at + (k === "\x1b[D" ? list.length - 1 : 1)) % list.length];
     if (!choices(form, "thinking").includes(form.thinking)) form.thinking = "";
+    if (offered && !P.modelChoices(st.store, form.harness).includes(form.model)) form.model = "";
     delete st.fieldErrors[field.key];
     return draw();
   }
@@ -1411,7 +1494,9 @@ function settingsLines(cols, rows) {
   if (st.info) notes.push([green, st.info]);
   for (const w of st.warnings) notes.push([yellow, w]);
   if (st.mode === "edit" && st.form.harness === "opencode" && (st.form.model || st.form.thinking)) notes.push([yellow, OPENCODE_NOTE]);
-  const footer = hintLines(st.mode === "edit" ? ["↑↓ field", "←→ choose", "type to edit", "⏎ save", "esc back"]
+  const footer = hintLines(st.mode === "edit" ? (st.form.adding !== null ? ["type the model", "⏎ add", "esc cancel"]
+    : st.field === MODEL_FIELD ? ["↑↓ field", "←→ choose", "+ add", "- remove", "⏎ save", "esc back"]
+      : ["↑↓ field", "←→ choose", "type to edit", "⏎ save", "esc back"])
     : st.mode === "prompt" ? ["type to edit", "⏎ save", "esc back"]
     : st.mode === "confirm" ? ["y delete", "any other key keeps it"]
       : ["↑↓ select", "n new", "e edit", "d delete", "R/V assign", "esc back"], cols);
@@ -1433,11 +1518,16 @@ function settingsLines(cols, rows) {
   if (st.mode === "edit") {
     const valueW = cols - VALUE_AT;
     FIELDS.forEach((f, i) => {
-      const on = i === st.field, value = st.form[f.key], pick = () => { Object.assign(st, { field: i, error: null }); draw(); };
+      const on = i === st.field, value = st.form[f.key];
+      // A click on another field leaves a model being added.
+      const pick = () => { if (i !== st.field) st.form.adding = null; Object.assign(st, { field: i, error: null }); draw(); };
       const bar = on ? accent("▌") : " ";
       // An empty field shows its hint, the id's rule even while you type in it.
       let shown, below = null;
-      if (f.max && value) shown = fit(value, valueW - 1) + (on ? invert(" ") : "");
+      const adding = f.key === "model" ? st.form.adding : null;
+      if (adding) shown = fit(adding, valueW - 1) + invert(" ");
+      else if (adding !== null) shown = invert(" ") + dim(fit("new model name", valueW - 1));
+      else if (f.max && value) shown = fit(value, valueW - 1) + (on ? invert(" ") : "");
       else if (f.max && on) shown = invert(" ") + (f.key === "id" ? dim(fit(f.hint, valueW - 1)) : "");
       else if (f.max) shown = dim(fit(f.hint ?? "—", valueW));
       else {
@@ -1597,7 +1687,7 @@ function quit() {
   process.exit(0);
 }
 
-// Pasted text goes into the prompt, or the form's text field, being typed in: its
+// Pasted text goes into the prompt, the form's text field or the model being added: its
 // line breaks and tabs as spaces, since neither holds one, and with no control
 // character. Anywhere else, on the rows, in the list or the menu, it does nothing.
 function pasteText(text) {
@@ -1605,9 +1695,10 @@ function pasteText(text) {
   if (ui.pasteCR && text.startsWith("\n")) text = text.slice(1);
   if (text) ui.pasteCR = text.endsWith("\r");
   if (!text || (st?.mode !== "prompt" && st?.mode !== "edit")) return;
-  const field = st.mode === "prompt" ? { key: "prompt", max: P.PROMPT_MAX } : FIELDS[st.field];
+  const adding = st.mode === "edit" && st.form.adding !== null;
+  const field = st.mode === "prompt" ? { key: "prompt", max: P.PROMPT_MAX } : adding ? { key: "model", max: MODEL_MAX } : FIELDS[st.field];
   if (!field.max) return;
-  const box = st.mode === "prompt" ? st.prompt : st.form, key = st.mode === "prompt" ? "text" : field.key;
+  const box = st.mode === "prompt" ? st.prompt : st.form, key = st.mode === "prompt" ? "text" : adding ? "adding" : field.key;
   for (const c of text.replace(/\r\n|[\r\n\t]/g, " ")) {
     if (box[key].length >= field.max) break;
     if (!/[\x00-\x1f\x7f-\x9f]/.test(c)) box[key] += c;
@@ -1635,9 +1726,11 @@ function onInput(data) {
       // once one saves the prompt or the form, or leaves it, a rest of the chunk that
       // holds text is dropped rather than run as commands in the view that follows.
       // A rest of only esc, arrows or clicks is no paste's, and still counts.
+      // Leaving a model being added counts too.
       const mode = ui.settings.mode, typing = mode === "edit" || mode === "prompt";
+      const adding = mode === "edit" && ui.settings.form.adding !== null;
       settingsKey(m);
-      if (typing && ui.settings?.mode !== mode) {
+      if (typing && (ui.settings?.mode !== mode || (adding && ui.settings.form?.adding === null))) {
         const rest = str.slice(m.index + k.length);
         if ([...rest.matchAll(KEYS)].some((r) => !r[0].startsWith("\x1b"))) return;
       }

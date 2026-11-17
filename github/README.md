@@ -138,7 +138,7 @@ Leave the prompt empty to send the default again: the skill and the number, as a
 
 In the profiles view (`s`), the **Resolve prompt** and **Review prompt** rows under the profiles show the prompt each action sends (dim: the default). `↓` past the last profile selects them, and so does the mouse wheel; `e` or enter (or the selected row's **Edit** button) edits one. Type the prompt, then enter (or **Save**) saves it and esc (or **Cancel**) goes back. A prompt that can't be saved shows why under it. Empty it, or click **Use default**, to send the default again. In a short pane, the wheel scrolls the prompt down to its buttons.
 
-The prompts are kept in the profiles file (see [Where they're kept](#where-theyre-kept)). A file with a custom prompt is version 2; without one, it stays version 1.
+The prompts are kept in the profiles file (see [Where they're kept](#where-theyre-kept)). A file with a custom prompt is version 2 (version 3 when it also holds a model you added); without either, it stays version 1.
 
 ## Agent profiles
 
@@ -146,7 +146,7 @@ A profile says which agent Resolve or Review starts:
 
 - **Name** and **id**: the id is 1 to 32 lowercase letters, digits or `-`. `default` is taken.
 - **Harness**: Claude Code via `mcc run`, Claude Code, Codex, Pi, OpenCode or Mistral Vibe.
-- **Model** (optional): left empty, the harness uses its own default.
+- **Model** (optional): chosen from the models the harness takes (see [Models](#models)). Left at **harness default**, the harness uses its own default.
 - **Thinking** (optional): only the levels the harness takes. Left empty, the harness uses its own default.
 
 Resolve and Review each have their own profile: the one their menu highlights, ready for enter (see [Choose the profile](#choose-the-profile)). With none assigned, or when the assigned profile is deleted, that is the built-in **Claude Code via mcc run** profile, with no model or thinking flag. The built-in profile can be assigned but not changed or deleted.
@@ -168,9 +168,27 @@ Mistral Vibe's `--model` flag works only in headless mode, so the panel passes t
 
 A model is letters, digits and `. _ : / @ + -`, starting with a letter or digit. Spaces, quotes and other shell characters are refused, and so are aliases with brackets such as `opus[1m]`: use the full model name instead.
 
+### Models
+
+The form's **Model** field is a choice, like **Harness** and **Thinking**: **harness default** first, then the models the extension ships for the selected harness, then the ones you added for it. Changing the harness changes the list. A model the old harness offers and the new one doesn't goes back to **harness default**.
+
+| Harness | Built-in models |
+|---|---|
+| Claude Code via `mcc run`, Claude Code | `fable`, `opus`, `sonnet`, `haiku`, `claude-fable-5-2`, `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5` |
+| Codex | `gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-6.1-terra`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5` |
+| Pi | `anthropic/claude-fable-5-2`, `anthropic/claude-opus-5-5`, `anthropic/claude-sonnet-5-5`, `anthropic/claude-haiku-5-5` |
+| OpenCode | none: it takes no model |
+| Mistral Vibe | `mistral-large-4-0-3`, `mistral-medium-3.5`, `glm-5-3`, `zai-glm-5-3-flash` |
+
+The lists are kept by hand in `profiles.cjs` (`MODELS`). `codex debug models --bundled` and `pi --list-models` print the models Codex and Pi know, so those two can be refreshed from them; Claude Code and Mistral Vibe have no command that lists theirs.
+
+To use a model that isn't listed, select **Model** and press `+`, type its name and press enter: it is checked by the rule above, added for that harness and chosen. From then on the form offers it for that harness, after the built-in ones. Esc takes it back. To remove a model you added, choose it and press `-`; built-in models can't be removed. Added models are saved at once, in the profiles file (see [Where they're kept](#where-theyre-kept)), under the same rules as the profiles.
+
+A profile whose model is in neither list, made before the lists or edited in the file, still loads and starts as before: the form shows its model as it is and keeps it, also when you change the harness.
+
 ### Edit them
 
-Press `s`, or click `⚙` in the header. `↑`/`↓` select a profile, `n` adds one, `e` or enter edits it, `d` deletes it (`y` confirms), `R` assigns it to Resolve and `V` to Review. With the mouse, click a profile to select it; it then shows **Use for Resolve**, **Use for Review**, **Edit** and **Delete** buttons (the default profile only the first two), and **+ New** in the header adds one. In the form, `↑`/`↓` or tab move between fields, `←`/`→` or space step through the harness and thinking choices, typing edits a text field, enter (or the **Save** button) saves and esc (or **Cancel**, or `✕`) goes back. A field that can't be saved shows why under it. Keys typed into a field stay in the field: `q` doesn't close the panel. Esc in the list goes back to the rows. In a narrow pane the key hints wrap onto more lines.
+Press `s`, or click `⚙` in the header. `↑`/`↓` select a profile, `n` adds one, `e` or enter edits it, `d` deletes it (`y` confirms), `R` assigns it to Resolve and `V` to Review. With the mouse, click a profile to select it; it then shows **Use for Resolve**, **Use for Review**, **Edit** and **Delete** buttons (the default profile only the first two), and **+ New** in the header adds one. In the form, `↑`/`↓` or tab move between fields, `←`/`→` or space step through the harness, model and thinking choices, on **Model** `+` adds a model and `-` removes one you added, typing edits a text field, enter (or the **Save** button) saves and esc (or **Cancel**, or `✕`) goes back. A field that can't be saved shows why under it. Keys typed into a field stay in the field: `q` doesn't close the panel. Esc in the list goes back to the rows. In a narrow pane the key hints wrap onto more lines.
 
 A profile that can't be saved shows why, in red, and nothing is written.
 
@@ -182,7 +200,9 @@ A profile that can't be saved shows why, in red, and nothing is written.
 
 The file is per machine: it lives on the machine of the Rex server that holds the session, where the panel runs. It is the panel's own file, apart from [herdr-github](https://github.com/luongnv89/herdr-github)'s, though it has the same format: to use the profiles you made there, copy `~/.config/herdr/plugins/config/herdr-github/profiles.json` to it. Copying the other way works too, though a herdr-github from before its Mistral Vibe harness shows a file with a Mistral Vibe profile read only.
 
-The panel reads the file when the profiles view opens and on every Resolve or Review click, and writes it only while it still holds what it read. If another panel changed it in the meantime, nothing is written, the view reads it again and asks you to make your change again. A file that isn't valid JSON, or is from a newer version of the panel, is shown read only and never overwritten; until you fix or delete it, the actions use the default. A file with a profile that can't be used (one edited by hand with a bad model, say) is read only too, so saving doesn't erase that profile or what it's assigned to: the view says which profile and why, the actions assigned to it use the default, and the other profiles still work. Fix or remove it in the file to save again. The same goes for a custom prompt that can't be used: the file is read only, and that action sends the default prompt until you fix it in the file.
+A file with a model you added is version 3, with a `customModels` object of each harness's added models (`{"codex": ["gpt-mine"]}`). Without one it stays version 2 with a custom prompt, else version 1, so an older panel keeps using it. A panel or herdr-github from before version 3 shows a version 3 file read only and never overwrites it; herdr-github gets the same change in [luongnv89/herdr-github#54](https://github.com/luongnv89/herdr-github/issues/54).
+
+The panel reads the file when the profiles view opens and on every Resolve or Review click, and writes it only while it still holds what it read. If another panel changed it in the meantime, nothing is written, the view reads it again and asks you to make your change again. A file that isn't valid JSON, or is from a newer version of the panel, is shown read only and never overwritten; until you fix or delete it, the actions use the default. A file with a profile that can't be used (one edited by hand with a bad model, say) is read only too, so saving doesn't erase that profile or what it's assigned to: the view says which profile and why, the actions assigned to it use the default, and the other profiles still work. Fix or remove it in the file to save again. The same goes for a custom prompt that can't be used: the file is read only, and that action sends the default prompt until you fix it in the file. And for an added model that can't be used (a bad name, one listed twice, or one for a harness that doesn't exist or takes no model): the file is read only, and the view says which.
 
 ## Remote hosts
 
@@ -211,7 +231,7 @@ Rex runs `init.lua` and the panel as your user, with no sandbox. This one:
 - when you click Resolve or Review, or press `a`: reads the profiles file, runs `rex` to read the foreground program of the panes in its tab and `rex split` to open a pane that runs the profile's agent with the skill and the number, or your custom prompt. For mcc, it first runs `mcc env` in the repo. It reads the skill folders listed under [Resolve and review with an agent](#resolve-and-review-with-an-agent). With a custom prompt it doesn't run `mcc env` or read the skill folders;
 - runs `open` (macOS) or `xdg-open` (Linux) when you open a row or the repo;
 - when you run `install.js`: runs `rex config check`, a `rex do` script that loads your `init.lua` to list the keys it binds, edits `init.lua` (see [Install](#install)), and runs `rex config reload`;
-- when you save in the profiles view: writes `~/.config/rex-github/profiles.json` (see [Where they're kept](#where-theyre-kept));
+- when you save, or add or remove a model, in the profiles view: writes `~/.config/rex-github/profiles.json` (see [Where they're kept](#where-theyre-kept));
 - otherwise writes only `~/.local/state/rex-github/view` and `~/.local/state/rex-github/width` (under `$XDG_STATE_HOME/rex-github/` when that's set): which list you chose, and the width in columns you last dragged the panel to. Delete `width` to go back to 36 columns.
 
 It sends nothing anywhere except through `gh` to GitHub, or `glab` to GitLab.
