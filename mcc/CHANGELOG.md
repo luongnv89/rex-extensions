@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Keys on the collapsed title row** ([#37](https://github.com/luongnv89/rex-extensions/issues/37)). Collapsed, the panel has no footer, so the title row now names its keys before the **↻ refresh** button: `c expand · r refresh · q close` when the summary still fits beside them, else `c▸ r↻ q✕`, which a default 36-column pane still shows. The summary gives way to them in a narrow pane. Expanded, the footer names them as before.
 - **Opens under the GitHub panel.** When the tab already has a [rex-github](../github/) panel, the usage panel opens right under it, sharing its column, instead of across the bottom of the whole tab. Without one, it opens across the bottom of the tab as before.
 - **Account numbers.** Each row of the usage table starts with the account's number (1, 2, 3, …), in mcc's order, right-aligned once there are ten accounts or more.
 - **Machine stats**, ported from [mcc-herdr-plugin](https://github.com/luongnv89/mcc-herdr-plugin) 0.2.0: a line under the title shows this machine's CPU and memory use and its network download/upload rate, updated every 5 seconds. Linux reads `/proc`; macOS reads `vm_stat` and `netstat` (memory as Activity Monitor's "Memory Used"), and CPU comes from `os.cpus()`. Only physical network interfaces count. A value that can't be read shows `unavailable` and the usage rows still show. Collapsed, the title row adds the CPU and memory percent, and the network when there's room.
