@@ -15,7 +15,7 @@ On GitLab, merge requests show as `!123` and have no checks mark: the list doesn
 
 Click a pull request or issue, or select it and press enter, to open it in your browser.
 
-On GitHub, each issue has a **Resolve** button and each pull request a **Review** button, which start an agent on it. Which agent, model and thinking level is up to you: see [Agent profiles](#agent-profiles). So is the prompt it gets: see [Custom prompts](#custom-prompts). Each pull request, and each merge request on GitLab, also has a **Merge** button, which merges it once you press it a second time: see [Merge a pull request](#merge-a-pull-request). Each issue, on GitHub and GitLab, has a **Close** button, which closes it without resolving it, also once you press it a second time: see [Close an issue](#close-an-issue).
+On GitHub, each issue has a **Resolve** button and each pull request a **Review** button, which start an agent on it. Which agent, model and thinking level is up to you: see [Agent profiles](#agent-profiles). So is the prompt it gets: see [Custom prompts](#custom-prompts). Each pull request, and each merge request on GitLab, also has a **Merge** button, which merges it once you press it a second time: see [Merge a pull request](#merge-a-pull-request). Each issue, on GitHub and GitLab, has a **Close** button, which closes it without resolving it, also once you press it a second time: see [Close an issue](#close-an-issue). On GitHub's issues, **Auto-pilot** (`☑` in the header, or `p`) puts a checkbox on every issue and runs one agent on the ones you check, with the IDD `auto-pilot` skill or a prompt of your own: see [Auto-pilot several issues](#auto-pilot-several-issues).
 
 It is the Rex twin of [herdr-github](https://github.com/luongnv89/herdr-github), the same panel for herdr.
 
@@ -57,8 +57,9 @@ Press the key in any pane. The panel opens on the right of the tab, 36 columns w
   - `r` refreshes, `o` opens the repo on GitHub or GitLab;
   - `a` resolves the selected issue, or reviews the selected pull request, with an agent, as the selected row's button does (see [Resolve and review with an agent](#resolve-and-review-with-an-agent)). The key hints start with what it acts on, such as `a resolve #12` or `a review #34`. With more than one profile it opens a menu of them just above the key hints, at the bottom of the panel: `↑`/`↓` or `j`/`k` choose, enter starts the one chosen, and esc or `q` closes the menu without starting anything. This works from the keyboard alone, as on a phone over remote access, where taps on the buttons may not reach the panel;
   - `s` opens the agent profiles (see [Agent profiles](#agent-profiles));
+  - `p`, on GitHub's issues, turns Auto-pilot mode on or off. In it, space or `x` checks or unchecks the selected issue, enter is **Start** (it does nothing while no issue is checked), and esc or `q` leave the mode, unchecking everything, rather than close the panel (see [Auto-pilot several issues](#auto-pilot-several-issues));
   - `q` or esc closes the panel.
-- **Mouse:** click a row to open it, click the switch to change lists, click a row's `Resolve #N`, `Review #N`, `Merge #N` or `Close #N` button, `⚙`, `↻` or `↗` in the header, a profile in the menu the Resolve and Review buttons open, and scroll with the wheel.
+- **Mouse:** click a row to open it (in Auto-pilot mode, to check or uncheck it), click the switch to change lists, click a row's `Resolve #N`, `Review #N`, `Merge #N` or `Close #N` button, `☑`, `⚙`, `↻` or `↗` in the header, **Start** or **Cancel** in Auto-pilot mode, a profile in the menu the Resolve, Review and Start buttons open, and scroll with the wheel.
 - **When a row can't be opened:** the panel shows why in red, a hint to Cmd- or Ctrl-click the URL, and the whole URL above the key hints. The URL is a terminal hyperlink too. Any key, or the next open, clears it.
 - **Fetching:** when the repo changes, every 2 minutes while the panel's tab is the one its session shows, and on `r`.
 - **Lists:** the 50 most recently opened of each on GitHub, and the 50 most recently updated on GitLab. The panel remembers which list you chose.
@@ -97,6 +98,16 @@ If the skill isn't installed, nothing starts and the panel points you to [luongn
 
 The Resolve and Review buttons don't show on GitLab, because both skills work through `gh`. The Merge and Close buttons do (see [Merge a pull request](#merge-a-pull-request) and [Close an issue](#close-an-issue)).
 
+## Auto-pilot several issues
+
+On GitHub, in the issues list, the header has a `☑` button before `⚙`. Click it, or press `p`, to enter Auto-pilot mode:
+
+- **Check the issues.** Every issue row shows a checkbox, `☐`, in place of its icon, and its Resolve and Close buttons step aside. Click a row, or select it and press space or `x`, to check it (`☑`) or uncheck it. A click on a row opens nothing in this mode.
+- **Start.** The key hints give way to a bar with **▶ Start** and **✕ Cancel**. Start is dimmed and does nothing until you check an issue; it then reads **▶ Start N**, N being how many are checked. Click it, or press enter, to run one agent on all of them; in this mode enter starts rather than opens, so the bar's key hints begin with `⏎ start`. In a narrow pane they shorten to each key by the glyph of what it presses, `⏎▶ · ␣☑ · q✕`, so they still name the keys that start, check and cancel. Start appears only in this mode.
+- **What it runs.** By default, the IDD `auto-pilot` skill on exactly the issues you checked, in the list's order, not the order you checked them in: for Claude Code (directly or through mcc) `/auto-pilot --issues 12,15`, or `/idd:auto-pilot --issues 12,15` when Claude Code has it from the idd plugin; other agents get "Use the auto-pilot skill with --issues 12,15." It starts the profile Resolve would: with profiles of your own, Start first opens the profile menu at the bottom of the panel, as `a` does, with Resolve's profile highlighted. The new pane is labelled `autopilot-12-15` (`autopilot-12+4` for more than three issues), and the rest goes as for Resolve (see [What it runs](#what-it-runs)). Without the skill, nothing starts and the panel points you to [luongnv.com/idd](https://luongnv.com/idd). You can send your own prompt instead (see [Custom prompts](#custom-prompts)).
+- **Leaving the mode.** Once the agent runs, the panel leaves the mode and unchecks everything. **Cancel**, `☑` or `p` again, esc or `q` leave it too, unchecking everything; esc and `q` don't close the panel while it's on. Switching to the pull requests, or to another repo, leaves it as well; when that unchecks any issue, a notice says how many ("Left Auto-pilot: 2 checked issues unchecked."). When a start fails, the mode stays, with the issues still checked, so you can try again.
+- **The list moves on.** An issue that leaves the list, closed from the panel or elsewhere and gone in a refresh, is no longer checked; Start's count says how many are.
+
 ## Merge a pull request
 
 Every pull request row has a **Merge #N** button. On GitHub it sits next to the row's **Review #N** button, or on a line of its own under it in a narrow pane; on GitLab, where rows have no Review button, every merge request has a **Merge !N** button on a line of its own under its meta line.
@@ -133,7 +144,7 @@ The close runs `gh issue close <number>`, or `glab issue close <number>` on GitL
 
 ## Custom prompts
 
-Resolve and Review can each send a prompt you write instead of the IDD skill's. Write it with `{number}` where the issue's or pull request's number goes, such as:
+Resolve and Review can each send a prompt you write instead of the IDD skill's, and so can Auto-pilot (see [Auto-pilot](#auto-pilot)). Write it with `{number}` where the issue's or pull request's number goes, such as:
 
 ```
 Fix issue #{number} on a new branch, add a test, and open a pull request that closes it. Don't merge it.
@@ -150,9 +161,19 @@ A custom prompt needs no skill, so the panel doesn't look for one: the agent sta
 
 Leave the prompt empty to send the default again: the skill and the number, as above.
 
-In the profiles view (`s`), the **Resolve prompt** and **Review prompt** rows under the profiles show the prompt each action sends (dim: the default). `↓` past the last profile selects them, and so does the mouse wheel; `e` or enter (or the selected row's **Edit** button) edits one. Type the prompt, then enter (or **Save**) saves it and esc (or **Cancel**) goes back. A prompt that can't be saved shows why under it. Empty it, or click **Use default**, to send the default again. In a short pane, the wheel scrolls the prompt down to its buttons.
+In the profiles view (`s`), the **Resolve prompt**, **Review prompt** and **Auto-pilot prompt** rows under the profiles show the prompt each sends (dim: the default). `↓` past the last profile selects them, and so does the mouse wheel; `e` or enter (or the selected row's **Edit** button) edits one. Type the prompt, then enter (or **Save**) saves it and esc (or **Cancel**) goes back. A prompt that can't be saved shows why under it. Empty it, or click **Use default**, to send the default again. In a short pane, the wheel scrolls the prompt down to its buttons.
 
-The prompts are kept in the profiles file (see [Where they're kept](#where-theyre-kept)). A file with a custom prompt is version 2 (version 3 when it also holds a model you added); without either, it stays version 1.
+### Auto-pilot
+
+Auto-pilot's prompt works the same way, edited in the **Auto-pilot prompt** row, but with `{numbers}` where the checked issues' numbers go, separated by commas with no spaces, in the list's order (`12,15`), such as:
+
+```
+/idd:auto-pilot --issues {numbers}
+```
+
+`{numbers}` is required, and `{number}` isn't a placeholder in it. The same rules apply, checked when you save it with one longest number filled in, and again when you press Start with the numbers of the issues you checked: a prompt longer than 500 characters with them is refused before anything runs, and the panel says to check fewer issues or shorten it. Left empty, Start sends the default, `/auto-pilot --issues {numbers}` as Claude Code takes it. It goes with the profile Resolve starts.
+
+The prompts are kept in the profiles file (see [Where they're kept](#where-theyre-kept)). A file with a custom prompt is version 2 (version 3 when it also holds a model you added, and version 4 when it holds an Auto-pilot prompt); without either, it stays version 1.
 
 ## Agent profiles
 
@@ -216,6 +237,8 @@ The file is per machine: it lives on the machine of the Rex server that holds th
 
 A file with a model you added is version 3, with a `customModels` object of each harness's added models (`{"codex": ["gpt-mine"]}`). Without one it stays version 2 with a custom prompt, else version 1, so an older panel keeps using it. A panel or herdr-github from before version 3 shows a version 3 file read only and never overwrites it; herdr-github gets the same change in [luongnv89/herdr-github#54](https://github.com/luongnv89/herdr-github/issues/54).
 
+A file with a custom Auto-pilot prompt is version 4: as version 3, with `"autopilot"` among its `prompts` (and a `customModels` object, empty when you added no model). Only version 4 holds it; once you clear it, the file goes back to the lowest version that holds the rest, byte for byte as before. A panel from before version 4, and herdr-github, which has no Auto-pilot, show a version 4 file read only and never overwrite it.
+
 The panel reads the file when the profiles view opens and on every Resolve or Review click, and writes it only while it still holds what it read. If another panel changed it in the meantime, nothing is written, the view reads it again and asks you to make your change again. A file that isn't valid JSON, or is from a newer version of the panel, is shown read only and never overwritten; until you fix or delete it, the actions use the default. A file with a profile that can't be used (one edited by hand with a bad model, say) is read only too, so saving doesn't erase that profile or what it's assigned to: the view says which profile and why, the actions assigned to it use the default, and the other profiles still work. Fix or remove it in the file to save again. The same goes for a custom prompt that can't be used: the file is read only, and that action sends the default prompt until you fix it in the file. And for an added model that can't be used (a bad name, one listed twice, or one for a harness that doesn't exist or takes no model): the file is read only, and the view says which.
 
 ## Remote hosts
@@ -272,7 +295,8 @@ It sends nothing anywhere except through `gh` to GitHub, or `glab` to GitLab.
 - **"Opened mcc in a new pane":** mcc runs there, and may be asking something before Claude Code starts, most often about a usage limit. Answer it in the new pane; Claude Code then works on the prompt.
 - **"The profiles changed elsewhere and were read again":** another panel saved the profiles file after this one read it. Make your change again.
 - **"The profiles file isn't valid JSON" or "is version N":** the file is read only until you fix or delete it, and the actions use the default meanwhile.
-- **"Resolve prompt: must contain {number}" (or another reason under a prompt):** a custom prompt needs `{number}` where the number goes, and has to fit the rules under [Custom prompts](#custom-prompts). Nothing is saved until it does.
+- **"Resolve prompt: must contain {number}" (or another reason under a prompt):** a custom prompt needs `{number}` where the number goes, and has to fit the rules under [Custom prompts](#custom-prompts). Nothing is saved until it does. The Auto-pilot prompt needs `{numbers}` instead.
+- **"The Auto-pilot prompt is N characters with M issues in it, more than 500":** your Auto-pilot prompt, with the checked issues' numbers filled in, is too long to send. Uncheck some issues, or shorten the prompt.
 - **"A prompt in the file can't be used":** a prompt edited by hand in the profiles file breaks those rules. Its action sends the default meanwhile, and the file is read only: fix or remove the prompt in the file.
 - **Mistral Vibe starts with another model than the profile's:** Vibe didn't know the model alias, so it started its default model; its pane says which. Use an alias from Vibe's model list (`/model` in Vibe), or leave the model empty.
 - **A custom prompt like `/issue-resolver {number}` does nothing on Codex, Pi or OpenCode:** a custom prompt is sent as written, and only Claude Code runs a `/skill` as a command. Write it as prose for other agents, such as `Use the issue-resolver skill on issue #{number}.`, or leave it empty for the default.

@@ -177,11 +177,11 @@ test("parseStore: no file is empty; bad JSON or another version is read only", (
     assert.deepEqual(r.store, P.emptyStore());
     assert.match(r.warnings[0], /isn't valid JSON/);
   }
-  // Version 2 holds custom prompts (#20) and version 3 custom models (#24), and
-  // both are read; a newer one is read only.
-  const newer = P.parseStore(JSON.stringify({ version: 4, profiles: [ok({ harness: "pi" })], assign: { resolve: "p" } }));
+  // Version 2 holds custom prompts (#20), version 3 custom models (#24) and
+  // version 4 the Auto-pilot prompt (#31), and all are read; a newer one is read only.
+  const newer = P.parseStore(JSON.stringify({ version: 5, profiles: [ok({ harness: "pi" })], assign: { resolve: "p" } }));
   assert.equal(newer.readOnly, true);
-  assert.equal(newer.warnings[0], "The profiles file is version 4, not 1, 2 or 3: it is read only here");
+  assert.equal(newer.warnings[0], "The profiles file is version 5, not 1, 2, 3 or 4: it is read only here");
   assert.equal(P.resolveProfile(newer.store, "resolve").harness, "pi");
 });
 
@@ -218,9 +218,9 @@ test("parseStore skips bad, duplicate and reserved profiles, drops a missing ass
   const notList = P.parseStore(JSON.stringify({ version: 1, profiles: { a: 1 } }));
   assert.equal(notList.readOnly, true);
   assert.match(notList.warnings[0], /read only here/);
-  // Another version says so first, and only once (version 2 is read since #20, 3 since #24).
-  const both = P.parseStore(JSON.stringify({ version: 4, profiles: ["x"] }));
-  assert.match(both.warnings[0], /version 4/);
+  // Another version says so first, and only once (version 2 is read since #20, 3 since #24, 4 since #31).
+  const both = P.parseStore(JSON.stringify({ version: 5, profiles: ["x"] }));
+  assert.match(both.warnings[0], /version 5/);
   assert.ok(!both.warnings.some((w) => /fix or remove them/.test(w)));
   // What it writes, it reads back the same.
   const again = P.parseStore(P.serializeStore(store));
@@ -259,11 +259,11 @@ test("a custom prompt fills in {number}, each time it appears, with an integer o
 
 test("setPrompt keeps a custom prompt per action, trimmed, and empty goes back to the default", () => {
   let s = P.setPrompt(P.emptyStore(), "resolve", "  Don't merge #{number}: $(id) `id` & é 日本  ");
-  assert.deepEqual(s.prompts, { resolve: "Don't merge #{number}: $(id) `id` & é 日本", review: null });
+  assert.deepEqual(s.prompts, { resolve: "Don't merge #{number}: $(id) `id` & é 日本", review: null, autopilot: null });
   assert.equal(P.resolvePrompt(s, "resolve"), "Don't merge #{number}: $(id) `id` & é 日本");
   assert.equal(P.resolvePrompt(s, "review"), null);
   s = P.setPrompt(s, "review", "Review {number}");
-  assert.deepEqual(s.prompts, { resolve: "Don't merge #{number}: $(id) `id` & é 日本", review: "Review {number}" });
+  assert.deepEqual(s.prompts, { resolve: "Don't merge #{number}: $(id) `id` & é 日本", review: "Review {number}", autopilot: null });
   for (const empty of ["", "   ", null, undefined]) assert.equal(P.setPrompt(s, "review", empty).prompts.review, null, JSON.stringify(empty));
   assert.equal(P.resolvePrompt(undefined, "resolve"), null);
   assert.equal(P.resolvePrompt({ profiles: [], assign: {} }, "resolve"), null, "a store from before prompts");
@@ -319,7 +319,7 @@ test("prompts: version 1 without them, version 2 with them, and a bad one makes 
     "A prompt in the file can't be used (see below), so it is read only here: fix or remove it to save",
     "Skipped the Resolve prompt: must contain {number}, where the number goes",
   ]);
-  assert.deepEqual(r.store.prompts, { resolve: null, review: "Review {number}" });
+  assert.deepEqual(r.store.prompts, { resolve: null, review: "Review {number}", autopilot: null });
   r = hand({ review: "a\u202e{number}" });
   assert.equal(r.readOnly, true);
   assert.match(r.warnings[1], /^Skipped the Review prompt: no control/);
@@ -333,13 +333,13 @@ test("prompts: version 1 without them, version 2 with them, and a bad one makes 
   assert.equal(r.warnings[1], "Skipped the Resolve prompt: must be text");
   // Null, missing or empty is the default; a prompt is read from a version 1 file too.
   assert.deepEqual(hand({ resolve: null, review: "  " }), { store: P.emptyStore(), warnings: [], readOnly: false });
-  assert.deepEqual(hand({ resolve: " Go {number} " }, 1).store.prompts, { resolve: "Go {number}", review: null });
+  assert.deepEqual(hand({ resolve: " Go {number} " }, 1).store.prompts, { resolve: "Go {number}", review: null, autopilot: null });
   // A skipped profile says so first, and once.
   r = P.parseStore(JSON.stringify({ version: 2, profiles: ["x"], prompts: { resolve: "x" } }));
   assert.match(r.warnings[0], /Some profiles in the file can't be used/);
   assert.ok(!r.warnings.some((w) => /A prompt in the file/.test(w)));
   // A newer version is read only, with its prompts still read.
-  r = hand({ resolve: "Go {number}" }, 4);
+  r = hand({ resolve: "Go {number}" }, 5);
   assert.equal(r.readOnly, true);
   assert.equal(r.store.prompts.resolve, "Go {number}");
 });
@@ -454,7 +454,7 @@ test("custom models: version 3 only while there is one, read back the same, olde
   const withModel = P.addCustomModel(base, "codex", "gpt-mine");
   const v3 = P.serializeStore(withModel);
   assert.deepEqual(JSON.parse(v3), { ...JSON.parse(v1), version: 3, prompts: { resolve: null, review: null }, customModels: { codex: ["gpt-mine"] } });
-  assert.deepEqual(P.parseStore(v3), { store: { ...withModel, version: 3 }, warnings: [], readOnly: false });
+  assert.deepEqual(P.parseStore(v3), { store: withModel, warnings: [], readOnly: false });
   // With a prompt too, still version 3, holding both; the harnesses in their order.
   const both = P.addCustomModel(P.setPrompt(withModel, "resolve", "Go {number}"), "claude", "claude-opus-4-8");
   const parsed = JSON.parse(P.serializeStore(both));
@@ -505,4 +505,97 @@ test("custom models it can't use are skipped, and make the file read only", () =
   const r = P.parseStore(JSON.stringify({ version: 3, profiles: ["x"], customModels: { nope: [] } }));
   assert.match(r.warnings[0], /Some profiles in the file can't be used/);
   assert.ok(!r.warnings.some((w) => w === first));
+});
+
+// ── Auto-pilot (#31) ────────────────────────────────────────────────────────
+
+test("expandNumbers fills each {numbers} with the issues' numbers, comma-separated in the order given, integers only (#31)", () => {
+  assert.equal(P.expandNumbers("/auto-pilot --issues {numbers}", [12, 15]), "/auto-pilot --issues 12,15");
+  assert.equal(P.expandNumbers("{numbers} then {numbers}", [15, 3, 12]), "15,3,12 then 15,3,12");
+  assert.equal(P.expandNumbers("only {numbers}", [7]), "only 7");
+  // {number} is Resolve's and Review's token, not Auto-pilot's: it stays as written.
+  assert.equal(P.expandNumbers("{number} {NUMBERS} {numbers", [1]), "{number} {NUMBERS} {numbers");
+  for (const numbers of [[], [0], [-1], [1.5], [NaN], ["12"], [12, "13; id"], [2 ** 53], [null], null, undefined, 12, "12,13"]) {
+    assert.throws(() => P.expandNumbers("x {numbers}", numbers), /not a list of numbers/, JSON.stringify(numbers));
+  }
+  assert.throws(() => P.expandNumbers(null, [1]), /No prompt/);
+  assert.equal(P.PROMPT_LIST_TOKEN, "{numbers}");
+  assert.deepEqual(P.PROMPT_KEYS, ["resolve", "review", "autopilot"]);
+  assert.deepEqual(P.ACTION_KEYS, ["resolve", "review"], "profiles are still assigned to Resolve and Review only");
+});
+
+test("an Auto-pilot prompt needs {numbers}; Resolve and Review still need {number} (#31)", () => {
+  assert.deepEqual(P.validatePromptTemplate("Auto-pilot {numbers}", "autopilot"), []);
+  assert.deepEqual(P.validatePromptTemplate("Fix {number}", "autopilot"), ["must contain {numbers}, where the issues' numbers go"]);
+  assert.deepEqual(P.validatePromptTemplate("Fix {numbers}", "resolve"), ["must contain {number}, where the number goes"]);
+  assert.deepEqual(P.validatePromptTemplate("Fix {numbers}", "review"), ["must contain {number}, where the number goes"]);
+  assert.deepEqual(P.validatePromptTemplate("Fix {number}"), [], "with no key, as Resolve and Review");
+  assert.deepEqual(P.validatePromptTemplate(5, "autopilot"), ["must be text"]);
+  // Checked as sent, with one longest number in it: 484 + 16 digits is 500.
+  assert.deepEqual(P.validatePromptTemplate(`${"x".repeat(484)}{numbers}`, "autopilot"), []);
+  assert.match(P.validatePromptTemplate(`${"x".repeat(485)}{numbers}`, "autopilot")[0], /at most 500 characters/);
+  assert.match(P.validatePromptTemplate("-x {numbers}", "autopilot")[0], /can't start with/);
+});
+
+test("setPrompt keeps the Auto-pilot prompt beside the others, with its own name in its reasons (#31)", () => {
+  let s = P.setPrompt(P.emptyStore(), "autopilot", "  Run /auto-pilot on {numbers}, one PR each  ");
+  assert.deepEqual(s.prompts, { resolve: null, review: null, autopilot: "Run /auto-pilot on {numbers}, one PR each" });
+  assert.equal(P.resolvePrompt(s, "autopilot"), "Run /auto-pilot on {numbers}, one PR each");
+  assert.equal(P.resolvePrompt(s, "resolve"), null);
+  s = P.setPrompt(s, "resolve", "Fix {number}");
+  assert.deepEqual(s.prompts, { resolve: "Fix {number}", review: null, autopilot: "Run /auto-pilot on {numbers}, one PR each" });
+  assert.equal(P.setPrompt(s, "autopilot", "").prompts.autopilot, null);
+  assert.throws(() => P.setPrompt(s, "autopilot", "Fix {number}"), { message: "Auto-pilot prompt: must contain {numbers}, where the issues' numbers go" });
+  assert.throws(() => P.setPrompt(s, "autopilot", "a\nb {numbers}"), /^Error: Auto-pilot prompt: no control/);
+  // Still not a profile action.
+  assert.throws(() => P.assignProfile(s, "autopilot", null), /No action autopilot/);
+  assert.equal(P.resolvePrompt({ profiles: [], assign: {}, prompts: { resolve: null, review: null } }, "autopilot"), null, "a store from before version 4");
+});
+
+test("serializeStore writes version 4 only with an Auto-pilot prompt, never below it, and reads it back (#31)", () => {
+  const base = P.upsertProfile(P.emptyStore(), ok({ id: "a", harness: "pi" }));
+  const v1 = P.serializeStore(base);
+  const ap = "Auto-pilot {numbers} please";
+  // The bytes of a store without one are those of before #31: versions 1, 2 and 3.
+  assert.equal(v1, '{\n  "version": 1,\n  "profiles": [\n    {\n      "id": "a",\n      "name": "Profile",\n      "harness": "pi"\n    }\n  ],\n  "assign": {\n    "resolve": null,\n    "review": null\n  }\n}\n');
+  const v2 = P.serializeStore(P.setPrompt(base, "review", "Review {number}"));
+  assert.deepEqual(Object.keys(JSON.parse(v2).prompts), ["resolve", "review"]);
+  assert.equal(JSON.parse(v2).version, 2);
+  const v3 = P.serializeStore(P.addCustomModel(base, "pi", "x/y"));
+  assert.deepEqual(JSON.parse(v3), { ...JSON.parse(v1), version: 3, prompts: { resolve: null, review: null }, customModels: { pi: ["x/y"] } });
+  // An Auto-pilot prompt alone: version 4, with every prompt and the custom models.
+  const withAp = P.setPrompt(base, "autopilot", ap);
+  const v4 = P.serializeStore(withAp);
+  assert.deepEqual(JSON.parse(v4), { ...JSON.parse(v1), version: 4, prompts: { resolve: null, review: null, autopilot: ap }, customModels: {} });
+  assert.deepEqual(P.parseStore(v4), { store: withAp, warnings: [], readOnly: false });
+  // With a custom model and a Resolve prompt too, still version 4, holding all of them.
+  const all = P.addCustomModel(P.setPrompt(withAp, "resolve", "Go {number}"), "pi", "x/y");
+  const parsed = JSON.parse(P.serializeStore(all));
+  assert.deepEqual(parsed, { ...JSON.parse(v1), version: 4, prompts: { resolve: "Go {number}", review: null, autopilot: ap }, customModels: { pi: ["x/y"] } });
+  assert.deepEqual(P.parseStore(P.serializeStore(all)).store, all);
+  // The Auto-pilot prompt cleared: back to the lowest version that holds the rest,
+  // with no "autopilot" key, byte for byte as before.
+  assert.equal(P.serializeStore(P.setPrompt(withAp, "autopilot", "")), v1);
+  assert.equal(P.serializeStore(P.setPrompt(all, "autopilot", null)), P.serializeStore(P.addCustomModel(P.setPrompt(base, "resolve", "Go {number}"), "pi", "x/y")));
+  for (const store of [base, P.setPrompt(base, "review", "Review {number}"), P.addCustomModel(base, "pi", "x/y"), { ...base, prompts: { resolve: null, review: null } }]) {
+    const text = P.serializeStore(store);
+    assert.ok(JSON.parse(text).version < 4 && !text.includes("autopilot"), text);
+  }
+});
+
+test("a hand-edited Auto-pilot prompt it can't use is skipped and makes the file read only (#31)", () => {
+  const hand = (prompts, version = 4) => P.parseStore(JSON.stringify({ version, profiles: [], assign: {}, prompts }));
+  let r = hand({ autopilot: "Fix {number}" });
+  assert.equal(r.readOnly, true);
+  assert.deepEqual(r.warnings, [
+    "A prompt in the file can't be used (see below), so it is read only here: fix or remove it to save",
+    "Skipped the Auto-pilot prompt: must contain {numbers}, where the issues' numbers go",
+  ]);
+  assert.equal(r.store.prompts.autopilot, null);
+  r = hand({ autopilot: " Go {numbers} " });
+  assert.deepEqual(r, { store: { ...P.emptyStore(), prompts: { resolve: null, review: null, autopilot: "Go {numbers}" } }, warnings: [], readOnly: false });
+  // Version 4 is read; 5 is newer, read only.
+  assert.equal(hand({}, 4).readOnly, false);
+  assert.equal(hand({}, 5).readOnly, true);
+  assert.equal(P.STORE_VERSION, 4);
 });
