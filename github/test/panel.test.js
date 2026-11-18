@@ -49,7 +49,7 @@ process.on("exit", () => fs.rmSync(stateHome, { recursive: true, force: true }))
 Object.assign(process.env, { REX_GITHUB_REX: "rex", REX_SESSION: "session:s", REX_BLOCK: "block:panel", REX_GITHUB_STARTUP_MS: "1", XDG_STATE_HOME: stateHome });
 process.argv.push("--target", "block:agent", "--cwd", "/start");
 const P = require("../profiles.cjs");
-const { width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput, MODES_ON, MODES_OFF, act, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, flags, locate, state, follow, splitLeft, ratioFor, fitWidth, COLUMNS, MAX_SHARE, settleResize, savedWidth, resetWidth, pressMerge, MERGE_GAP, mergeStrategy, mergeArgs, mergeGuard, refresh, pressClose, checkedNumbers, paneLabel } = require("../panel.js");
+const { width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput, MODES_ON, MODES_OFF, act, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, flags, locate, state, follow, splitLeft, ratioFor, fitWidth, COLUMNS, MAX_SHARE, settleResize, savedWidth, resetWidth, pressMerge, MERGE_GAP, mergeStrategy, mergeArgs, mergeGuard, refresh, pressClose, checkedNumbers, paneLabel, KEYMAP } = require("../panel.js");
 
 // Drops colors and OSC 8 hyperlinks, leaving the text a terminal shows.
 const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b\]8;[^\x07\x1b]*(?:\x1b\\|\x07)/g, "");
@@ -251,7 +251,7 @@ function setup(view) {
   Object.assign(ui, {
     view, prs: items("pull"), issues: items("issues"), errors: {}, error: null, repo: { name: "o/p", url: "https://x/o/p" },
     loading: false, fetched: true, follow: false, sel: { prs: 0, issues: 0 }, top: { prs: 0, issues: 0 }, notice: null,
-    forge: null, root: null, settings: null, acting: null, menu: null, confirm: null, merging: null, closing: null, pasting: false, pasteCR: false,
+    forge: null, root: null, settings: null, acting: null, menu: null, confirm: null, merging: null, closing: null, pasting: false, pasteCR: false, help: null,
   });
   follow("block:agent");
   opened.length = 0;
@@ -1380,7 +1380,7 @@ test("the profiles footer goes onto two lines when it doesn't fit, rather than b
   }
   // Wide enough: one line.
   const lines = screenAt(100, 24, draw);
-  assert.match(lines[23], /^ ↑↓ select · n new · e edit · d delete · R\/V assign · esc back/);
+  assert.match(lines[23], /^ ↑↓ select · \? keys · n new · e edit · d delete · R\/V assign · esc back/);
   assert.equal(lines[22], "");
 });
 
@@ -1588,7 +1588,7 @@ test("at 28 and 30 cells the notice of a started OpenCode keeps its note whole",
       "(OpenCode ignores this profile's thinking level: it has no flag for it when it starts)";
     assert.ok(shows(lines, whole), `${cols}:\n${lines.join("\n")}`);
     for (const l of lines) assert.ok(width(l ?? "") <= cols, `${cols}: ${l}`);
-    assert.match(lines[23], /^ a resolve #12 · ↑↓ select/);
+    assert.match(lines[23], /^ a resolve #12 · \? keys · ↑/);
   }
 });
 
@@ -2865,7 +2865,7 @@ test("a Merge press only asks: the button reads Confirm merge, the notice names 
     // One button asks; the notice under the list says so.
     assert.equal(after.filter((l) => l?.includes("Confirm merge") && !l.includes("Press")).length, 1, after.join("\n"));
     assert.equal(ui.notice?.tone, "info");
-    assert.equal(ui.notice.text, `Press Confirm merge ${ref} to merge it (${method}). Any other key or click cancels.`);
+    assert.equal(ui.notice.text, `Press Confirm merge ${ref} or y to merge it (${method}). Any other key or click cancels.`);
     // Drawn red, so it reads as the press that merges.
     const raw = rawScreen(draw).find((l) => l?.includes(`Confirm merge ${ref}`));
     assert.match(raw, /\x1b\[31m Confirm merge/, raw);
@@ -3688,7 +3688,7 @@ test("a Close press only asks: the button reads Confirm close in red, the notice
     assert.equal(ui.sel.issues, 0);
     assert.equal(after.filter((l) => l?.includes("Confirm close") && !l.includes("Press")).length, 1, after.join("\n"));
     assert.equal(ui.notice?.tone, "info");
-    assert.equal(ui.notice.text, "Press Confirm close #21 to close it. Any other key or click cancels.");
+    assert.equal(ui.notice.text, "Press Confirm close #21 or y to close it. Any other key or click cancels.");
     const raw = rawScreen(draw).find((l) => l?.includes("Confirm close #21") && !l.includes("Press"));
     assert.match(raw, /\x1b\[31m Confirm close #21/, raw);
   }
@@ -3963,10 +3963,10 @@ test("Start is shown only in Auto-pilot mode, in place of the key hints (#31)", 
   claudeHome(t);
   let lines = setupGitHub("issues");
   assert.ok(!lines.some((l) => /Start/.test(l ?? "")), lines.join("\n"));
-  assert.match(lines[FOOTER], /^ a resolve #12 · ↑↓ select · ⏎ open · p auto-pilot · ⇥ swit/);
+  assert.match(lines[FOOTER], /^ a resolve #12 · ↑↓ select · ⏎ open · \? keys · p auto-pilot/);
   assert.ok(!ui.buttons.some((b) => b.row === FOOTER), "no button on the key hints");
   lines = screen(() => onInput(mouse(...toggleAt(lines))));
-  assert.match(lines[FOOTER], /^ {2}▶ Start {3}✕ Cancel {2}⏎ start · ␣ check · ↑↓ · q cancel$/);
+  assert.match(lines[FOOTER], /^ {2}▶ Start {3}✕ Cancel {2}⏎ start · ␣ check · q cancel · \? keys$/);
   assert.deepEqual(startAt(lines), [2, FOOTER]);
   // Cancel leaves the mode, and Start goes with it.
   lines = screen(() => onInput(mouse(...find(lines, "✕ Cancel"))));
@@ -4300,10 +4300,10 @@ test("at the panel's default 36 cells, the bar keeps the keys that start, check 
   claudeHome(t);
   setupGitHub("issues");
   screenAt(36, 24, () => onInput(Buffer.from("p")));
-  for (const n of [0, 2]) {
+  for (const [n, keys] of [[0, /✕ Cancel {2}⏎▶ · ␣☑ · q✕ \?$/], [2, /✕ Cancel {2}⏎▶ ␣☑ q✕ \?$/]]) {
     if (n) { ui.autopilot.checked.add(12); ui.autopilot.checked.add(15); }
     const lines = screenAt(36, 24, draw);
-    assert.match(lines[FOOTER], /✕ Cancel {2}⏎▶ · ␣☑ · q✕$/, lines[FOOTER]);
+    assert.match(lines[FOOTER], keys, lines[FOOTER]);
   }
 });
 
@@ -4323,8 +4323,8 @@ test("the bar's key hints name a key that checks and one that cancels at 36 and 
       assert.match(lines[FOOTER], n ? new RegExp(`▶ Start ${n} {3}✕ Cancel`) : /▶ Start {3}✕ Cancel/, lines[FOOTER]);
     }
   }
-  const lines = screenAt(80, 24, draw);
-  assert.match(lines[FOOTER], /✕ Cancel {2}⏎ start · ␣\/x check · ↑↓\/jk select · esc\/q cancel$/, lines[FOOTER]);
+  const lines = screenAt(90, 24, draw);
+  assert.match(lines[FOOTER], /✕ Cancel {2}⏎ start · ␣\/x check · ↑↓\/jk select · esc\/q cancel · \? keys$/, lines[FOOTER]);
 });
 
 test("a failed fetch of the issues unchecks nothing; the next one that answers unchecks only the issues gone (#31)", async (t) => {
@@ -4415,4 +4415,312 @@ test("a profile deleted while Auto-pilot's menu is open starts nothing and says 
   assert.deepEqual(splits(), []);
   assert.ok(text(after).includes("The profile Claude Code isn't there any more, so nothing started: press Start to choose another."), after.join("\n"));
   assert.deepEqual(checkedNumbers(), [11]);
+});
+
+// ── Keys for every button (#37) ─────────────────────────────────────────────
+
+const key = (k) => onInput(Buffer.from(k));
+const footerOf = (cols, view) => { setupGitHub(view); return screenAt(cols, 24, draw)[FOOTER]; };
+
+test("m presses the selected pull request's Merge, which asks; y then merges it, as the second click does (#37)", async (t) => {
+  for (const [forge, cli, ref, merged] of [
+    ["github", "gh", "#11", ["pr", "merge", "11", "--squash", "--match-head-commit", headOf(11)]],
+    ["gitlab", "glab", "!11", ["mr", "merge", "11", "--yes", "--sha", headOf(11)]],
+  ]) {
+    await loadForge(t, { forge });
+    ui.sel.prs = 1;
+    await quietly(async () => {
+      key("m");
+      assert.deepEqual([ui.confirm?.kind, ui.confirm?.number], ["merge", 11], forge);
+      assert.equal(find(screen(draw), `Confirm merge ${ref}`)[1] > LIST.from, true, forge);
+      assert.ok(ui.notice.text.startsWith(`Press Confirm merge ${ref} or y to merge it`), ui.notice.text);
+      assert.deepEqual(mergeCalls(cli), [], forge);
+      // y right away: a key is no double click, so MERGE_GAP doesn't hold it back.
+      key("y");
+      await ui.acting;
+      await idle();
+    });
+    assert.deepEqual(mergeCalls(cli), [merged], forge);
+    assert.equal(ui.notice?.text, `Merged ${ref}`, forge);
+    assert.equal(ui.confirm, null, forge);
+  }
+});
+
+test("c presses the selected issue's Close, which asks; y then closes it, as the second click does (#37)", async (t) => {
+  for (const [forge, cli] of [["github", "gh"], ["gitlab", "glab"]]) {
+    await loadIssues(t, { forge });
+    ui.sel.issues = 2;
+    await quietly(async () => {
+      key("c");
+      assert.deepEqual([ui.confirm?.kind, ui.confirm?.number], ["close", 22], forge);
+      assert.equal(ui.notice.text, "Press Confirm close #22 or y to close it. Any other key or click cancels.");
+      assert.deepEqual(closeCalls(cli), [], forge);
+      key("y");
+      await ui.acting;
+      await idle();
+    });
+    assert.deepEqual(closeCalls(cli), [["issue", "close", "22"]], forge);
+    assert.ok(!ui.issues.some((i) => i.number === 22), forge);
+    assert.equal(ui.notice?.text, "Closed #22", forge);
+  }
+});
+
+test("m or c held down or pressed again keeps the question and never merges or closes; q, esc and another key take it back (#37)", async (t) => {
+  for (const [view, arm] of [["prs", "m"], ["issues", "c"]]) {
+    const load = () => view === "prs" ? loadForge(t) : loadIssues(t);
+    await load();
+    await quietly(async () => {
+      key(arm);
+      const asked = ui.confirm, notice = ui.notice;
+      // A held key repeats, in one chunk or many, soon or long after the press that asked.
+      key(arm.repeat(8));
+      later();
+      for (let i = 0; i < 4; i++) key(arm);
+      await tick();
+      // The same question, not taken back and asked again, and its notice.
+      assert.equal(ui.confirm, asked, view);
+      assert.equal(ui.notice, notice, `${view}: the question's notice stays`);
+      assert.equal(ui.acting, null, view);
+    });
+    assert.deepEqual(mergeCalls(), [], view);
+    assert.deepEqual(closeCalls(), [], view);
+    for (const cancel of ["q", "\x1b", "j"]) {
+      await load();
+      await quietly(async () => {
+        key(arm);
+        assert.ok(ui.confirm, `${view} ${JSON.stringify(cancel)}`);
+        assert.equal(noExit(() => key(cancel)), null, `${JSON.stringify(cancel)} closed the panel`);
+        await tick();
+      });
+      assert.equal(ui.confirm, null, `${view} ${JSON.stringify(cancel)}`);
+      assert.ok(!ui.notice?.text?.startsWith("Press Confirm"), `${view} ${JSON.stringify(cancel)}`);
+      assert.deepEqual([...mergeCalls(), ...closeCalls()], [], `${view} ${JSON.stringify(cancel)}`);
+    }
+  }
+});
+
+test("m on the issues, c on the pull requests or in Auto-pilot, and y with nothing asked do nothing (#37)", (t) => {
+  claudeHome(t);
+  for (const [view, k] of [["issues", "m"], ["prs", "c"], ["prs", "y"], ["issues", "y"]]) {
+    setupGitHub(view);
+    screen(() => key(k));
+    assert.equal(ui.confirm, null, `${k} on ${view}`);
+    assert.equal(ui.notice, null, `${k} on ${view}`);
+    assert.deepEqual(calls, [], `${k} on ${view}`);
+  }
+  // Auto-pilot hides Close, so c presses nothing there.
+  setupGitHub("issues");
+  screen(() => key("p"));
+  screen(() => key("c"));
+  assert.equal(ui.confirm, null);
+  assert.equal(ui.autopilot.on, true);
+  screen(() => key("p"));
+  // An empty list has no row to press.
+  setupGitHub("prs");
+  ui.prs = [];
+  screen(() => key("m"));
+  assert.equal(ui.confirm, null);
+});
+
+test("ctrl-r in the prompt editor is Use default, only while a custom prompt is saved; ? and other keys there are text (#37)", (t) => {
+  const dir = claudeHome(t);
+  usePrompts(dir, { review: "Review #{number}" }, [{ id: "cc", name: "Claude Code", harness: "claude" }], { resolve: "cc", review: "cc" });
+  setupGitHub("prs");
+  // The Review prompt, a custom one: its hints name ctrl-r, and ctrl-r restores the default.
+  let lines = screen(() => key("sjjje"));
+  assert.deepEqual([ui.settings.mode, ui.settings.prompt.action], ["prompt", "review"]);
+  assert.match(lines.at(-1), /type to edit · ⏎ save · \^R default · esc back/);
+  screen(() => key("?"));
+  assert.equal(ui.settings.prompt.text, "Review #{number}?");
+  assert.equal(ui.help, null, "? is text while typing");
+  lines = screen(() => key("\x12"));
+  assert.equal(ui.settings.mode, "list");
+  assert.equal(readStore().store.prompts?.review ?? null, null);
+  assert.ok(text(lines).includes("Review now sends the default: /issue-pr-review {number}"), lines.join("\n"));
+  // The Resolve prompt has none: no ^R hint, and ctrl-r neither saves nor types anything.
+  lines = screen(() => key("ke"));
+  assert.deepEqual([ui.settings.mode, ui.settings.prompt.action], ["prompt", "resolve"]);
+  assert.equal(lines.at(-1).trim(), "type to edit · ⏎ save · esc back");
+  screen(() => key("x\x12"));
+  assert.equal(ui.settings.mode, "prompt");
+  assert.equal(ui.settings.prompt.text, "x");
+  // In the form, ? is text too.
+  screen(() => { key("\x1b"); key("n"); key("?"); });
+  assert.equal(ui.settings.form.name, "?");
+  assert.equal(ui.help, null);
+  screen(() => key("\x1b\x1b"));
+});
+
+test("? opens the key list of the view it's pressed in, with every key of that view; ?, esc and q close it, and the view stays (#37)", (t) => {
+  const dir = claudeHome(t);
+  const views = {
+    main: () => setupGitHub("prs"),
+    autopilot: () => { setupGitHub("issues"); screen(() => key("p")); },
+    menu: () => { useProfiles(dir, [CC, CX], {}); setupGitHub("issues"); screen(() => key("a")); },
+    settings: () => { setupGitHub("issues"); screen(() => key("s")); },
+  };
+  for (const [mode, open] of Object.entries(views)) {
+    for (const close of ["?", "\x1b", "q"]) {
+      open();
+      const before = { menu: Boolean(ui.menu), settings: ui.settings?.mode, autopilot: ui.autopilot.on, sel: { ...ui.sel } };
+      const lines = screenAt(60, 40, () => key("?"));
+      assert.equal(ui.help?.mode, mode);
+      assert.match(lines[0], /^ Keys: /, lines.join("\n"));
+      for (const e of KEYMAP[mode]) assert.ok(shows(lines, `${e.keys.join(" ")} ${e.does}`), `${mode}: ${e.keys.join(" ")}\n${lines.join("\n")}`);
+      assert.match(lines.at(-1), /\?\/esc\/q close/);
+      assert.equal(noExit(() => screen(() => key(close))), null, `${mode}: ${JSON.stringify(close)} closed the panel`);
+      assert.equal(ui.help, null, `${mode}: ${JSON.stringify(close)}`);
+      assert.deepEqual({ menu: Boolean(ui.menu), settings: ui.settings?.mode, autopilot: ui.autopilot.on, sel: { ...ui.sel } }, before, `${mode}: ${JSON.stringify(close)}`);
+    }
+    ui.menu = null; ui.settings = null; ui.autopilot.on = false;
+  }
+});
+
+test("while the key list is open, other keys and clicks reach nothing under it; a click closes it, the wheel scrolls it (#37)", (t) => {
+  claudeHome(t);
+  const lines = setupGitHub("prs");
+  const review = find(lines, "Review #12");
+  screen(() => key("?"));
+  screen(() => key("ajkmyps1\r\t ox"));
+  assert.equal(ui.help?.mode, "main");
+  assert.deepEqual([ui.view, ui.sel.prs, ui.menu, ui.confirm, ui.settings, ui.autopilot.on], ["prs", 2, null, null, null, false]);
+  assert.deepEqual(calls, []);
+  assert.deepEqual(opened, []);
+  // A short pane scrolls it with the wheel and ↑↓, and still takes no key.
+  let short = screenAt(36, 10, () => onInput(Buffer.from(wheelDown)));
+  assert.ok(ui.help.top > 0, short.join("\n"));
+  assert.match(short.at(-1), /↑↓ scroll · \?\/esc\/q close/);
+  short = screenAt(36, 10, () => key("k"));
+  assert.equal(ui.help?.mode, "main");
+  // A click, even on a button drawn under it, only closes it; so does a double
+  // click, both presses in one chunk.
+  for (const clicks of [1, 2]) {
+    if (!ui.help) screen(() => key("?"));
+    screen(() => onInput(Buffer.from(pressAt(...review).repeat(clicks))));
+    assert.equal(ui.help, null, `${clicks}`);
+    assert.deepEqual([ui.menu, ui.acting, ui.sel.prs], [null, null, 2], `${clicks}`);
+    assert.deepEqual(calls, [], `${clicks}`);
+    assert.deepEqual(opened, [], `${clicks}`);
+  }
+  // In the profiles, n doesn't open a new profile under it.
+  screen(() => key("s?n"));
+  assert.deepEqual([ui.help?.mode, ui.settings.mode], ["settings", "list"]);
+  screen(() => key("qq"));
+  assert.equal(ui.settings, null);
+});
+
+test("? while a Merge or Close asks takes the question back, as any other key, and opens the key list (#37)", async (t) => {
+  for (const [load, arm] of [[() => loadForge(t), "m"], [() => loadIssues(t), "c"]]) {
+    await load();
+    await quietly(async () => {
+      key(arm);
+      assert.ok(ui.confirm, arm);
+      key("?");
+      assert.equal(ui.confirm, null, arm);
+      assert.ok(!ui.notice?.text?.startsWith("Press Confirm"), arm);
+      assert.equal(ui.help?.mode, "main", arm);
+      // y now answers nothing.
+      key("y?");
+      await tick();
+    });
+    assert.deepEqual([...mergeCalls(), ...closeCalls()], [], arm);
+  }
+});
+
+test("? keys is in view at the default 36 cells: on a selected row, with no row to act on, in the profiles; Auto-pilot names ? (#37)", (t) => {
+  claudeHome(t);
+  assert.match(footerOf(36, "issues"), /^ a resolve #12 · \? keys · /);
+  assert.match(footerOf(36, "prs"), /^ a review #12 · \? keys · /);
+  for (const view of ["issues", "prs"]) {
+    setupGitHub(view);
+    ui[view] = [];
+    assert.match(screenAt(36, 24, draw)[FOOTER], /^ ↑↓ select · ⏎ open · \? keys · /, view);
+    // GitLab rows: no a, and still ? keys.
+    setupGitHub(view);
+    ui.forge = FORGES.gitlab;
+    assert.match(screenAt(36, 24, draw)[FOOTER], /^ ↑↓ select · ⏎ open · \? keys · /, view);
+  }
+  // The profiles' hints, wrapped, name it at 36 cells and narrower.
+  for (const cols of [28, 36]) {
+    setupGitHub("issues");
+    const lines = screenAt(cols, 24, () => key("s"));
+    assert.ok(lines.slice(-3).some((l) => l.includes("? keys")), `${cols}:\n${lines.join("\n")}`);
+    screenAt(cols, 24, () => key("q"));
+  }
+  // Auto-pilot's bar: a bare ? at 36 cells, where ⏎, ␣ and q fill the room; ? keys at 60.
+  setupGitHub("issues");
+  screenAt(36, 24, () => key("p"));
+  for (const n of [0, 1, 10]) {
+    ui.autopilot.checked.clear();
+    for (const i of ui.issues.slice(0, n)) ui.autopilot.checked.add(i.number);
+    const bar = screenAt(36, 24, draw)[FOOTER];
+    assert.match(bar, / \?$/, `${n}: ${bar}`);
+    assert.ok(width(bar) <= 36, bar);
+  }
+  ui.autopilot.checked.clear();
+  assert.match(screenAt(60, 24, draw)[FOOTER], / · \? keys$/);
+  screenAt(36, 24, () => key("p"));
+  // A wide pane names m and c for the selected row's Merge and Close.
+  assert.match(footerOf(120, "prs"), /⇥ switch · \? keys · m merge #12 · s profiles/);
+  assert.match(footerOf(120, "issues"), /⇥ switch · \? keys · c close #12 · s profiles/);
+  setupGitHub("prs");
+  ui.forge = FORGES.gitlab;
+  assert.match(screenAt(120, 24, draw)[FOOTER], /\? keys · m merge !12 · /);
+});
+
+// Each drawn button's label, and the key its mode's KEYMAP must have for it.
+const BUTTON_KEYS = {
+  main: [[/^☑/, "p"], [/^⚙/, "s"], [/^↻/, "r"], [/^↗/, "o"], [/^((Pull|Merge) requests|Issues)/, "1"], [/^(Resolve|Review) #/, "a"],
+    [/^Merg(e|ing) [#!]\d/, "m"], [/^Clos(e|ing) #\d/, "c"], [/^Confirm (merge|close) #/, "y"]],
+  autopilot: [[/^☑/, "p"], [/^⚙/, "s"], [/^↻/, "r"], [/^↗/, "o"], [/^((Pull|Merge) requests|Issues)/, "1"], [/^▶ Start/, "⏎"], [/^✕ Cancel$/, "esc"]],
+  menu: [[/^│/, "⏎"]],
+  settings: [[/^\+ New$/, "n"], [/^✕$/, "esc"], [/^(Use for Resolve|Resolve ✓)$/, "R"], [/^(Use for Review|Review ✓)$/, "V"], [/^Edit$/, "e"], [/^Delete$/, "d"]],
+  form: [[/^Save$/, "⏎"], [/^(Cancel|✕)$/, "esc"]],
+  prompt: [[/^Save$/, "⏎"], [/^Use default$/, "^R"], [/^(Cancel|✕)$/, "esc"]],
+};
+
+test("every view's key table names each key once, and every button drawn in it has a key there (#37)", (t) => {
+  for (const [mode, table] of Object.entries(KEYMAP)) {
+    const keys = table.flatMap((e) => e.keys);
+    assert.deepEqual(keys.filter((k, i) => keys.indexOf(k) !== i), [], `${mode} has a key twice`);
+  }
+  assert.deepEqual(Object.keys(BUTTON_KEYS).sort(), Object.keys(KEYMAP).sort());
+  const dir = claudeHome(t);
+  usePrompts(dir, { resolve: "Fix #{number}" }, [CC, CX], {});
+  const frames = {
+    main: [
+      () => setupGitHub("prs"), () => setupGitHub("issues"),
+      () => { setupGitHub("prs"); ui.confirm = { kind: "merge", number: 12, notice: null, at: 0 }; },
+      () => { setupGitHub("issues"); ui.confirm = { kind: "close", number: 12, notice: null, at: 0 }; },
+      () => { setupGitHub("prs"); ui.merging = { root: "/repo", number: 12 }; },
+      () => { setupGitHub("prs"); ui.forge = FORGES.gitlab; },
+    ],
+    autopilot: [() => { setupGitHub("issues"); screen(() => key("p")); ui.autopilot.checked.add(12); }],
+    menu: [() => { setupGitHub("issues"); screen(() => key("a")); }],
+    settings: [() => { setupGitHub("issues"); screen(() => key("s")); }, () => screen(() => key("j")), () => screen(() => key("jj"))],
+    form: [() => screen(() => key("n"))],
+    // One key at a time: a chunk that leaves the form drops the text after it, as a paste's.
+    prompt: [() => screen(() => { key("\x1b"); key("qsjjje"); })],
+  };
+  for (const [mode, setups] of Object.entries(frames)) {
+    for (const [n, set] of setups.entries()) {
+      set();
+      const lines = screenAt(60, 40, draw), where = `${mode} ${n}`;
+      if (mode === "prompt") assert.equal(ui.settings.mode, "prompt", where);
+      let seen = 0;
+      for (const b of ui.buttons) {
+        // A whole line is a row, picked with ↑↓, not a button.
+        if (b.from === 0 && b.to === 60) continue;
+        const label = lines[b.row].slice(b.from, b.to).trim();
+        const k = BUTTON_KEYS[mode].find(([re]) => re.test(label))?.[1];
+        assert.ok(k, `${where}: no key known for the button "${label}"\n${lines.join("\n")}`);
+        assert.ok(KEYMAP[mode].some((e) => e.keys.includes(k)), `${where}: ${k} for "${label}" isn't in KEYMAP.${mode}`);
+        seen++;
+      }
+      assert.ok(seen > 0, where);
+    }
+    if (mode === "autopilot") { ui.autopilot.on = false; ui.autopilot.checked.clear(); }
+    if (mode === "menu") ui.menu = null;
+  }
+  screen(() => key("\x1b\x1b"));
 });
