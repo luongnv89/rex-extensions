@@ -1251,6 +1251,32 @@ function autopilotBar(cols, count) {
   return { text, hits };
 }
 
+// The header's buttons, each { text, shown, action }: text is what it takes on
+// screen, shown the same styled. On a row of their own (row true), labelled from
+// the left while the row fits ("☑ Auto-pilot  ⚙ Profiles  ↻ Refresh  ↗ GitHub"),
+// the rest as their bare icon. With no room for even the first label, or in a
+// pane shorter than TOOLS_MIN_ROWS, whose list can't spare a line, they are bare
+// icons at the end of the title line, as before labels (row false).
+const TOOLS_MIN_ROWS = 12;
+function headerTools(cols, rows, autopilot) {
+  const tools = [];
+  if (autopilotOffered()) tools.push({ icon: "☑", label: "Auto-pilot", on: autopilot, action: () => toggleAutopilot() });
+  tools.push({ icon: "⚙", label: "Profiles", action: () => openSettings() });
+  tools.push({ icon: "↻", label: "Refresh", action: () => refresh() });
+  if (ui.repo?.url) tools.push({ icon: "↗", label: ui.forge?.name ?? "Open", action: () => openUrl(ui.repo.url) });
+  const bare = (t) => ` ${t.icon} `, labelled = (t) => ` ${t.icon} ${t.label} `;
+  // How many lead with their label: the first one's padding lines its icon up with the repo's name.
+  let n = rows >= TOOLS_MIN_ROWS ? tools.length : 0;
+  const used = () => tools.reduce((w, t, i) => w + width(i < n ? labelled(t) : bare(t)), 0);
+  while (n > 0 && used() > cols) n--;
+  const out = tools.map((t, i) => {
+    const text = i < n ? labelled(t) : bare(t);
+    return { text, shown: t.on ? invert(accent(text)) : dim(text), action: t.action };
+  });
+  out.row = n > 0;
+  return out;
+}
+
 function draw() {
   const cols = process.stdout.columns || 60, rows = process.stdout.rows || 24;
   if (ui.settings) return paint(settingsLines(cols, rows), rows);
@@ -1258,22 +1284,31 @@ function draw() {
   ui.buttons = [];
   const autopilot = autopilotOn();
 
-  // Header: repo, spinner, then the profiles, refresh and open-on-the-forge buttons.
-  // Resolve and Review are the rows' own buttons (#13); a presses the selected row's.
-  // On GitHub's issues, Auto-pilot's ☑ comes first, highlighted while its mode is on (#31).
-  const tools = [[" ⚙ ", () => openSettings()], [" ↻ ", () => refresh()]];
-  if (ui.repo?.url) tools.push([" ↗ ", () => openUrl(ui.repo.url)]);
-  const toggle = autopilotOffered() ? " ☑ " : "";
-  const right = toggle + tools.map(([t]) => t).join("");
+  // Header: repo and spinner, then the Auto-pilot, profiles, refresh and
+  // open-on-the-forge buttons. Resolve and Review are the rows' own buttons (#13);
+  // a presses the selected row's. On GitHub's issues, Auto-pilot's ☑ comes first,
+  // highlighted while its mode is on (#31).
   const action = actionFor(ui.view);
   const spin = ui.loading ? yellow(SPIN[ui.frame % SPIN.length]) + " " : "";
-  const title = fit(ui.repo?.name ?? ui.forge?.name ?? "Pull requests and issues", cols - width(right) - 3 - (spin ? 2 : 0));
-  const gap = " ".repeat(Math.max(0, cols - 1 - width(title) - (spin ? 2 : 0) - width(right)));
-  const shownToggle = toggle && (autopilot ? invert(accent(toggle)) : dim(toggle));
-  out.push(` ${link(ui.repo?.url, bold(title))}${gap}${spin}${shownToggle}${dim(right.slice(toggle.length))}`);
-  let at = cols - width(right);
-  if (toggle) { ui.buttons.push({ row: 0, from: at, to: at + width(toggle), action: () => toggleAutopilot() }); at += width(toggle); }
-  for (const [t, fn] of tools) { ui.buttons.push({ row: 0, from: at, to: at + width(t), action: fn }); at += width(t); }
+  const name = ui.repo?.name ?? ui.forge?.name ?? "Pull requests and issues";
+  const tools = headerTools(cols, rows, autopilot);
+  if (tools.row) {
+    // The buttons on a row of their own, labelled while they fit: the repo keeps line 1.
+    const title = fit(name, cols - 2 - (spin ? 2 : 0));
+    const gap = " ".repeat(Math.max(0, cols - 1 - width(title) - (spin ? 2 : 0)));
+    out.push(` ${link(ui.repo?.url, bold(title))}${gap}${spin}`);
+    let at = 0;
+    for (const t of tools) { ui.buttons.push({ row: out.length, from: at, to: at + width(t.text), action: t.action }); at += width(t.text); }
+    out.push(tools.map((t) => t.shown).join(""));
+  } else {
+    // Too narrow for even one label: the bare icons, at the end of line 1, as before.
+    const right = tools.map((t) => t.text).join("");
+    const title = fit(name, cols - width(right) - 3 - (spin ? 2 : 0));
+    const gap = " ".repeat(Math.max(0, cols - 1 - width(title) - (spin ? 2 : 0) - width(right)));
+    out.push(` ${link(ui.repo?.url, bold(title))}${gap}${spin}${tools.map((t) => t.shown).join("")}`);
+    let at = cols - width(right);
+    for (const t of tools) { ui.buttons.push({ row: 0, from: at, to: at + width(t.text), action: t.action }); at += width(t.text); }
+  }
   out.push(dim("─".repeat(cols)));
 
   // The switch: Pull requests (or Merge requests) N / Issues N.
@@ -1285,8 +1320,8 @@ function draw() {
     return ui.view === view ? invert(bold(cell)) : muted(cell);
   };
   out.push(segment("prs", ui.forge?.prs ?? "Pull requests", ui.prs.length, half) + segment("issues", "Issues", ui.issues.length, cols - half));
-  ui.buttons.push({ row: 2, from: 0, to: half, action: () => pick("prs") });
-  ui.buttons.push({ row: 2, from: half, to: cols, action: () => pick("issues") });
+  ui.buttons.push({ row: out.length - 1, from: 0, to: half, action: () => pick("prs") });
+  ui.buttons.push({ row: out.length - 1, from: half, to: cols, action: () => pick("issues") });
   out.push(dim("─".repeat(cols)));
 
   // The list, scrolled so the selected row is in full view, above any notice.

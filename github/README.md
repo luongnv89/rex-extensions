@@ -59,7 +59,8 @@ Press the key in any pane. The panel opens on the right of the tab, 36 columns w
   - `s` opens the agent profiles (see [Agent profiles](#agent-profiles));
   - `p`, on GitHub's issues, turns Auto-pilot mode on or off. In it, space or `x` checks or unchecks the selected issue, enter is **Start** (it does nothing while no issue is checked), and esc or `q` leave the mode, unchecking everything, rather than close the panel (see [Auto-pilot several issues](#auto-pilot-several-issues));
   - `q` or esc closes the panel.
-- **Mouse:** click a row to open it (in Auto-pilot mode, to check or uncheck it), click the switch to change lists, click a row's `Resolve #N`, `Review #N`, `Merge #N` or `Close #N` button, `☑`, `⚙`, `↻` or `↗` in the header, **Start** or **Cancel** in Auto-pilot mode, a profile in the menu the Resolve, Review and Start buttons open, and scroll with the wheel.
+- **Header buttons:** under the repo's name, on a line of their own: **☑ Auto-pilot** (GitHub's issues only), **⚙ Profiles**, **↻ Refresh**, and **↗ GitHub** or **↗ GitLab**, which opens the repo. In a narrower pane the labels drop from the right, leaving those buttons' icons. In a pane too narrow for even the first label, or shorter than 12 lines, the buttons are bare icons at the end of the repo's line, which leaves the list that line.
+- **Mouse:** click a row to open it (in Auto-pilot mode, to check or uncheck it), click the switch to change lists, click a row's `Resolve #N`, `Review #N`, `Merge #N` or `Close #N` button, **☑ Auto-pilot**, **⚙ Profiles**, **↻ Refresh** or **↗ GitHub** (**↗ GitLab**) in the header, **Start** or **Cancel** in Auto-pilot mode, a profile in the menu the Resolve, Review and Start buttons open, and scroll with the wheel.
 - **When a row can't be opened:** the panel shows why in red, a hint to Cmd- or Ctrl-click the URL, and the whole URL above the key hints. The URL is a terminal hyperlink too. Any key, or the next open, clears it.
 - **Fetching:** when the repo changes, every 2 minutes while the panel's tab is the one its session shows, and on `r`.
 - **Lists:** the 50 most recently opened of each on GitHub, and the 50 most recently updated on GitLab. The panel remembers which list you chose.
@@ -100,7 +101,7 @@ The Resolve and Review buttons don't show on GitLab, because both skills work th
 
 ## Auto-pilot several issues
 
-On GitHub, in the issues list, the header has a `☑` button before `⚙`. Click it, or press `p`, to enter Auto-pilot mode:
+On GitHub, in the issues list, the header has a **☑ Auto-pilot** button before **⚙ Profiles**. Click it, or press `p`, to enter Auto-pilot mode:
 
 - **Check the issues.** Every issue row shows a checkbox, `☐`, in place of its icon, and its Resolve and Close buttons step aside. Click a row, or select it and press space or `x`, to check it (`☑`) or uncheck it. A click on a row opens nothing in this mode.
 - **Start.** The key hints give way to a bar with **▶ Start** and **✕ Cancel**. Start is dimmed and does nothing until you check an issue; it then reads **▶ Start N**, N being how many are checked. Click it, or press enter, to run one agent on all of them; in this mode enter starts rather than opens, so the bar's key hints begin with `⏎ start`. In a narrow pane they shorten to each key by the glyph of what it presses, `⏎▶ · ␣☑ · q✕`, so they still name the keys that start, check and cancel. Start appears only in this mode.
@@ -223,7 +224,7 @@ A profile whose model is in neither list, made before the lists or edited in the
 
 ### Edit them
 
-Press `s`, or click `⚙` in the header. `↑`/`↓` select a profile, `n` adds one, `e` or enter edits it, `d` deletes it (`y` confirms), `R` assigns it to Resolve and `V` to Review. With the mouse, click a profile to select it; it then shows **Use for Resolve**, **Use for Review**, **Edit** and **Delete** buttons (the default profile only the first two), and **+ New** in the header adds one. In the form, `↑`/`↓` or tab move between fields, `←`/`→` or space step through the harness, model and thinking choices, on **Model** `+` adds a model and `-` removes one you added, typing edits a text field, enter (or the **Save** button) saves and esc (or **Cancel**, or `✕`) goes back. A field that can't be saved shows why under it. Keys typed into a field stay in the field: `q` doesn't close the panel. Esc in the list goes back to the rows. In a narrow pane the key hints wrap onto more lines.
+Press `s`, or click **⚙ Profiles** in the header. `↑`/`↓` select a profile, `n` adds one, `e` or enter edits it, `d` deletes it (`y` confirms), `R` assigns it to Resolve and `V` to Review. With the mouse, click a profile to select it; it then shows **Use for Resolve**, **Use for Review**, **Edit** and **Delete** buttons (the default profile only the first two), and **+ New** in the header adds one. In the form, `↑`/`↓` or tab move between fields, `←`/`→` or space step through the harness, model and thinking choices, on **Model** `+` adds a model and `-` removes one you added, typing edits a text field, enter (or the **Save** button) saves and esc (or **Cancel**, or `✕`) goes back. A field that can't be saved shows why under it. Keys typed into a field stay in the field: `q` doesn't close the panel. Esc in the list goes back to the rows. In a narrow pane the key hints wrap onto more lines.
 
 A profile that can't be saved shows why, in red, and nothing is written.
 

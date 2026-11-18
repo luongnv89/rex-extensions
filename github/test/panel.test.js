@@ -261,8 +261,15 @@ function setup(view) {
 // SGR mouse events, as a terminal sends them with mouse reporting on (1-based x;y).
 const press = (y) => `\x1b[<0;5;${y + 1}M\x1b[<0;5;${y + 1}m`;
 const wheelDown = "\x1b[<65;5;10M";
-// Lines 0-3 are the header and the switch, 4-22 the list, 23 the key hints.
-const LIST = { from: 4, to: 22 }, FOOTER = 23;
+// At 60 cells, lines 0-4 are the header (the repo, then its labelled buttons on
+// line 1) and the switch, 5-22 the list, 23 the key hints.
+const LIST = { from: 5, to: 22 }, FOOTER = 23, TOOLS = 1, SWITCH = 3;
+// Where the header's button with `icon` is drawn: on the buttons' own line, or at
+// the end of line 0 in a pane too narrow for labels.
+const toolAt = (lines, icon) => {
+  for (const y of [TOOLS, 0]) { const x = (lines[y] ?? "").indexOf(icon); if (x > 0) return [x, y]; }
+  assert.fail(`no ${icon} in the header:\n${lines.slice(0, 2).join("\n")}`);
+};
 
 test("a click on a pull request opens that pull request", () => {
   const lines = setup("prs");
@@ -307,12 +314,13 @@ test("a click leaves the lists and the scroll position as they were", () => {
   setup("prs");
   // The selected row's URL line goes below the view, so the rows above it stay put.
   ui.sel.prs = ui.prs.length - 1;
-  const lines = screen(() => onInput(Buffer.from(wheelDown + wheelDown)));
+  // 25 lines: the list's last line is then a row's title, the rest of it below.
+  const lines = screenAt(60, 25, () => onInput(Buffer.from(wheelDown + wheelDown)));
   const top = { ...ui.top }, prs = JSON.stringify(ui.prs), issues = JSON.stringify(ui.issues);
   // The bottom row is cut off: a click must not scroll to show the rest of it.
-  const y = LIST.to;
+  const y = LIST.to + 1;
   assert.match(lines[y], /Title \d/);
-  screen(() => onInput(Buffer.from(press(y))));
+  screenAt(60, 25, () => onInput(Buffer.from(press(y))));
   assert.equal(opened.length, 1);
   assert.deepEqual(ui.top, top);
   assert.equal(JSON.stringify(ui.prs), prs);
@@ -368,9 +376,8 @@ test("o and the header's ↗ show the repo URL when it can't be opened", () => {
   setup("issues");
   let lines = screen(() => { onInput(Buffer.from("o")); lastChild.emit("exit", 3, null); });
   assert.equal(noticeOf(lines)?.url, "https://x/o/p");
-  const x = setup("issues")[0].indexOf("↗");
-  assert.ok(x > 0);
-  lines = screen(() => { onInput(Buffer.from("j")); click(x, 0); lastChild.emit("error", enoent()); });
+  const [x, y] = toolAt(setup("issues"), "↗");
+  lines = screen(() => { onInput(Buffer.from("j")); click(x, y); lastChild.emit("error", enoent()); });
   assert.deepEqual(opened, ["https://x/o/p"]);
   assert.equal(noticeOf(lines)?.url, "https://x/o/p");
   assert.equal(noticeOf(lines)?.reason, `${lastChild.cmd} not found`);
@@ -630,16 +637,60 @@ function clickWithMenu(x, y) {
 }
 const text = (lines) => lines.map((l) => l?.trim()).join(" ");
 
+test("the header's buttons are labelled on a line of their own while they fit, bare icons after the repo otherwise", (t) => {
+  claudeHome(t);
+  setupGitHub("issues");
+  const header = (cols, rows) => {
+    const lines = screenAt(cols, rows, draw);
+    for (const l of lines) assert.ok(width(l ?? "") <= cols, `${cols}x${rows}: ${l}`);
+    return lines;
+  };
+  // Labelled from the left while the line fits; the rest keep their bare icon.
+  for (const [cols, tools] of [
+    [60, " ☑ Auto-pilot  ⚙ Profiles  ↻ Refresh  ↗ GitHub"],
+    [47, " ☑ Auto-pilot  ⚙ Profiles  ↻ Refresh  ↗ GitHub"],
+    [46, " ☑ Auto-pilot  ⚙ Profiles  ↻ Refresh  ↗"],
+    [28, " ☑ Auto-pilot  ⚙  ↻  ↗"],
+  ]) {
+    const lines = header(cols, 24);
+    assert.equal(lines[0].trimEnd(), " o/p", `${cols}`);
+    assert.equal(lines[TOOLS].trimEnd(), tools, `${cols}`);
+    assert.ok(lines[TOOLS + 1].startsWith("─"), `${cols}`);
+  }
+  // No room for even one label, or a pane too short to spare its list a line:
+  // the bare icons end line 0, and the rule follows it, as before labels.
+  for (const [cols, rows] of [[22, 24], [60, 11]]) {
+    const lines = header(cols, rows);
+    assert.match(lines[0], /☑ {2}⚙ {2}↻ {2}↗ $/, `${cols}x${rows}`);
+    assert.ok(lines[1].startsWith("─"), `${cols}x${rows}`);
+  }
+  assert.ok(!header(60, 12)[0].includes("⚙"), "12 lines are enough for the labelled line");
+  // GitLab's ↗ names GitLab; no ☑ there.
+  ui.forge = FORGES.gitlab;
+  assert.equal(header(60, 24)[TOOLS].trimEnd(), " ⚙ Profiles  ↻ Refresh  ↗ GitLab");
+  // A click anywhere on a button, its label too, presses it.
+  setupGitHub("issues");
+  let lines = header(60, 24);
+  screenAt(60, 24, () => click(lines[TOOLS].indexOf("Auto-pilot") + 4, TOOLS));
+  assert.equal(ui.autopilot.on, true);
+  lines = header(60, 24);
+  screenAt(60, 24, () => click(lines[TOOLS].indexOf("Auto-pilot") + 9, TOOLS));
+  assert.equal(ui.autopilot.on, false);
+  screenAt(60, 24, () => click(lines[TOOLS].indexOf("Profiles") + 7, TOOLS));
+  assert.equal(ui.settings?.mode, "list");
+});
+
 test("the header has no Resolve or Review button; the rows do, and a acts on the selected one, on GitHub only (#13)", () => {
   let lines = setupGitHub("issues");
   // Only the profiles, refresh and open buttons are left in the header, after
-  // Auto-pilot's ☑ on the issues (#31).
-  assert.match(lines[0], /^ o\/p +☑ {2}⚙ {2}↻ {2}↗ $/);
+  // Auto-pilot's ☑ on the issues (#31), each labelled on a line of its own.
+  assert.match(lines[0], /^ o\/p +$/);
+  assert.equal(lines[TOOLS].trimEnd(), " ☑ Auto-pilot  ⚙ Profiles  ↻ Refresh  ↗ GitHub");
   assert.doesNotMatch(lines[0], /Resolve|Review/);
   assert.ok(find(lines, "Resolve #12")[1] > LIST.from, lines.join("\n"));
   assert.match(lines[FOOTER], /^ a resolve #12 · ↑↓ select · ⏎ open ·/);
   lines = setupGitHub("prs");
-  assert.match(lines[0], /^ o\/p +⚙ {2}↻ {2}↗ $/);
+  assert.equal(lines[TOOLS].trimEnd(), " ⚙ Profiles  ↻ Refresh  ↗ GitHub");
   assert.doesNotMatch(lines[0], /Resolve|Review|Merge/);
   assert.ok(find(lines, "Review #12")[1] > LIST.from, lines.join("\n"));
   assert.match(lines[FOOTER], /^ a review #12 · ↑↓ select · ⏎ open ·/);
@@ -1149,7 +1200,7 @@ test("a click inside the profile views opens nothing and starts nothing", (t) =>
 test("the header's ⚙ opens the profiles; e edits and d deletes, and the default stays", (t) => {
   const dir = claudeHome(t);
   const lines = setupGitHub("issues");
-  screen(() => click(lines[0].indexOf("⚙"), 0));
+  screen(() => click(...toolAt(lines, "⚙")));
   assert.equal(ui.settings?.mode, "list");
   // The default can't be edited or deleted.
   let shown = screen(() => onInput(Buffer.from("e")));
@@ -1445,7 +1496,7 @@ test("launch notices name the harness, and lead with what to do", async (t) => {
   // the URL under the message stays whole, and so do the key hints.
   ui.notice = { tone: "error", text: "word ".repeat(400), url: "https://x/install" };
   lines = screen(draw);
-  assert.ok(!lines[4].startsWith(" word") && lines[5].startsWith("─"), lines.join("\n"));
+  assert.ok(!lines[LIST.from].startsWith(" word") && lines[LIST.from + 1].startsWith("─"), lines.join("\n"));
   assert.ok(lines[21].endsWith("…"), lines.join("\n"));
   assert.equal(lines[22], " https://x/install");
   assert.match(lines[23], /^ a resolve #12 · ↑↓ select/);
@@ -2097,8 +2148,8 @@ test("esc, q, the wheel and a click elsewhere close the menu and start nothing, 
     wheel: () => onInput(Buffer.from(wheelDown)),
     "a row": (lines) => onInput(Buffer.from(press(lines.findIndex((l) => l?.includes("Title 0"))))),
     // Its other half: a click that went on to the switch would change the list.
-    "the switch": () => onInput(Buffer.from(press(2))),
-    "the header's ⚙": (lines) => click(lines[0].indexOf("⚙"), 0),
+    "the switch": () => onInput(Buffer.from(press(SWITCH))),
+    "the header's ⚙": (lines) => click(...toolAt(lines, "⚙")),
   };
   for (const [what, close] of Object.entries(closers)) {
     const lines = setupGitHub("issues");
@@ -2843,7 +2894,7 @@ test("Confirm merge is drawn where Merge was pressed, so a second click on the s
   // The last row in view: the notice would cover its button, so the list scrolls
   // just enough to keep it in view, and a press on it merges.
   await loadForge(t);
-  ui.top.prs = 1;
+  ui.top.prs = 2;
   let lines = screen(draw);
   const [, y] = find(lines, "Merge #13");
   assert.equal(y, LIST.to, lines.join("\n"));
@@ -2969,7 +3020,7 @@ test("any other key or click takes back a Merge press that asked; a second press
     "a click on a row": (lines) => onInput(Buffer.from(pressAt(10, find(lines, "Title 10")[1]))),
     "another row's Merge": (lines) => pressButton(lines, "Merge #11"),
     "its Review": (lines) => pressButton(lines, "Review #12"),
-    "the header's ↻": (lines) => onInput(Buffer.from(pressAt(lines[0].indexOf("↻"), 0))),
+    "the header's ↻": (lines) => onInput(Buffer.from(pressAt(...toolAt(lines, "↻")))),
   };
   for (const [what, other] of Object.entries(presses)) {
     const { lines } = await loadForge(t);
@@ -3751,7 +3802,7 @@ test("any other key or click, esc and q take back a Close press that asked, clos
     ["j", () => onInput(Buffer.from("j"))],
     ["esc", () => onInput(Buffer.from("\x1b"))],
     ["q", () => onInput(Buffer.from("q"))],
-    ["a click elsewhere", () => onInput(Buffer.from(pressAt(0, 1)))],
+    ["a click elsewhere", () => onInput(Buffer.from(pressAt(0, 2)))],
     ["another Close", () => pressButton(screen(draw), "Close #21")],
     ["a refresh into another repo", () => { ui.context = "/elsewhere"; }],
   ]) {
@@ -3846,7 +3897,7 @@ test("the CLIs' close arguments come from an integer only (#27)", () => {
 
 // Where things are in a frame: the header's ☑, an issue row's checkbox (its title
 // line, by the issue's title), and the Start bar's buttons.
-const toggleAt = (lines) => { const x = lines[0].indexOf("☑"); assert.ok(x > 0, lines[0]); return [x, 0]; };
+const toggleAt = (lines) => toolAt(lines, "☑");
 const rowAt = (lines, title) => { const y = lines.findIndex((l) => new RegExp(`[☐☑◉] ${title}$`).test(l?.trimEnd() ?? "")); assert.ok(y > 0, `${title}\n${lines.join("\n")}`); return [10, y]; };
 // A click on a title's row, the wheel first scrolling down to it when it's out of view.
 function clickRow(lines, title) {
@@ -3892,7 +3943,7 @@ test("the header's ☑ enters Auto-pilot mode on GitHub's issues, and every issu
     if (where === "gitlab") ui.forge = FORGES.gitlab;
     screen(() => onInput(Buffer.from("p")));
     lines = screen(draw);
-    assert.ok(!lines[0].includes("☑"), lines[0]);
+    assert.ok(!lines.slice(0, 2).join("").includes("☑"), lines.slice(0, 2).join("\n"));
     assert.equal(ui.autopilot.on, false, where);
     assert.ok(!lines.some((l) => /[☐☑]/.test(l ?? "")), lines.join("\n"));
   }
@@ -4124,6 +4175,8 @@ test("what is checked follows the list: a refresh or close drops the issues gone
   assert.match(lines[FOOTER], /▶ Start 2 /);
   // An issue closed from the panel, its close begun before the mode, is dropped too.
   ui.autopilot.on = false;
+  // Its buttons back, the selected row is kept in view, as after a key.
+  ui.follow = true;
   lines = screen(draw);
   pressButton(lines, "Close #24");
   later();
@@ -4167,7 +4220,7 @@ test("leaving Auto-pilot by switching lists says how many issues were unchecked,
   lines = screen(() => onInput(Buffer.from("\t")));
   lines = screen(() => onInput(mouse(...toggleAt(lines))));
   assert.equal(ui.autopilot.on, true);
-  lines = screen(() => onInput(mouse(2, 2)));
+  lines = screen(() => onInput(mouse(2, SWITCH)));
   assert.equal(ui.view, "prs");
   assert.equal(ui.autopilot.on, false);
   assert.equal(ui.notice, null);
@@ -4309,14 +4362,17 @@ test("at 28, 30, 40 and 60 cells, with the mode on or off, nothing is wider than
         for (let k = 1; k < here.length; k++) assert.ok(here[k - 1].to <= here[k].from, `row ${row}\n${where}`);
         for (const b of here) assert.ok(b.to <= cols, `row ${row}\n${where}`);
       }
-      // The header's ☑ is a button, as are Start and Cancel in the mode.
-      const [tx] = toggleAt(lines);
-      assert.ok(ui.buttons.some((b) => b.row === 0 && b.from === tx - 1 && b.to === tx + 2), where);
+      // The header's ☑ is a button, labelled on the buttons' own line at every
+      // width here, as are Start and Cancel in the mode.
+      const [tx, ty] = toggleAt(lines);
+      assert.equal(ty, TOOLS, where);
+      assert.ok(lines[TOOLS].startsWith(" ☑ Auto-pilot "), where);
+      assert.ok(ui.buttons.some((b) => b.row === TOOLS && b.from === tx - 1 && b.to === tx + 13), where);
       if (!on) { assert.match(lines[FOOTER], /^ a resolve #12 · /, where); continue; }
       const start = ui.buttons.find((b) => b.row === FOOTER && b.from === 1);
       assert.equal(lines[FOOTER].slice(start.from, start.to), " ▶ Start 1 ", where);
       assert.equal(lines[FOOTER].slice(start.to + 1, start.to + 11), " ✕ Cancel ", where);
-      assert.match(lines[0], /☑ {2}⚙ {2}↻ {2}↗ $/, where);
+      assert.match(lines[TOOLS], /^ ☑ Auto-pilot +⚙/, where);
       // A click on it at this width starts: here, the profile menu opens.
       screenAt(cols, 24, () => onInput(mouse(start.from + 1, FOOTER)));
       assert.ok(ui.menu?.autopilot, where);
