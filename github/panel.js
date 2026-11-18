@@ -2219,23 +2219,26 @@ function settingsLines(cols, rows) {
     if (!st.promptSel && st.sel === entries().length - 1) selEnd = Infinity;
     // Each action's prompt, then Auto-pilot's (#31): your own, or the default it
     // sends without one; then the merge mode (#39), in plain words. A row's state
-    // ("default" dim, "custom" in the accent) sits at the right edge, and the
-    // selected row's button (Edit, or Change) takes its place, so a click on the
-    // row only selects it.
+    // ("default" dim, "custom" in the accent) sits at the right edge. The selected
+    // row's button (Edit, or Change) goes there, the state just before it, so which
+    // prompt is in use still shows; a pane too narrow for the whole name, the state
+    // and the button drops the state. A click on the row only selects it.
     const belowRow = (key, title, value, state, button, press) => {
       if (key !== BELOW_ROWS[0] && key !== MERGE_ROW) { body.push(""); owner.push(null); }
       const on = st.promptSel === key && st.mode === "list", bar = on ? accent("▌") : " ", b = ` ${button} `;
       const select = () => { Object.assign(st, { promptSel: key, error: null, mode: "list" }); draw(); };
-      const right = on ? width(b) + 1 : state ? width(state[1]) + 1 : 0;
-      const label = fit(title, cols - 3 - right - (right ? 1 : 0));
+      const tag = state && (!on || 2 + width(title) + 1 + width(state[1]) + 1 + width(b) <= cols - 1) ? state : null;
+      const tagged = tag ? state[0](state[1]) : "";
+      const right = (on ? width(b) + 1 : 0) + (tag ? width(state[1]) + 1 : 0);
+      const label = fit(title, cols - 3 - right - (right && !(on && tag) ? 1 : 0));
       const gap = " ".repeat(Math.max(1, cols - 2 - width(label) - right));
       if (on) {
         selStart = body.length;
         if (key === BELOW_ROWS[0] || key === MERGE_ROW) selHead = headAt;
         const x = cols - 1 - width(b);
         hits[body.length] = [{ from: x, to: x + width(b), action: press }];
-        body.push(`${bar} ${bold(label)}${gap}${invert(b)}`);
-      } else body.push(`${bar} ${label}${state ? gap + state[0](state[1]) : ""}`);
+        body.push(`${bar} ${bold(label)}${gap}${tag ? tagged + " " : ""}${invert(b)}`);
+      } else body.push(`${bar} ${label}${tag ? gap + tagged : ""}`);
       body.push(`${bar}   ${value}`);
       owner.push(select, select);
       if (on) selEnd = ownEnd = body.length;

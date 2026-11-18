@@ -1811,7 +1811,7 @@ test("the profiles view sets, changes and clears each action's prompt, under the
   // ↓ past the last profile selects the Resolve prompt; e edits it.
   lines = screen(() => onInput(Buffer.from("jj")));
   assert.equal(ui.settings.promptSel, "resolve");
-  assert.match(lines[at("Resolve")], /^▌ Resolve +Edit $/);
+  assert.match(lines[at("Resolve")], /^▌ Resolve +default  Edit $/);
   lines = screen(() => onInput(Buffer.from("e")));
   assert.equal(ui.settings.mode, "prompt");
   assert.match(lines[0], /^ Resolve prompt +✕ $/);
@@ -1883,7 +1883,7 @@ test("the prompt rows work with the mouse: a click selects, Edit edits, Use defa
     assert.equal(ui.settings.mode, "list", `a click at ${cx} on the selected row opened its editor`);
   }
   [x, y] = find(lines, " Edit ");
-  assert.equal(lines[y].trim().replace(/ +/g, " "), "▌ Review Edit");
+  assert.equal(lines[y].trim().replace(/ +/g, " "), "▌ Review custom Edit");
   lines = screen(() => click(x + 1, y));
   assert.equal(ui.settings.mode, "prompt");
   assert.equal(ui.settings.prompt.text, "Review #{number}");
@@ -1935,7 +1935,7 @@ test("a prompt is not saved to a read-only or changed store, and fits a narrow p
     setupGitHub("issues");
     lines = screenAt(cols, 24, () => onInput(Buffer.from("sj")));
     fitsWithHints(lines, cols, 24, "↑↓ select", "esc back");
-    assert.ok(lines.some((l) => /^▌ Resolve +Edit $/.test(l)), `${cols}:\n${lines.join("\n")}`);
+    assert.ok(lines.some((l) => /^▌ Resolve +default  Edit $/.test(l)), `${cols}:\n${lines.join("\n")}`);
     lines = screenAt(cols, 24, () => onInput(Buffer.from(`\r${"word ".repeat(30)}\\\r`)));
     fitsWithHints(lines, cols, 24, "type to edit", "esc back");
     // The whole text, broken over lines that each start with the bar.
@@ -1993,11 +1993,11 @@ test("the wheel reaches the prompt rows and the prompt's buttons in a short pane
     assert.equal(ui.settings.promptSel, "resolve", where(lines));
     lines = at(wheel(true));
     assert.equal(ui.settings.promptSel, "review", where(lines));
-    assert.ok(lines.some((l) => /^▌ Review +Edit $/.test(l ?? "")), where(lines));
+    assert.ok(lines.some((l) => /^▌ Review +default  Edit $/.test(l ?? "")), where(lines));
     // On to Auto-pilot's (#31).
     lines = at(wheel(true));
     assert.equal(ui.settings.promptSel, "autopilot", where(lines));
-    assert.ok(lines.some((l) => /^▌ Auto-pilot +Edit $/.test(l ?? "")), where(lines));
+    assert.ok(lines.some((l) => /^▌ Auto-pilot +default  Edit $/.test(l ?? "")), where(lines));
     fitsWithHints(lines, cols, rows, "↑↓ select", "esc back");
     // On to the last, the merge mode's (#39), where the wheel stops.
     lines = at(wheel(true) + wheel(true));
@@ -2066,7 +2066,7 @@ test("the settings' section headings stay over a selected first row while both f
   for (const rows of [6, 9, 24]) {
     setupGitHub("issues");
     // j selects the Resolve row, PROMPTS' first; four more reach MERGING's only row.
-    for (const [keys, heading, row] of [["sj", "PROMPTS", /^▌ Resolve +Edit $/], ["sjjjj", "MERGING", /^▌ After a merge +Change $/]]) {
+    for (const [keys, heading, row] of [["sj", "PROMPTS", /^▌ Resolve +default  Edit $/], ["sjjjj", "MERGING", /^▌ After a merge +Change $/]]) {
       const lines = screenAt(28, rows, () => { ui.settings = null; onInput(Buffer.from(keys)); });
       const where = `28x${rows} ${keys}:\n${lines.join("\n")}`;
       const at = lines.findIndex((l) => row.test(l ?? ""));
@@ -2074,6 +2074,33 @@ test("the settings' section headings stay over a selected first row while both f
       if (rows > 6) assert.match(lines[at - 1], new RegExp(`^ ${heading} ─+$`), where);
     }
     screenAt(28, rows, () => onInput(Buffer.from("\x1b")));
+  }
+  // With the default profile alone, selected as the view opens, PROFILES stays over it too.
+  setupGitHub("issues");
+  const lines = screenAt(28, 10, () => { ui.settings = null; onInput(Buffer.from("s")); });
+  const where = `28x10 s:\n${lines.join("\n")}`;
+  const at = lines.findIndex((l) => /^▌ Claude Code/.test(l ?? ""));
+  assert.ok(at > 0, where);
+  assert.match(lines[at - 1], /^ PROFILES ─+$/, where);
+  screenAt(28, 10, () => onInput(Buffer.from("\x1b")));
+});
+
+test("a selected prompt row keeps its default or custom tag before its Edit button, within the pane", (t) => {
+  const dir = claudeHome(t);
+  for (const cols of [28, 60]) {
+    usePrompts(dir, { review: "Review #{number}" }, [], {});
+    setupGitHub("issues");
+    // j selects Resolve, a second j Review and a third Auto-pilot.
+    for (const [keys, row] of [["sj", /^▌ Resolve +default  Edit $/], ["sjj", /^▌ Review +custom  Edit $/], ["sjjj", /^▌ Auto-pilot +default  Edit $/]]) {
+      const lines = screenAt(cols, 24, () => { ui.settings = null; onInput(Buffer.from(keys)); });
+      const where = `${cols} ${keys}:\n${lines.join("\n")}`;
+      const shown = lines.find((l) => row.test(l ?? ""));
+      assert.ok(shown, where);
+      // The row ends a cell short of the edge, as the unselected rows' tags do.
+      assert.equal(width(shown), cols - 1, where);
+      for (const l of lines) assert.ok(width(l ?? "") <= cols, `${where}\n${l}`);
+    }
+    screenAt(cols, 24, () => onInput(Buffer.from("\x1b")));
   }
 });
 

@@ -59,7 +59,7 @@ Press the key in any pane. The panel opens on the right of the tab, 36 columns w
   - `m` presses the selected pull request's **Merge #N** button, and `c` the selected issue's **Close #N** button; both ask first, and `y` confirms (see [Merge a pull request](#merge-a-pull-request) and [Close an issue](#close-an-issue));
   - `s` opens the settings: the agent profiles, prompts and merge mode (see [Agent profiles](#agent-profiles));
   - `p`, on GitHub's issues, turns Auto-pilot mode on or off. In it, space or `x` checks or unchecks the selected issue, enter is **Start** (it does nothing while no issue is checked), and esc or `q` leave the mode, unchecking everything, rather than close the panel (see [Auto-pilot several issues](#auto-pilot-several-issues));
-  - `?` lists every key of the view you're in: the lists, Auto-pilot, the profile menu or the profiles. `?`, esc, `q` or a click closes the list, and no other key reaches the view under it. The key hints say `? keys`, early enough to stay in view in a 36-column pane; in a wide pane they also name `m merge #N` or `c close #N` for the selected row;
+  - `?` lists every key of the view you're in: the lists, Auto-pilot, the profile menu or the settings. `?`, esc, `q` or a click closes the list, and no other key reaches the view under it. The key hints say `? keys`, early enough to stay in view in a 36-column pane; in a wide pane they also name `m merge #N` or `c close #N` for the selected row;
   - `q` or esc closes the panel.
 
   Every button has a key, so the panel works without a mouse.
@@ -175,11 +175,11 @@ A custom prompt needs no skill, so the panel doesn't look for one: the agent sta
 
 Leave the prompt empty to send the default again: the skill and the number, as above.
 
-In the settings (`s`), the **PROMPTS** section, under the profiles, has a **Resolve**, **Review** and **Auto-pilot** row, each showing the prompt it sends and, at its right, whether that's the `default` (dim) or your own (`custom`). `↓` past the last profile selects them, and so does the mouse wheel; `e` or enter (or the selected row's **Edit** button) edits one. Type the prompt, then enter (or **Save**) saves it and esc (or **Cancel**) goes back. A prompt that can't be saved shows why under it. Empty it, or click **Use default** or press ctrl-r (shown as `^R default` while you have a custom prompt), to send the default again. In a short pane, the wheel scrolls the prompt down to its buttons.
+In the settings (`s`), the **PROMPTS** section, under the profiles, has a **Resolve**, **Review** and **Auto-pilot** row, each showing the prompt it sends and, at its right, whether that's the `default` (dim) or your own (`custom`); the selected row keeps it, before its **Edit** button. `↓` past the last profile selects them, and so does the mouse wheel; `e` or enter (or the selected row's **Edit** button) edits one. Type the prompt, then enter (or **Save**) saves it and esc (or **Cancel**) goes back. A prompt that can't be saved shows why under it. Empty it, or click **Use default** or press ctrl-r (shown as `^R default` while you have a custom prompt), to send the default again. In a short pane, the wheel scrolls the prompt down to its buttons.
 
 ### Auto-pilot
 
-Auto-pilot's prompt works the same way, edited in the **Auto-pilot prompt** row, but with `{numbers}` where the checked issues' numbers go, separated by commas with no spaces, in the list's order (`12,15`), such as:
+Auto-pilot's prompt works the same way, edited in the **Auto-pilot** row, but with `{numbers}` where the checked issues' numbers go, separated by commas with no spaces, in the list's order (`12,15`), such as:
 
 ```
 /idd:auto-pilot --issues {numbers}
@@ -253,7 +253,7 @@ A file with a model you added is version 3, with a `customModels` object of each
 
 A file with a custom Auto-pilot prompt is version 4: as version 3, with `"autopilot"` among its `prompts` (and a `customModels` object, empty when you added no model). Only version 4 holds it; once you clear it, the file goes back to the lowest version that holds the rest, byte for byte as before. A panel from before version 4, and herdr-github, which has no Auto-pilot, show a version 4 file read only and never overwrite it.
 
-The panel reads the file when the profiles view opens and on every Resolve or Review click, and writes it only while it still holds what it read. If another panel changed it in the meantime, nothing is written, the view reads it again and asks you to make your change again. A file that isn't valid JSON, or is from a newer version of the panel, is shown read only and never overwritten; until you fix or delete it, the actions use the default. A file with a profile that can't be used (one edited by hand with a bad model, say) is read only too, so saving doesn't erase that profile or what it's assigned to: the view says which profile and why, the actions assigned to it use the default, and the other profiles still work. Fix or remove it in the file to save again. The same goes for a custom prompt that can't be used: the file is read only, and that action sends the default prompt until you fix it in the file. And for an added model that can't be used (a bad name, one listed twice, or one for a harness that doesn't exist): the file is read only, and the view says which.
+The panel reads the file when the settings open and on every Resolve or Review click, and writes it only while it still holds what it read. If another panel changed it in the meantime, nothing is written, the view reads it again and asks you to make your change again. A file that isn't valid JSON, or is from a newer version of the panel, is shown read only and never overwritten; until you fix or delete it, the actions use the default. A file with a profile that can't be used (one edited by hand with a bad model, say) is read only too, so saving doesn't erase that profile or what it's assigned to: the view says which profile and why, the actions assigned to it use the default, and the other profiles still work. Fix or remove it in the file to save again. The same goes for a custom prompt that can't be used: the file is read only, and that action sends the default prompt until you fix it in the file. And for an added model that can't be used (a bad name, one listed twice, or one for a harness that doesn't exist): the file is read only, and the view says which.
 
 ## Remote hosts
 
@@ -283,7 +283,7 @@ Rex runs `init.lua` and the panel as your user, with no sandbox. This one:
 - when you click Resolve or Review, or press `a`: reads the profiles file, runs `rex` to read the foreground program of the panes in its tab and `rex split` to open a pane that runs the profile's agent with the skill and the number, or your custom prompt. For mcc, it first runs `mcc env` in the repo. It reads the skill folders listed under [Resolve and review with an agent](#resolve-and-review-with-an-agent). With a custom prompt it doesn't run `mcc env` or read the skill folders;
 - runs `open` (macOS) or `xdg-open` (Linux) when you open a row or the repo;
 - when you run `install.js`: runs `rex config check`, a `rex do` script that loads your `init.lua` to list the keys it binds, edits `init.lua` (see [Install](#install)), and runs `rex config reload`;
-- when you save, or add or remove a model, in the profiles view: writes `~/.config/rex-github/profiles.json` (see [Where they're kept](#where-theyre-kept));
+- when you save, or add or remove a model, in the settings: writes `~/.config/rex-github/profiles.json` (see [Where they're kept](#where-theyre-kept));
 - otherwise writes only `~/.local/state/rex-github/view`, `~/.local/state/rex-github/width` and `~/.local/state/rex-github/merge` (under `$XDG_STATE_HOME/rex-github/` when that's set): which list you chose, the width in columns you last dragged the panel to, and the merge mode, `delete` or `keep`. Delete `width` to go back to 36 columns, and `merge` to go back to deleting merged branches.
 
 It sends nothing anywhere except through `gh` to GitHub, or `glab` to GitLab.
