@@ -622,7 +622,7 @@ function gitlabMergeArgs(iid, head = null, mode = "delete") {
 // file, read again at every merge and every time the settings draw it: anything
 // but "keep" there (no file, an empty or damaged one) means delete.
 
-const MERGE_MODES = { delete: "Merge and delete branch", keep: "Merge and keep branch" };
+const MERGE_MODES = { delete: "Delete the branch", keep: "Keep the branch" };
 const mergeFile = () => path.join(STATE, "merge");
 
 function mergeMode() {
@@ -1352,7 +1352,7 @@ const MENU_KEYS = [" ↑↓/jk choose · ⏎ start · esc/q cancel", " ↑↓ ·
 // custom prompt is saved, which is when Use default shows.
 const binding = (keys, does, more = {}) => ({ keys: keys ? keys.split(" ") : [], does, ...more });
 const VIEW_KEYS = [
-  binding("s", "⚙ Profiles"),
+  binding("s", "⚙ Settings"),
   binding("r", "↻ Refresh"),
   binding("o", "↗ open the repo"),
 ];
@@ -1417,7 +1417,7 @@ const KEYMAP = {
   ],
 };
 // What ? is about, in the key list's title.
-const HELP_TITLES = { main: "the lists", autopilot: "Auto-pilot", menu: "the profile menu", settings: "Agent profiles" };
+const HELP_TITLES = { main: "the lists", autopilot: "Auto-pilot", menu: "the profile menu", settings: "Settings" };
 
 // The key list, over the whole pane like the profiles view: each key and what it
 // presses, the words wrapped beside it, scrolled by ↑↓ when the pane is too short.
@@ -1474,7 +1474,7 @@ function autopilotBar(cols, count) {
 
 // The header's buttons, each { text, shown, action }: text is what it takes on
 // screen, shown the same styled. On a row of their own (row true), labelled from
-// the left while the row fits ("☑ Auto-pilot  ⚙ Profiles  ↻ Refresh  ↗ GitHub"),
+// the left while the row fits ("☑ Auto-pilot  ⚙ Settings  ↻ Refresh  ↗ GitHub"),
 // the rest as their bare icon. With no room for even the first label, or in a
 // pane shorter than TOOLS_MIN_ROWS, whose list can't spare a line, they are bare
 // icons at the end of the title line, as before labels (row false).
@@ -1482,7 +1482,7 @@ const TOOLS_MIN_ROWS = 12;
 function headerTools(cols, rows, autopilot) {
   const tools = [];
   if (autopilotOffered()) tools.push({ icon: "☑", label: "Auto-pilot", on: autopilot, action: () => toggleAutopilot() });
-  tools.push({ icon: "⚙", label: "Profiles", action: () => openSettings() });
+  tools.push({ icon: "⚙", label: "Settings", action: () => openSettings() });
   tools.push({ icon: "↻", label: "Refresh", action: () => refresh() });
   if (ui.repo?.url) tools.push({ icon: "↗", label: ui.forge?.name ?? "Open", action: () => openUrl(ui.repo.url) });
   const bare = (t) => ` ${t.icon} `, labelled = (t) => ` ${t.icon} ${t.label} `;
@@ -2063,7 +2063,7 @@ function settingsLines(cols, rows) {
   tools.push([" ✕ ", () => settingsBack()]);
   const right = tools.reduce((w, [t]) => w + width(t), 0);
   const heading = fit(st.mode === "edit" ? (st.form.prev ? `Edit profile ${st.form.prev}` : "New profile")
-    : st.mode === "prompt" ? P.PROMPT_LABELS[st.prompt.action] : "Agent profiles", cols - right - 2);
+    : st.mode === "prompt" ? P.PROMPT_LABELS[st.prompt.action] : "⚙ Settings", cols - right - 2);
   out.push(` ${bold(heading)}${" ".repeat(Math.max(0, cols - 1 - width(heading) - right))}${dim(tools.map(([t]) => t).join(""))}`);
   let x = cols - right;
   for (const [t, action] of tools) { ui.buttons.push({ row: 0, from: x, to: x + width(t), action }); x += width(t); }
@@ -2096,7 +2096,9 @@ function settingsLines(cols, rows) {
 
   // Each line's click: the whole line's, and its buttons' first.
   const body = [], owner = [], hits = [];
-  let selStart = 0, selEnd = 0;
+  // `selHead` is the heading over a section's selected first row, kept in view with
+  // the row while both fit; `ownEnd` is where that row's lines end.
+  let selStart = 0, selEnd = 0, selHead = null, ownEnd = 0;
   const addButtons = (buttons, prefix, at, own) => {
     for (const l of buttonLines(buttons, cols, prefix, at)) { hits[body.length] = l.hits; body.push(l.text); owner.push(own); }
   };
@@ -2161,22 +2163,44 @@ function settingsLines(cols, rows) {
     body.push(""); owner.push(null);
     addButtons([["Save", () => savePrompt()], ...(hasCustom(st) ? [["Use default", useDefault]] : []), ["Cancel", () => settingsBack()]], "  ", 2, null);
   } else {
+    // Three sections, each under a heading ruled to the right edge: the profiles,
+    // the prompt each action sends, and what a merge does. A blank line before each
+    // heading but the first sets them apart; ↑↓ still walks every row in turn.
+    // A section's first row, when selected, keeps its heading in view if they fit.
+    let headAt = 0;
+    const section = (title) => {
+      if (body.length) { body.push(""); owner.push(null); }
+      headAt = body.length;
+      // The rule stops a cell short of the edge, where the rows' right tags end.
+      const t = fit(title, cols - 2);
+      body.push(` ${bold(t)} ${dim("─".repeat(Math.max(0, cols - 3 - width(t))))}`);
+      owner.push(null);
+    };
     const using = (id) => P.ACTION_KEYS.filter((a) => (st.store.assign[a] ?? P.DEFAULT_PROFILE.id) === id);
+    section("PROFILES");
     entries().forEach((q, i) => {
       if (i) { body.push(""); owner.push(null); }
       const on = i === st.sel && !st.promptSel, bar = on ? accent("▌") : " ";
       const select = () => { Object.assign(st, { sel: i, promptSel: null, error: null, mode: "list" }); draw(); };
       // The name keeps at least 12 cells: the Resolve and Review tags move down to
-      // the second line when they would squeeze it, and a long id is cut.
-      const idTag = q.id === P.DEFAULT_PROFILE.id ? "default" : q.id, tags = using(q.id).map((a) => ACTION_LABELS[a]).join(" · ");
+      // the second line when they would squeeze it, and a long id is cut. The id is
+      // dim and the actions it runs in the accent, so who does what reads at a glance;
+      // an id that only repeats the name isn't shown again.
+      const idTag = q.id === P.DEFAULT_PROFILE.id ? "default" : q.id === q.name ? "" : q.id, tags = using(q.id).map((a) => ACTION_LABELS[a]).join(" · ");
       const keep = Math.min(12, width(q.name)), together = [idTag, tags].filter(Boolean).join(" · ");
       const down = tags && cols - 5 - width(together) < keep;
       const tag = fit(down ? idTag : together, Math.max(1, cols - 5 - keep)), below = down ? fit(tags, cols - 4) : "";
+      const shownTag = tag.length > idTag.length && tag.startsWith(idTag) ? dim(idTag) + accent(tag.slice(idTag.length)) : dim(tag);
       const name = fit(q.name, Math.max(4, cols - width(tag) - 5));
-      if (on) selStart = body.length;
-      body.push(`${bar} ${on ? bold(name) : name}${" ".repeat(Math.max(1, cols - 3 - width(name) - width(tag)))}${accent(tag)}`);
-      body.push(`${bar}   ${below ? accent(below) + dim(fit(` · ${describe(q)}`, cols - 4 - width(below))) : dim(fit(describe(q), cols - 4))}`);
-      owner.push(select, select);
+      if (on) { selStart = body.length; if (!i) selHead = headAt; }
+      body.push(`${bar} ${on ? bold(name) : name}${" ".repeat(Math.max(1, cols - 3 - width(name) - width(tag)))}${shownTag}`);
+      // A description that only repeats the name isn't shown again: with no tags to
+      // move down either, the profile is then one line.
+      const desc = describe(q) === q.name ? "" : describe(q);
+      if (below || desc) {
+        body.push(`${bar}   ${below ? accent(below) + (desc ? dim(fit(` · ${desc}`, cols - 4 - width(below))) : "") : dim(fit(desc, cols - 4))}`);
+        owner.push(select, select);
+      } else owner.push(select);
       // The selected profile's buttons, on a line of their own.
       if (on) {
         const fixed = q.id === P.DEFAULT_PROFILE.id, used = using(q.id);
@@ -2187,40 +2211,48 @@ function settingsLines(cols, rows) {
             ...(fixed ? [] : [["Edit", () => editSelected()], ["Delete", () => askDelete()]]),
           ];
         addButtons(buttons, `${bar}   `, 4, select);
-        selEnd = body.length;
+        selEnd = ownEnd = body.length;
       }
     });
     // With the last profile selected, the prompt rows under it show too, as far as
     // they fit: the wheel or ↓ goes on to them.
     if (!st.promptSel && st.sel === entries().length - 1) selEnd = Infinity;
-    // Each action's prompt, then Auto-pilot's (#31), under the profiles: your own, or
-    // the default it sends without one; then the merge mode (#39), in plain words.
-    // The selected one's button (Edit, or Change) sits at the right edge, so a click
-    // on the row only selects it.
-    const belowRow = (key, title, value, button, press) => {
-      body.push(""); owner.push(null);
+    // Each action's prompt, then Auto-pilot's (#31): your own, or the default it
+    // sends without one; then the merge mode (#39), in plain words. A row's state
+    // ("default" dim, "custom" in the accent) sits at the right edge, and the
+    // selected row's button (Edit, or Change) takes its place, so a click on the
+    // row only selects it.
+    const belowRow = (key, title, value, state, button, press) => {
+      if (key !== BELOW_ROWS[0] && key !== MERGE_ROW) { body.push(""); owner.push(null); }
       const on = st.promptSel === key && st.mode === "list", bar = on ? accent("▌") : " ", b = ` ${button} `;
       const select = () => { Object.assign(st, { promptSel: key, error: null, mode: "list" }); draw(); };
-      const label = fit(title, cols - 3 - (on ? width(b) + 2 : 0));
+      const right = on ? width(b) + 1 : state ? width(state[1]) + 1 : 0;
+      const label = fit(title, cols - 3 - right - (right ? 1 : 0));
+      const gap = " ".repeat(Math.max(1, cols - 2 - width(label) - right));
       if (on) {
         selStart = body.length;
+        if (key === BELOW_ROWS[0] || key === MERGE_ROW) selHead = headAt;
         const x = cols - 1 - width(b);
         hits[body.length] = [{ from: x, to: x + width(b), action: press }];
-        body.push(`${bar} ${bold(label)}${" ".repeat(Math.max(1, x - 2 - width(label)))}${invert(b)}`);
-      } else body.push(`${bar} ${label}`);
+        body.push(`${bar} ${bold(label)}${gap}${invert(b)}`);
+      } else body.push(`${bar} ${label}${state ? gap + state[0](state[1]) : ""}`);
       body.push(`${bar}   ${value}`);
       owner.push(select, select);
-      if (on) selEnd = body.length;
+      if (on) selEnd = ownEnd = body.length;
     };
+    section("PROMPTS");
     for (const a of P.PROMPT_KEYS) {
       const custom = P.resolvePrompt(st.store, a);
-      belowRow(a, P.PROMPT_LABELS[a], custom ? fit(custom, cols - 4) : dim(fit(`default: ${DEFAULT_PROMPTS[a]}`, cols - 4)), "Edit", () => editPrompt(a));
+      belowRow(a, ACTION_LABELS[a], custom ? fit(custom, cols - 4) : dim(fit(DEFAULT_PROMPTS[a], cols - 4)),
+        custom ? [accent, "custom"] : [dim, "default"], "Edit", () => editPrompt(a));
     }
-    belowRow(MERGE_ROW, "Merge mode", fit(MERGE_MODES[mergeMode()], cols - 4), "Change", () => toggleMergeMode());
+    section("MERGING");
+    belowRow(MERGE_ROW, "After a merge", fit(MERGE_MODES[mergeMode()], cols - 4), null, "Change", () => toggleMergeMode());
   }
   // Keep the selected entry (or field) in view. A prompt keeps its end in view: the
   // line you type on, and its reason. The wheel scrolls the form and the prompt
   // from there.
+  if (selHead !== null && ownEnd - selHead <= height) selStart = selHead;
   const most = Math.max(0, body.length - height);
   const shown = st.mode === "prompt" ? Math.max(selStart, selEnd - height) : Math.min(selStart, Math.max(0, Math.min(selEnd, body.length) - height));
   const top = editing ? Math.max(0, Math.min(most, shown + (st.scroll || 0))) : shown;

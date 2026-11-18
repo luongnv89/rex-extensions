@@ -655,9 +655,9 @@ test("the header's buttons are labelled on a line of their own while they fit, b
   };
   // Labelled from the left while the line fits; the rest keep their bare icon.
   for (const [cols, tools] of [
-    [60, " ☑ Auto-pilot  ⚙ Profiles  ↻ Refresh  ↗ GitHub"],
-    [47, " ☑ Auto-pilot  ⚙ Profiles  ↻ Refresh  ↗ GitHub"],
-    [46, " ☑ Auto-pilot  ⚙ Profiles  ↻ Refresh  ↗"],
+    [60, " ☑ Auto-pilot  ⚙ Settings  ↻ Refresh  ↗ GitHub"],
+    [47, " ☑ Auto-pilot  ⚙ Settings  ↻ Refresh  ↗ GitHub"],
+    [46, " ☑ Auto-pilot  ⚙ Settings  ↻ Refresh  ↗"],
     [28, " ☑ Auto-pilot  ⚙  ↻  ↗"],
   ]) {
     const lines = header(cols, 24);
@@ -675,7 +675,7 @@ test("the header's buttons are labelled on a line of their own while they fit, b
   assert.ok(!header(60, 12)[0].includes("⚙"), "12 lines are enough for the labelled line");
   // GitLab's ↗ names GitLab; no ☑ there.
   ui.forge = FORGES.gitlab;
-  assert.equal(header(60, 24)[TOOLS].trimEnd(), " ⚙ Profiles  ↻ Refresh  ↗ GitLab");
+  assert.equal(header(60, 24)[TOOLS].trimEnd(), " ⚙ Settings  ↻ Refresh  ↗ GitLab");
   // A click anywhere on a button, its label too, presses it.
   setupGitHub("issues");
   let lines = header(60, 24);
@@ -684,7 +684,7 @@ test("the header's buttons are labelled on a line of their own while they fit, b
   lines = header(60, 24);
   screenAt(60, 24, () => click(lines[TOOLS].indexOf("Auto-pilot") + 9, TOOLS));
   assert.equal(ui.autopilot.on, false);
-  screenAt(60, 24, () => click(lines[TOOLS].indexOf("Profiles") + 7, TOOLS));
+  screenAt(60, 24, () => click(lines[TOOLS].indexOf("Settings") + 7, TOOLS));
   assert.equal(ui.settings?.mode, "list");
 });
 
@@ -693,12 +693,12 @@ test("the header has no Resolve or Review button; the rows do, and a acts on the
   // Only the profiles, refresh and open buttons are left in the header, after
   // Auto-pilot's ☑ on the issues (#31), each labelled on a line of its own.
   assert.match(lines[0], /^ o\/p +$/);
-  assert.equal(lines[TOOLS].trimEnd(), " ☑ Auto-pilot  ⚙ Profiles  ↻ Refresh  ↗ GitHub");
+  assert.equal(lines[TOOLS].trimEnd(), " ☑ Auto-pilot  ⚙ Settings  ↻ Refresh  ↗ GitHub");
   assert.doesNotMatch(lines[0], /Resolve|Review/);
   assert.ok(find(lines, "Resolve #12")[1] > LIST.from, lines.join("\n"));
   assert.match(lines[FOOTER], /^ a resolve #12 · ↑↓ select · ⏎ open ·/);
   lines = setupGitHub("prs");
-  assert.equal(lines[TOOLS].trimEnd(), " ⚙ Profiles  ↻ Refresh  ↗ GitHub");
+  assert.equal(lines[TOOLS].trimEnd(), " ⚙ Settings  ↻ Refresh  ↗ GitHub");
   assert.doesNotMatch(lines[0], /Resolve|Review|Merge/);
   assert.ok(find(lines, "Review #12")[1] > LIST.from, lines.join("\n"));
   assert.match(lines[FOOTER], /^ a review #12 · ↑↓ select · ⏎ open ·/);
@@ -1155,7 +1155,8 @@ test("s opens the profiles; a new profile is typed, saved and assigned, then use
   fs.rmSync(storeFile());
   setupGitHub("issues");
   let lines = screen(() => onInput(Buffer.from("s")));
-  assert.match(lines[0], /Agent profiles/);
+  assert.match(lines[0], /⚙ Settings/);
+  assert.match(lines[2], /^ PROFILES ─+$/);
   assert.match(lines.join("\n"), /Claude Code via mcc run +default · Resolve · Review/);
   // In the form, q and j are text, and Esc goes back without closing the panel.
   const exit = noExit(() => screen(() => {
@@ -1330,7 +1331,7 @@ test("the selected profile has buttons, the header a + New, and the form a Save"
   let lines = screen(() => onInput(Buffer.from("s")));
   // The default is selected: it can be assigned, not edited or deleted.
   assert.match(lines.join("\n"), / Use for Resolve {3}Use for Review \n/);
-  assert.ok(!lines.some((l) => /Edit |Delete /.test(l ?? "")), lines.join("\n"));
+  assert.ok(!lines.some((l) => l?.startsWith("▌") && /Edit |Delete /.test(l)), lines.join("\n"));
   let [x, y] = find(lines, "Use for Resolve");
   lines = screen(() => click(x + 1, y));
   assert.deepEqual(JSON.parse(fs.readFileSync(storeFile(), "utf8")).assign, { resolve: null, review: "cc" });
@@ -1389,7 +1390,7 @@ test("the profiles footer goes onto two lines when it doesn't fit, rather than b
   // Wide enough: one line.
   const lines = screenAt(100, 24, draw);
   assert.match(lines[23], /^ ↑↓ select · \? keys · n new · e edit · d delete · R\/V assign · esc back/);
-  assert.equal(lines[22], "");
+  assert.doesNotMatch(lines[22], /esc back|R\/V assign/);
 });
 
 test("the form names the id's rule, fits a narrow pane, and shows each field's reason under it", (t) => {
@@ -1462,7 +1463,8 @@ test("at 30 cells a profile keeps its name, its Resolve and Review tags move dow
   // cc, used by both: its whole name and id on top, the tags on the line under it.
   const y = lines.findIndex((l) => l?.includes("Claude Code") && l.trimEnd().endsWith("cc"));
   assert.ok(y > 0, lines.join("\n"));
-  assert.match(lines[y + 1], /^▌ {3}Resolve · Review · Claude/, lines.join("\n"));
+  // Claude Code on Claude Code: the description only repeats the name, so it isn't shown.
+  assert.match(lines[y + 1], /^▌ {3}Resolve · Review\s*$/, lines.join("\n"));
   // The confirm question and its keys, whole.
   lines = screenAt(cols, 24, () => onInput(Buffer.from("d")));
   for (const l of lines) assert.ok(width(l ?? "") <= cols, l);
@@ -1478,7 +1480,8 @@ test("at 30 cells a profile keeps its name, its Resolve and Review tags move dow
   lines = screenAt(40, 24, () => onInput(Buffer.from("R")));
   const d = lines.findIndex((l) => l?.includes("default"));
   assert.match(lines[d], /^▌ Claude Code via mcc run +default$/, lines.join("\n"));
-  assert.match(lines[d + 1], /^▌ {3}Resolve · Review · Claude Code via/, lines.join("\n"));
+  // Its description only repeats its name, so the tags stand alone.
+  assert.match(lines[d + 1], /^▌ {3}Resolve · Review\s*$/, lines.join("\n"));
   screenAt(cols, 24, () => onInput(Buffer.from("\x1b")));
 });
 
@@ -1802,13 +1805,13 @@ test("the profiles view sets, changes and clears each action's prompt, under the
   let lines = screen(() => onInput(Buffer.from("s")));
   // Under the profiles, each prompt row shows the default it sends.
   const at = (label) => lines.findIndex((l) => l?.replace(/^[▌ ] /, "").startsWith(label));
-  assert.ok(at("Resolve prompt") > lines.findIndex((l) => l?.includes("cc · Resolve · Review")), lines.join("\n"));
-  assert.equal(lines[at("Resolve prompt") + 1].trim(), "default: /issue-resolver {number}");
-  assert.equal(lines[at("Review prompt") + 1].trim(), "default: /issue-pr-review {number}");
+  assert.ok(at("Resolve") > lines.findIndex((l) => l?.includes("cc · Resolve · Review")), lines.join("\n"));
+  assert.equal(lines[at("Resolve") + 1].trim(), "/issue-resolver {number}");
+  assert.equal(lines[at("Review") + 1].trim(), "/issue-pr-review {number}");
   // ↓ past the last profile selects the Resolve prompt; e edits it.
   lines = screen(() => onInput(Buffer.from("jj")));
   assert.equal(ui.settings.promptSel, "resolve");
-  assert.match(lines[at("Resolve prompt")], /^▌ Resolve prompt +Edit $/);
+  assert.match(lines[at("Resolve")], /^▌ Resolve +Edit $/);
   lines = screen(() => onInput(Buffer.from("e")));
   assert.equal(ui.settings.mode, "prompt");
   assert.match(lines[0], /^ Resolve prompt +✕ $/);
@@ -1828,7 +1831,7 @@ test("the profiles view sets, changes and clears each action's prompt, under the
     prompts: { resolve: "Fix #{number}: quick, safe, don't merge", review: null },
   });
   assert.ok(text(lines).includes("Resolve now sends: Fix #{number}: quick, safe, don't merge"), lines.join("\n"));
-  assert.equal(lines[at("Resolve prompt") + 1].slice(1).trim(), "Fix #{number}: quick, safe, don't merge");
+  assert.equal(lines[at("Resolve") + 1].slice(1).trim(), "Fix #{number}: quick, safe, don't merge");
   // Without {number}, or with a backslash, it isn't saved: the reason shows under the text.
   lines = screen(() => onInput(Buffer.from("e\x7f".concat("\x7f".repeat(60), "Fix it\\\r"))));
   assert.equal(ui.settings.mode, "prompt");
@@ -1866,18 +1869,21 @@ test("the prompt rows work with the mouse: a click selects, Edit edits, Use defa
   usePrompts(dir, { review: "Review #{number}" }, [{ id: "cc", name: "Claude Code", harness: "claude" }], { resolve: "cc", review: "cc" });
   setupGitHub("prs");
   let lines = screen(() => onInput(Buffer.from("s")));
-  let [x, y] = find(lines, "Review prompt");
+  // The Review row of PROMPTS, not the profiles' Review tags or buttons.
+  const row = (label) => { const y = lines.findIndex((l) => l?.replace(/^[▌ ] /, "").startsWith(label)); return [2, y]; };
+  let [x, y] = row("Review");
+  assert.match(lines[y], /^ {2}Review +custom$/);
   lines = screen(() => click(x, y));
   assert.equal(ui.settings.mode, "list", "a click on the row only selects it");
   assert.equal(ui.settings.promptSel, "review");
   // Selected, it still only selects, where the list's clicks land.
-  [x, y] = find(lines, "Review prompt");
+  [x, y] = row("Review");
   for (const cx of [2, 4, 8]) {
     lines = screen(() => click(cx, y));
     assert.equal(ui.settings.mode, "list", `a click at ${cx} on the selected row opened its editor`);
   }
   [x, y] = find(lines, " Edit ");
-  assert.equal(lines[y].trim().replace(/ +/g, " "), "▌ Review prompt Edit");
+  assert.equal(lines[y].trim().replace(/ +/g, " "), "▌ Review Edit");
   lines = screen(() => click(x + 1, y));
   assert.equal(ui.settings.mode, "prompt");
   assert.equal(ui.settings.prompt.text, "Review #{number}");
@@ -1929,7 +1935,7 @@ test("a prompt is not saved to a read-only or changed store, and fits a narrow p
     setupGitHub("issues");
     lines = screenAt(cols, 24, () => onInput(Buffer.from("sj")));
     fitsWithHints(lines, cols, 24, "↑↓ select", "esc back");
-    assert.ok(lines.some((l) => /^▌ Resolve prompt +Edit $/.test(l)), `${cols}:\n${lines.join("\n")}`);
+    assert.ok(lines.some((l) => /^▌ Resolve +Edit $/.test(l)), `${cols}:\n${lines.join("\n")}`);
     lines = screenAt(cols, 24, () => onInput(Buffer.from(`\r${"word ".repeat(30)}\\\r`)));
     fitsWithHints(lines, cols, 24, "type to edit", "esc back");
     // The whole text, broken over lines that each start with the bar.
@@ -1987,16 +1993,16 @@ test("the wheel reaches the prompt rows and the prompt's buttons in a short pane
     assert.equal(ui.settings.promptSel, "resolve", where(lines));
     lines = at(wheel(true));
     assert.equal(ui.settings.promptSel, "review", where(lines));
-    assert.ok(lines.some((l) => /^▌ Review prompt +Edit $/.test(l ?? "")), where(lines));
+    assert.ok(lines.some((l) => /^▌ Review +Edit $/.test(l ?? "")), where(lines));
     // On to Auto-pilot's (#31).
     lines = at(wheel(true));
     assert.equal(ui.settings.promptSel, "autopilot", where(lines));
-    assert.ok(lines.some((l) => /^▌ Auto-pilot prompt +Edit $/.test(l ?? "")), where(lines));
+    assert.ok(lines.some((l) => /^▌ Auto-pilot +Edit $/.test(l ?? "")), where(lines));
     fitsWithHints(lines, cols, rows, "↑↓ select", "esc back");
     // On to the last, the merge mode's (#39), where the wheel stops.
     lines = at(wheel(true) + wheel(true));
     assert.equal(ui.settings.promptSel, "merge", where(lines));
-    assert.ok(lines.some((l) => /^▌ Merge mode +Change $/.test(l ?? "")), where(lines));
+    assert.ok(lines.some((l) => /^▌ After a merge +Change $/.test(l ?? "")), where(lines));
     fitsWithHints(lines, cols, rows, "↑↓ select", "esc back");
     // And back up to the profiles.
     for (let i = 0; i < 4; i++) lines = at(wheel(false));
@@ -2054,6 +2060,23 @@ test("a prompt saved with a click after the wheel shows its reason and the line 
   }
 });
 
+test("the settings' section headings stay over a selected first row while both fit, and give way to it when they don't", (t) => {
+  const dir = home(t);
+  useProfiles(dir, []);
+  for (const rows of [6, 9, 24]) {
+    setupGitHub("issues");
+    // j selects the Resolve row, PROMPTS' first; four more reach MERGING's only row.
+    for (const [keys, heading, row] of [["sj", "PROMPTS", /^▌ Resolve +Edit $/], ["sjjjj", "MERGING", /^▌ After a merge +Change $/]]) {
+      const lines = screenAt(28, rows, () => { ui.settings = null; onInput(Buffer.from(keys)); });
+      const where = `28x${rows} ${keys}:\n${lines.join("\n")}`;
+      const at = lines.findIndex((l) => row.test(l ?? ""));
+      assert.ok(at > 0, where);
+      if (rows > 6) assert.match(lines[at - 1], new RegExp(`^ ${heading} ─+$`), where);
+    }
+    screenAt(28, rows, () => onInput(Buffer.from("\x1b")));
+  }
+});
+
 test("with the last profile selected, the prompt rows under it show where there is room", (t) => {
   const dir = home(t);
   useProfiles(dir, [{ id: "p0", name: "Profile 0", harness: "claude" }]);
@@ -2063,8 +2086,9 @@ test("with the last profile selected, the prompt rows under it show where there 
     const where = `${cols}x${rows}:\n${lines.join("\n")}`;
     assert.equal(ui.settings.sel, 1, where);
     assert.ok(lines.some((l) => /^▌ Profile 0/.test(l ?? "")), where);
-    const review = lines.findIndex((l) => /^ {2}Review prompt$/.test(l?.trimEnd() ?? ""));
-    assert.ok(review > 0 && /^ {4}default: \/issue-pr-/.test(lines[review + 1]), where);
+    // Under the PROMPTS heading, at least Resolve's row and the default it sends.
+    const resolve = lines.findIndex((l) => /^ {2}Resolve +default$/.test(l?.trimEnd() ?? ""));
+    assert.ok(resolve > 0 && /^ PROMPTS ─+$/.test(lines[resolve - 1]) && /^ {4}\/issue-resolver/.test(lines[resolve + 1]), where);
     screenAt(cols, rows, () => onInput(Buffer.from("\x1b")));
   }
 });
@@ -3572,20 +3596,20 @@ test("the profiles view's Merge mode row shows the mode, and e, enter or Change 
   const at = (label) => lines.findIndex((l) => l?.replace(/^[▌ ] /, "").startsWith(label));
   for (let i = 0; i < 10 && ui.settings.promptSel !== "merge"; i++) lines = screen(() => key("j"));
   assert.equal(ui.settings.promptSel, "merge");
-  assert.ok(at("Merge mode") > at("Auto-pilot prompt") && at("Auto-pilot prompt") > 0, lines.join("\n"));
-  assert.match(lines[at("Merge mode")], /^▌ Merge mode +Change $/);
-  assert.equal(lines[at("Merge mode") + 1].replace(/^▌/, "").trim(), "Merge and delete branch");
+  assert.ok(at("After a merge") > at("Auto-pilot") && at("Auto-pilot") > 0, lines.join("\n"));
+  assert.match(lines[at("After a merge")], /^▌ After a merge +Change $/);
+  assert.equal(lines[at("After a merge") + 1].replace(/^▌/, "").trim(), "Delete the branch");
   assert.ok(shows(lines, "e change"), lines.join("\n"));
   // e switches it, and the file says so.
   lines = screen(() => key("e"));
   assert.equal(fs.readFileSync(MERGE_FILE, "utf8"), "keep");
-  assert.equal(lines[at("Merge mode") + 1].replace(/^▌/, "").trim(), "Merge and keep branch");
+  assert.equal(lines[at("After a merge") + 1].replace(/^▌/, "").trim(), "Keep the branch");
   assert.ok(shows(lines, "Merging a pull request now keeps its branch"), lines.join("\n"));
   assert.equal(ui.settings.promptSel, "merge");
   // Enter switches it back; then a click on Change.
   lines = screen(() => key("\r"));
   assert.equal(fs.readFileSync(MERGE_FILE, "utf8"), "delete");
-  assert.equal(lines[at("Merge mode") + 1].replace(/^▌/, "").trim(), "Merge and delete branch");
+  assert.equal(lines[at("After a merge") + 1].replace(/^▌/, "").trim(), "Delete the branch");
   lines = screen(() => pressButton(lines, " Change "));
   assert.equal(fs.readFileSync(MERGE_FILE, "utf8"), "keep");
   // It's no profile: d, R and V say so, and change nothing.
@@ -3601,10 +3625,10 @@ test("the profiles view's Merge mode row shows the mode, and e, enter or Change 
   assert.equal(ui.settings, null);
   lines = screen(() => key("s"));
   for (let i = 0; i < 10 && ui.settings.promptSel !== "merge"; i++) lines = screen(() => key("j"));
-  assert.equal(lines[at("Merge mode") + 1].replace(/^▌/, "").trim(), "Merge and keep branch");
+  assert.equal(lines[at("After a merge") + 1].replace(/^▌/, "").trim(), "Keep the branch");
   fs.writeFileSync(MERGE_FILE, "delete");
   lines = screen(draw);
-  assert.equal(lines[at("Merge mode") + 1].replace(/^▌/, "").trim(), "Merge and delete branch");
+  assert.equal(lines[at("After a merge") + 1].replace(/^▌/, "").trim(), "Delete the branch");
   // ↑ goes back to the Auto-pilot prompt.
   screen(() => key("k"));
   assert.equal(ui.settings.promptSel, "autopilot");
@@ -3622,8 +3646,8 @@ test("a merge mode that can't be saved says why, and the row keeps the mode the 
   lines = screen(() => key("e"));
   assert.match(ui.settings.error ?? "", /^Can't save the merge mode: /);
   assert.ok(shows(lines, "Can't save the merge mode:"), lines.join("\n"));
-  const at = lines.findIndex((l) => l?.replace(/^[▌ ] /, "").startsWith("Merge mode"));
-  assert.equal(lines[at + 1].replace(/^▌/, "").trim(), "Merge and delete branch");
+  const at = lines.findIndex((l) => l?.replace(/^[▌ ] /, "").startsWith("After a merge"));
+  assert.equal(lines[at + 1].replace(/^▌/, "").trim(), "Delete the branch");
   assert.ok(fs.statSync(MERGE_FILE).isDirectory());
   screen(() => key("\x1b"));
 });
@@ -4340,8 +4364,8 @@ test("a custom Auto-pilot prompt saved in the profiles view is what Start then r
   // Under the profiles, after Resolve's and Review's: the Auto-pilot prompt and its default.
   let lines = screen(() => onInput(Buffer.from("s")));
   const at = (label) => lines.findIndex((l) => l?.replace(/^[▌ ] /, "").startsWith(label));
-  assert.ok(at("Auto-pilot prompt") > at("Review prompt"), lines.join("\n"));
-  assert.equal(lines[at("Auto-pilot prompt") + 1].trim(), "default: /auto-pilot --issues {numbers}");
+  assert.ok(at("Auto-pilot") > at("Review"), lines.join("\n"));
+  assert.equal(lines[at("Auto-pilot") + 1].trim(), "/auto-pilot --issues {numbers}");
   // ↓ past the last profile and the other prompts; Edit, with the mouse.
   lines = screen(() => onInput(Buffer.from("jjjj")));
   assert.equal(ui.settings.promptSel, "autopilot");
