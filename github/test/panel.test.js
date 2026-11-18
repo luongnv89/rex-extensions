@@ -2796,14 +2796,35 @@ async function followFolder(t) {
 // unless `cross` says otherwise (null: gh doesn't say), into main, the repo's
 // default branch; `autoDelete` is the repo's own deleting of merged branches; and
 // `deleteReply` answers `gh api`'s delete, whose branches go in state.deleted.
+// The local checkout a merge then tidies (#41) is state.local: on branch
+// `current` (an unrelated one, "work", unless a test says otherwise; "" is a
+// detached HEAD), with uncommitted changes when `dirty`, and local branches
+// `tips`, { name: commit }. `gitFail` answers a git step instead, by its name:
+// head (branch --show-current), status, switch, pull, fetch or delete (branch -D).
 // Restored when the test ends.
 function fakeForge(t, { forge = "github", open = [10, 11, 12, 13, 14], merges = ALL_MERGES, reply = { code: 0, stdout: "" }, queued = false, view = null, issues = [], closeReply = { code: 0, stdout: "" },
-  cross = false, autoDelete = false, deleteReply = { code: 0, stdout: "" }, branch = (n) => `b${n}` } = {}) {
+  cross = false, autoDelete = false, deleteReply = { code: 0, stdout: "" }, branch = (n) => `b${n}`,
+  current = "work", dirty = false, tips = {}, gitFail = {} } = {}) {
   t.after(() => { git = missing("git"); gh = missing("gh"); glab = missing("glab"); hold = () => false; held.length = 0; });
-  const state = { open: open.slice(), issues: issues.slice(), deleted: [] };
+  const state = { open: open.slice(), issues: issues.slice(), deleted: [], local: { current, tips: { ...tips } } };
   const host = forge === "gitlab" ? "gitlab.com" : "github.com";
-  git = (args) => args[0] === "rev-parse" ? { code: 0, stdout: "/repo\n" }
-    : args[0] === "remote" ? { code: 0, stdout: `origin\tgit@${host}:o/p.git (fetch)\n` } : { code: 1, stderr: "no" };
+  const local = state.local;
+  git = (args) => {
+    const [cmd, first] = args;
+    if (cmd === "rev-parse" && first === "--show-toplevel") return { code: 0, stdout: "/repo\n" };
+    if (cmd === "remote") return { code: 0, stdout: `origin\tgit@${host}:o/p.git (fetch)\n` };
+    if (cmd === "branch" && first === "--show-current") return gitFail.head ?? { code: 0, stdout: `${local.current}\n` };
+    if (cmd === "status") return gitFail.status ?? { code: 0, stdout: dirty ? " M panel.js\n" : "" };
+    if (cmd === "switch") { if (gitFail.switch) return gitFail.switch; local.current = first; return { code: 0, stdout: "" }; }
+    if (cmd === "pull") return gitFail.pull ?? { code: 0, stdout: "" };
+    if (cmd === "fetch") return gitFail.fetch ?? { code: 0, stdout: "" };
+    if (cmd === "rev-parse" && first === "--verify") {
+      const name = args.at(-1).replace(/^refs\/heads\//, "");
+      return Object.hasOwn(local.tips, name) ? { code: 0, stdout: `${local.tips[name]}\n` } : { code: 1, stdout: "" };
+    }
+    if (cmd === "branch" && first === "-D") { if (gitFail.delete) return gitFail.delete; delete local.tips[args.at(-1)]; return { code: 0, stdout: "" }; }
+    return { code: 1, stderr: "no" };
+  };
   const merge = (args) => {
     if (reply.code === 0 && !queued) state.open = state.open.filter((n) => n !== Number(args[2]));
     return reply;
@@ -3464,6 +3485,9 @@ function mergeModeFile(t, content) {
   t.after(() => fs.rmSync(MERGE_FILE, { recursive: true, force: true }));
 }
 const apiCalls = () => cliCalls("gh").filter((c) => c[0] === "api");
+// The git calls on the checkout (#41): all but a refresh's look at the repo's top
+// folder and its remotes.
+const localGit = () => cliCalls("git").filter((c) => !(c[0] === "rev-parse" && c[1] === "--show-toplevel") && c[0] !== "remote");
 const deleteOf = (branch) => ["api", "--hostname", "x", "-X", "DELETE", `repos/o/p/git/refs/heads/${branch}`];
 
 test("with no merge mode saved, or a file that doesn't say keep, a merge deletes the pull request's branch on GitHub once it merged (#39)", async (t) => {
@@ -3483,8 +3507,9 @@ test("with no merge mode saved, or a file that doesn't say keep, a merge deletes
     assert.equal(ui.notice?.tone, "ok", where);
     assert.equal(ui.notice.text, "Merged #12 and deleted its branch b12", where);
     assert.ok(!ui.prs.some((p) => p.number === 12), where);
-    // Nothing touches the local branch or checkout.
-    assert.ok(!calls.some((c) => c[0] === "git" && c[1] !== "rev-parse" && c[1] !== "remote"), JSON.stringify(calls));
+    // Then the checkout (#41): on another branch, with no local copy of b12, git
+    // only prunes the remote-tracking branches whose branch is gone.
+    assert.deepEqual(localGit(), [["branch", "--show-current"], ["fetch", "--prune"], ["rev-parse", "--verify", "--quiet", "refs/heads/b12"]], where);
   }
 });
 
@@ -3504,6 +3529,8 @@ test("with Merge and keep branch saved, a merge leaves the branch where it is, a
     assert.equal(mergeCalls().length, 1);
     assert.deepEqual(apiCalls(), [], JSON.stringify(content));
     assert.equal(ui.notice?.text, "Merged #12");
+    // Nor is the checkout touched (#41).
+    assert.deepEqual(localGit(), [], JSON.stringify(content));
     assert.ok(!ui.prs.some((p) => p.number === 12));
   }
 });
@@ -3535,6 +3562,8 @@ test("a merge that fails, waits for checks or a queue, or can't be read deletes 
       assert.deepEqual(apiCalls(), [], where);
       assert.deepEqual(state.deleted, [], where);
       assert.ok(!/deleted/.test(ui.notice?.text ?? ""), where);
+      // Nor is the checkout touched (#41).
+      assert.deepEqual(localGit(), [], where);
     }
   }
 });
@@ -3580,6 +3609,126 @@ test("a branch already gone counts as deleted; any other failure says so, and th
     assert.ok(!ui.prs.some((p) => p.number === 12));
     assert.ok(cliCalls("gh").some((c) => c[0] === "pr" && c[1] === "list"), "no refresh after the merge");
   }
+});
+
+// The steps of a merge that ends back on main: from b12, clean, to main, pulled,
+// with b12's local copy, at the head that merged, deleted (#41).
+const BACK_TO_MAIN = [["branch", "--show-current"], ["status", "--porcelain"], ["switch", "main"], ["pull", "--ff-only", "--prune"],
+  ["rev-parse", "--verify", "--quiet", "refs/heads/b12"], ["branch", "-D", "--", "b12"]];
+
+test("on the merged branch with nothing uncommitted, a merge that deletes ends on main: switched to, pulled, and the local branch deleted (#41)", async (t) => {
+  for (const [options, notice] of [
+    [{}, "Merged #12 and deleted its branch b12; switched to main; pulled main; deleted the local b12"],
+    // In a repo that deletes merged branches itself, and for a fork's pull request
+    // checked out here, the checkout is tidied all the same.
+    [{ autoDelete: true }, "Merged #12; switched to main; pulled main; deleted the local b12"],
+    [{ cross: true }, "Merged #12 and kept its branch b12: it's in a fork; switched to main; pulled main; deleted the local b12"],
+  ]) {
+    mergeModeFile(t, null);
+    const { lines, state } = await loadForge(t, { current: "b12", tips: { b12: headOf(12), main: "a".repeat(40) }, ...options });
+    await quietly(async () => { await mergeVia(lines, "#12"); await idle(); });
+    const where = JSON.stringify(options);
+    assert.deepEqual(localGit(), BACK_TO_MAIN, where);
+    assert.equal(state.local.current, "main", where);
+    assert.deepEqual(Object.keys(state.local.tips), ["main"], where);
+    assert.equal(ui.notice?.tone, "ok", where);
+    assert.equal(ui.notice.text, notice, where);
+    // After the forge said it merged, and after its branch went on GitHub; in the
+    // repo's folder, and never waiting on a password prompt.
+    const first = calls.findIndex((c) => c[0] === "git" && c[1] === "branch");
+    assert.ok(first > calls.findIndex((c) => c[0] === "gh" && c[1] === "pr" && c[2] === "view"), where);
+    if (!options.autoDelete && !options.cross) assert.ok(first > calls.findIndex((c) => c[0] === "gh" && c[1] === "api"), where);
+    calls.forEach((c, i) => {
+      if (c[0] !== "git" || !localGit().some((l) => l.join(" ") === c.slice(1).join(" "))) return;
+      assert.equal(callOpts[i].cwd, "/repo", c.join(" "));
+      assert.equal(callOpts[i].env?.GIT_TERMINAL_PROMPT, "0", c.join(" "));
+    });
+    assert.ok(!ui.prs.some((p) => p.number === 12), where);
+  }
+});
+
+test("on another branch, or none, the local copy goes only while its tip is the head that merged; on main, main is pulled (#41)", async (t) => {
+  const verify = ["rev-parse", "--verify", "--quiet", "refs/heads/b12"];
+  for (const [options, steps, notice] of [
+    [{ tips: { b12: headOf(12) } }, [["branch", "--show-current"], ["fetch", "--prune"], verify, ["branch", "-D", "--", "b12"]], "; deleted the local b12"],
+    // A detached HEAD is on no branch: nothing to switch from.
+    [{ current: "", tips: { b12: headOf(12) } }, [["branch", "--show-current"], ["fetch", "--prune"], verify, ["branch", "-D", "--", "b12"]], "; deleted the local b12"],
+    // Commits that didn't merge stay.
+    [{ tips: { b12: "f".repeat(40) } }, [["branch", "--show-current"], ["fetch", "--prune"], verify], "; kept the local b12: its tip isn't the commit that merged"],
+    // On the default branch, clean: pulled, which prunes too.
+    [{ current: "main", tips: { b12: headOf(12) } }, [["branch", "--show-current"], ["status", "--porcelain"], ["pull", "--ff-only", "--prune"], verify, ["branch", "-D", "--", "b12"]],
+      "; pulled main; deleted the local b12"],
+    // With uncommitted changes there: not pulled, only pruned.
+    [{ current: "main", dirty: true }, [["branch", "--show-current"], ["status", "--porcelain"], ["fetch", "--prune"], verify], ""],
+  ]) {
+    mergeModeFile(t, null);
+    const { lines, state } = await loadForge(t, options);
+    await quietly(async () => { await mergeVia(lines, "#12"); await idle(); });
+    const where = JSON.stringify(options);
+    assert.deepEqual(localGit(), steps, where);
+    assert.equal(state.local.current, options.current ?? "work", where);
+    assert.equal(ui.notice?.tone, "ok", where);
+    assert.equal(ui.notice.text, `Merged #12 and deleted its branch b12${notice}`, where);
+  }
+});
+
+test("on the merged branch with uncommitted changes, or with no default branch known, the checkout stays where it is (#41)", async (t) => {
+  mergeModeFile(t, null);
+  let { lines, state } = await loadForge(t, { current: "b12", dirty: true, tips: { b12: headOf(12) } });
+  await quietly(async () => { await mergeVia(lines, "#12"); await idle(); });
+  assert.deepEqual(localGit(), [["branch", "--show-current"], ["status", "--porcelain"], ["fetch", "--prune"]]);
+  assert.equal(state.local.current, "b12");
+  assert.deepEqual(state.local.tips, { b12: headOf(12) });
+  assert.equal(ui.notice?.tone, "ok");
+  assert.equal(ui.notice.text, "Merged #12 and deleted its branch b12; stayed on b12: it has uncommitted changes");
+  // GitLab doesn't say which branch is the default: the checkout stays on the
+  // merged branch, and a local copy elsewhere still goes.
+  ({ lines, state } = await loadForge(t, { forge: "gitlab", current: "b11", tips: { b11: headOf(11) } }));
+  await quietly(async () => { await mergeVia(lines, "!11"); await idle(); });
+  assert.deepEqual(localGit(), [["branch", "--show-current"], ["fetch", "--prune"]]);
+  assert.equal(ui.notice?.text, "Merged !11; stayed on b11: the default branch isn't known");
+  ({ lines, state } = await loadForge(t, { forge: "gitlab", tips: { b11: headOf(11) } }));
+  await quietly(async () => { await mergeVia(lines, "!11"); await idle(); });
+  assert.deepEqual(state.local.tips, {});
+  assert.equal(ui.notice?.text, "Merged !11; deleted the local b11");
+  // The branch it merged into, or the default one, is never touched here.
+  ({ lines, state } = await loadForge(t, { branch: () => "main", current: "main", tips: { main: headOf(12) } }));
+  await quietly(async () => { await mergeVia(lines, "#12"); await idle(); });
+  assert.deepEqual(localGit(), []);
+  assert.deepEqual(state.local.tips, { main: headOf(12) });
+});
+
+test("a git step that fails is said in red, the steps it doesn't stop still run, and the merge stands (#41)", async (t) => {
+  const tidy = { current: "b12", tips: { b12: headOf(12) } };
+  for (const [options, steps, notice] of [
+    [{ gitFail: { head: { code: 128, stderr: "fatal: not a git repository\n" } } }, [["branch", "--show-current"]],
+      "couldn't read the checkout: fatal: not a git repository"],
+    [{ gitFail: { switch: { code: 1, stderr: "error: Your local changes would be overwritten by checkout:\n" } } },
+      [["branch", "--show-current"], ["status", "--porcelain"], ["switch", "main"], ["fetch", "--prune"]],
+      "couldn't switch to main: error: Your local changes would be overwritten by checkout:"],
+    [{ gitFail: { pull: { code: 128, stderr: "fatal: Not possible to fast-forward, aborting.\n" } } }, BACK_TO_MAIN,
+      "switched to main; couldn't pull main: fatal: Not possible to fast-forward, aborting.; deleted the local b12"],
+    [{ gitFail: { delete: { code: 1, stderr: "error: cannot delete branch 'b12' used by worktree at '/wt'\n" } } }, BACK_TO_MAIN,
+      "switched to main; pulled main; couldn't delete the local b12: error: cannot delete branch 'b12' used by worktree at '/wt'"],
+    [{ current: "work", gitFail: { fetch: { code: 128, stderr: "fatal: could not read Username: terminal prompts disabled\n" } } },
+      [["branch", "--show-current"], ["fetch", "--prune"], ["rev-parse", "--verify", "--quiet", "refs/heads/b12"], ["branch", "-D", "--", "b12"]],
+      "couldn't prune the deleted branches: fatal: could not read Username: terminal prompts disabled; deleted the local b12"],
+  ]) {
+    mergeModeFile(t, null);
+    const { lines } = await loadForge(t, { ...tidy, ...options });
+    await quietly(async () => { await mergeVia(lines, "#12"); await idle(); });
+    const where = JSON.stringify(options);
+    assert.deepEqual(localGit(), steps, where);
+    assert.equal(ui.notice?.tone, "error", where);
+    assert.equal(ui.notice.text, `Merged #12 and deleted its branch b12; ${notice}`, where);
+    assert.ok(!ui.prs.some((p) => p.number === 12), where);
+  }
+  // A branch delete on GitHub that failed stays red, however the checkout went.
+  mergeModeFile(t, null);
+  const { lines } = await loadForge(t, { ...tidy, deleteReply: { code: 1, stderr: "gh: Resource not accessible by integration (HTTP 403)\n" } });
+  await quietly(async () => { await mergeVia(lines, "#12"); await idle(); });
+  assert.equal(ui.notice?.tone, "error");
+  assert.equal(ui.notice.text, "Merged #12, but couldn't delete its branch b12: gh: Resource not accessible by integration (HTTP 403); switched to main; pulled main; deleted the local b12");
 });
 
 test("a branch is deleted only by a name git takes, URL-encoded, in a checked repo on its own host (#39)", () => {
