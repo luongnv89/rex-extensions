@@ -993,7 +993,8 @@ function agentOf(proc) {
 // P.buildLaunch's, so the flags come from a checked profile only. Rex passes the
 // words as they are: no shell reads them. A command plan runs as it is, but for
 // mcc, which runs from its full path: Mistral Vibe's is `vibe <prompt>`, or
-// `env VIBE_ACTIVE_MODEL=M vibe <prompt>` with a model.
+// `env VIBE_ACTIVE_MODEL=M vibe <prompt>` with a model, and OpenCode's with a
+// model `env OPENCODE_CONFIG_CONTENT={"model":"M"} opencode --standalone --prompt <prompt>`.
 function agentArgv(plan, prompt, mcc = "mcc") {
   if (plan.mode === "command") return plan.argv[0] === "mcc" ? [mcc, ...plan.argv.slice(1)] : plan.argv.slice();
   if (plan.kind === "opencode") return ["opencode", ...plan.extraArgs, "--prompt", prompt];
@@ -1427,8 +1428,8 @@ const choices = (form, key, store = ui.settings.store) => {
   for (const m of [form.model, form.saved]) if (m && !list.includes(m)) list.push(m);
   return list;
 };
-// What OpenCode does with a model or thinking level, in the profiles module's words.
-const OPENCODE_NOTE = P.buildLaunch({ id: "x", name: "x", harness: "opencode", model: "m" }, "x").warnings[0];
+// What OpenCode does with a thinking level, in the profiles module's words.
+const OPENCODE_NOTE = P.buildLaunch({ id: "x", name: "x", harness: "opencode", thinking: "high" }, "x").warnings[0];
 const entries = () => [P.DEFAULT_PROFILE, ...ui.settings.store.profiles];
 const describe = (p) => [P.HARNESS_NAMES[p.harness], p.model, p.thinking && `thinking ${p.thinking}`].filter(Boolean).join(" · ");
 const ACTION_LABELS = { resolve: "Resolve", review: "Review", autopilot: AUTOPILOT.label };
@@ -1787,7 +1788,7 @@ function settingsLines(cols, rows) {
   if (st.error) notes.push([red, st.error]);
   if (st.info) notes.push([green, st.info]);
   for (const w of st.warnings) notes.push([yellow, w]);
-  if (st.mode === "edit" && st.form.harness === "opencode" && (st.form.model || st.form.thinking)) notes.push([yellow, OPENCODE_NOTE]);
+  if (st.mode === "edit" && st.form.harness === "opencode" && st.form.thinking) notes.push([yellow, OPENCODE_NOTE]);
   const footer = hintLines(st.mode === "edit" ? (st.form.adding !== null ? ["type the model", "⏎ add", "esc cancel"]
     : st.field === MODEL_FIELD ? ["↑↓ field", "←→ choose", "+ add", "- remove", "⏎ save", "esc back"]
       : ["↑↓ field", "←→ choose", "type to edit", "⏎ save", "esc back"])

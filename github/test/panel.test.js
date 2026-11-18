@@ -851,7 +851,10 @@ test("agentArgv puts each harness's flags first and the prompt last, as one word
   assert.deepEqual(argv({ harness: "claude" }), ["claude", "Fix #12: it's $(bad)"]);
   assert.deepEqual(argv({ harness: "codex", model: "gpt-5", thinking: "low" }), ["codex", "-m", "gpt-5", "-c", 'model_reasoning_effort="low"', "Fix #12: it's $(bad)"]);
   assert.deepEqual(argv({ harness: "pi", thinking: "off" }), ["pi", "--thinking", "off", "Fix #12: it's $(bad)"]);
-  assert.deepEqual(argv({ harness: "opencode", model: "x" }), ["opencode", "--prompt", "Fix #12: it's $(bad)"]);
+  assert.deepEqual(argv({ harness: "opencode" }), ["opencode", "--prompt", "Fix #12: it's $(bad)"]);
+  // OpenCode with a model runs as a command: its model in OPENCODE_CONFIG_CONTENT, on its own server.
+  assert.deepEqual(argv({ harness: "opencode", model: "opencode/big-pickle" }),
+    ["env", 'OPENCODE_CONFIG_CONTENT={"model":"opencode/big-pickle"}', "opencode", "--standalone", "--prompt", "Fix #12: it's $(bad)"]);
   // Mistral Vibe runs as a command: its model is an environment variable, set by env(1).
   assert.deepEqual(argv({ harness: "vibe" }), ["vibe", "Fix #12: it's $(bad)"]);
   assert.deepEqual(argv({ harness: "vibe", model: "mistral-medium-3.5" }), ["env", "VIBE_ACTIVE_MODEL=mistral-medium-3.5", "vibe", "Fix #12: it's $(bad)"]);
@@ -941,7 +944,9 @@ test("each harness starts with its own model and thinking flags; empty ones add 
     [{ harness: "codex", model: "gpt-5", thinking: "high" }, ["codex", "-m", "gpt-5", "-c", 'model_reasoning_effort="high"', use]],
     [{ harness: "pi", model: "anthropic/claude-x", thinking: "minimal" }, ["pi", "--model", "anthropic/claude-x", "--thinking", "minimal", use]],
     [{ harness: "pi" }, ["pi", use]],
-    [{ harness: "opencode", model: "x" }, ["opencode", "--prompt", use]],
+    [{ harness: "opencode" }, ["opencode", "--prompt", use]],
+    [{ harness: "opencode", model: "opencode/big-pickle" }, ["env", 'OPENCODE_CONFIG_CONTENT={"model":"opencode/big-pickle"}', "opencode", "--standalone", "--prompt", use]],
+    [{ harness: "opencode", thinking: "high" }, ["opencode", "--prompt", use]],
     [{ harness: "vibe", model: "mistral-medium-3.5" }, ["env", "VIBE_ACTIVE_MODEL=mistral-medium-3.5", "vibe", use]],
     [{ harness: "vibe" }, ["vibe", use]],
   ];
@@ -951,7 +956,7 @@ test("each harness starts with its own model and thinking flags; empty ones add 
     fakeRex(agentHere());
     const after = await screenAsync(() => startWithMenu());
     assert.deepEqual(splitCommand(), command, JSON.stringify(p));
-    assert.equal(text(after).includes("OpenCode ignores this profile's model and thinking level"), p.harness === "opencode", after.join("\n"));
+    assert.equal(text(after).includes("OpenCode ignores this profile's thinking level"), p.harness === "opencode" && !!p.thinking, after.join("\n"));
   }
 });
 
@@ -1460,16 +1465,16 @@ const LONG_NAME = "Abcdefghijklmnopqrstuvwxyz0123456789ABCD";
 
 test("at 28, 30 and 40 cells the profiles show each warning, note and question whole", (t) => {
   const dir = home(t);
-  const note = "OpenCode ignores this profile's model and thinking level: it has no flag for them when it starts";
+  const note = "OpenCode ignores this profile's thinking level: it has no flag for it when it starts";
   for (const cols of [28, 30, 40]) {
     const at = (fn) => {
       const lines = screenAt(cols, 24, fn);
       for (const l of lines) assert.ok(width(l ?? "") <= cols, `${cols}: ${l}`);
       return lines;
     };
-    // The OpenCode note, in the form, under an OpenCode profile with a model: one
-    // stored, since the form offers OpenCode none (#24).
-    useProfiles(dir, [{ id: "oc", name: "OC", harness: "opencode", model: "x" }]);
+    // The OpenCode note, in the form, under an OpenCode profile with a thinking
+    // level: one stored, since the form offers OpenCode none.
+    useProfiles(dir, [{ id: "oc", name: "OC", harness: "opencode", thinking: "high" }]);
     setupGitHub("issues");
     let lines = at(() => onInput(Buffer.from("sje")));
     assert.equal(ui.settings.form.harness, "opencode");
@@ -1517,7 +1522,7 @@ test("at 28, 30 and 40 cells the profiles show each warning, note and question w
 test("at 28 and 30 cells the notice of a started OpenCode keeps its note whole", async (t) => {
   const dir = home(t, { ".agents/skills/issue-resolver/SKILL.md": "x" });
   for (const cols of [28, 30]) {
-    useProfiles(dir, [{ id: "p", name: "P", harness: "opencode", model: "x" }], { resolve: "p" });
+    useProfiles(dir, [{ id: "p", name: "P", harness: "opencode", thinking: "high" }], { resolve: "p" });
     setupGitHub("issues");
     fakeRex(agentHere());
     // The menu first: it fits too, and keeps the key hints last.
@@ -1529,7 +1534,7 @@ test("at 28 and 30 cells the notice of a started OpenCode keeps its note whole",
     assert.equal(menu[23].trimEnd(), " ↑↓ · ⏎ start · esc/q cancel", `${cols}:\n${menu.join("\n")}`);
     const lines = await screenAsync(() => onInput(Buffer.from("\r")), cols);
     const whole = "Started OpenCode in a new pane: Use the issue-resolver skill on issue #12. " +
-      "(OpenCode ignores this profile's model and thinking level: it has no flag for them when it starts)";
+      "(OpenCode ignores this profile's thinking level: it has no flag for it when it starts)";
     assert.ok(shows(lines, whole), `${cols}:\n${lines.join("\n")}`);
     for (const l of lines) assert.ok(width(l ?? "") <= cols, `${cols}: ${l}`);
     assert.match(lines[23], /^ a resolve #12 · ↑↓ select/);
@@ -1580,17 +1585,17 @@ test("the profiles keep their key hints however much there is to say, and cut it
     assert.ok(aboveHints(lines, "↑↓ select").endsWith("…"), `${cols}x${rows}:\n${lines.join("\n")}`);
     screenAt(cols, rows, () => onInput(Buffer.from("\x1b")));
   }
-  // The OpenCode form on a 28x10 pane, on its Model: the field, the note cut, the
+  // The OpenCode form on a 28x9 pane, on its Model: the field, the note cut, the
   // key hints whole.
-  useProfiles(dir, [{ id: "oc", name: "OC", harness: "opencode", model: "x" }]);
+  useProfiles(dir, [{ id: "oc", name: "OC", harness: "opencode", thinking: "high" }]);
   setupGitHub("issues");
-  const lines = screenAt(28, 10, () => onInput(Buffer.from("sje\x1b[B\x1b[B\x1b[B")));
+  const lines = screenAt(28, 9, () => onInput(Buffer.from("sje\x1b[B\x1b[B\x1b[B")));
   assert.equal(ui.settings.form.harness, "opencode");
-  fitsWithHints(lines, 28, 10, "↑↓ field", "esc back");
+  fitsWithHints(lines, 28, 9, "↑↓ field", "esc back");
   assert.ok(lines.some((l) => l?.startsWith("▌ Model")), lines.join("\n"));
   assert.ok(text(lines).includes("OpenCode ignores"), lines.join("\n"));
   assert.ok(aboveHints(lines, "↑↓ field").endsWith("…"), lines.join("\n"));
-  screenAt(28, 10, () => onInput(Buffer.from("\x1b\x1b")));
+  screenAt(28, 9, () => onInput(Buffer.from("\x1b\x1b")));
 });
 
 test("on a short pane a failed open keeps the whole URL, before its reason", () => {
@@ -3456,13 +3461,18 @@ test("a model that breaks the MODEL rule, or is already offered, isn't added; - 
   assert.ok(P.modelChoices(readStore().store, "codex").includes("gpt-6.1-sol"));
   lines = screen(() => onInput(Buffer.from("\x1b[D-")));
   assert.ok(text(lines).replace(/\s+/g, " ").includes("Model: choose a model you added to remove it"), lines.join("\n"));
-  // + and - are text in the other fields, and OpenCode takes no model to add.
+  // + and - are text in the other fields. OpenCode takes a model you add, as provider/model.
   screen(() => onInput(Buffer.from("\x1b[A\x1b[A\x1b[A+-")));
   assert.equal(ui.settings.form.name, "+-");
-  lines = screen(() => onInput(Buffer.from("\x1b[B\x1b[B\x1b[C\x1b[C\x1b[B+")));
+  screen(() => onInput(Buffer.from("\x1b[B\x1b[B\x1b[C\x1b[C\x1b[B+")));
   assert.equal(ui.settings.form.harness, "opencode");
+  assert.equal(ui.settings.form.adding, "");
+  screen(() => onInput(Buffer.from("big-pickle")));
+  lines = screen(() => onInput(Buffer.from("\r")));
+  assert.equal(ui.settings.form.adding, "big-pickle", "it stays open, with the reason");
+  assert.ok(text(lines).replace(/\s+/g, " ").includes("Model: OpenCode takes provider/model, as `opencode models` lists them"), lines.join("\n"));
+  screen(() => onInput(Buffer.from("\x1b")));
   assert.equal(ui.settings.form.adding, null);
-  assert.ok(text(lines).includes("Model: OpenCode takes no model"), lines.join("\n"));
   // A paste without bracketed paste: what follows the enter that adds it is dropped,
   // so a - in it doesn't remove what was just added.
   screen(() => onInput(Buffer.from("\x1b[A\x1b[C\x1b[B+x/y\r-")));
