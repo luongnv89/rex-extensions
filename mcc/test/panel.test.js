@@ -318,7 +318,8 @@ test("collapse and expand start the CPU and network over from a new base", (t) =
 test("collapsed, the title line adds CPU and memory, and the network when there's room", (t) => {
   withUi(t, { collapsed: true, profiles: p.parse(DOC), stats: STATES.read });
   assert.match(strip(p.header(120)), /5h 12% · wk 96% · cpu 17% · mem 80% · net ↓1\.2M ↑40K/);
-  const mid = strip(p.header(62));
+  // 72 cells: the keys (#37) take room at the end, so mem is the last to fit whole.
+  const mid = strip(p.header(72));
   assert.match(mid, /5h 12% · wk 96% · cpu 17% · mem 80%/);
   assert.doesNotMatch(mid, /net/);
   for (const [name, s] of Object.entries(STATES)) {
@@ -394,7 +395,7 @@ test("the footer's hints are buttons, and a collapsed panel has none", () => {
 
 test("collapsed, a click on the summary isn't refresh: it falls through to expand", (t) => {
   withUi(t, { collapsed: true, profiles: p.parse(DOC), stats: STATES.read, refreshing: false, flash: null });
-  for (const cols of [60, 120]) {
+  for (const cols of [72, 120]) {
     const text = strip(p.header(cols));
     const label = text.indexOf("↻ refresh");
     const refresh = p.ui.buttons.find((b) => b.row === 0 && label >= b.from && label < b.to);
@@ -413,4 +414,34 @@ test("a failed refresh says why under the table until one succeeds", (t) => {
   assert.deepEqual(p.noticeLines().map((n) => n.text), ["refresh failed: live lookup timed out"]);
   p.ui.liveError = null;
   assert.deepEqual(p.noticeLines(), []);
+});
+
+test("collapsed, the title line names the keys c, r and q at the default 36 cells and wider; expanded, the footer does (#37)", (t) => {
+  withUi(t, { collapsed: true, profiles: p.parse(DOC), stats: STATES.read, refreshing: false, flash: null });
+  for (const cols of [36, 40, 50, 60, 72, 90]) {
+    const text = strip(p.header(cols));
+    assert.match(text, / c▸ r↻ q✕ +↻ refresh/, `${cols} cols: "${text}"`);
+  }
+  // In words where the summary still fits beside them.
+  const wide = strip(p.header(120));
+  assert.match(wide, /mem 80% · net ↓1\.2M ↑40K {2}c expand · r refresh · q close +↻ refresh/, wide);
+  for (const [name, s] of Object.entries(STATES)) {
+    p.ui.stats = s;
+    for (const cols of [24, 28, 32, 36, 40, 60, 120, 200]) {
+      const text = strip(p.header(cols));
+      assert.ok(p.width(text) <= cols, `${name} at ${cols} cols: "${text}" is ${p.width(text)} wide`);
+    }
+  }
+  // The keys are part of the summary: a click there expands, and the button still refreshes.
+  p.ui.stats = STATES.read;
+  for (const cols of [36, 120]) {
+    const text = strip(p.header(cols));
+    const keys = text.indexOf(cols === 36 ? "c▸" : "c expand"), label = text.indexOf("↻ refresh");
+    assert.ok(!p.ui.buttons.some((b) => b.row === 0 && keys >= b.from && keys < b.to), `${cols} cols: the keys aren't on a button`);
+    assert.ok(p.ui.buttons.some((b) => b.row === 0 && label >= b.from && label < b.to && b.to >= cols), `${cols} cols: the button still refreshes`);
+  }
+  // Expanded, the footer names them, so the title line doesn't.
+  p.ui.collapsed = false;
+  for (const cols of [36, 120]) assert.doesNotMatch(strip(p.header(cols)), /c▸|c expand/);
+  assert.equal(p.footerButtons(7, false).length, 3);
 });

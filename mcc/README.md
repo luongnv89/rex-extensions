@@ -55,11 +55,11 @@ Press the key in any pane. The panel opens across the bottom of the tab, under a
 | `↑` `↓`, `j` `k`, or the wheel | Scroll when the accounts don't fit |
 | `q` | Close the panel |
 
-Click the panel, or move focus to it, before using its keys.
+Click the panel, or move focus to it, before using its keys. Expanded, the footer names them; collapsed, the title row does, as `c expand · r refresh · q close`, or `c▸ r↻ q✕` in a narrow pane.
 
 - **Refresh** runs `mcc usage --all`, which looks up every account's usage live with that account's own login and saves the result to mcc's cache. It sends each account's OAuth token to Anthropic's undocumented, rate-limited usage endpoint, so it only runs when you ask for it. For the details, see `mcc usage --help`.
 - **Between refreshes**, the panel rereads mcc's cache (`mcc usage --json-v2`, a local file read) every 30 seconds. That picks up whatever `mcc statusline` caches as you work.
-- **Collapse** shrinks the strip so the panes above get the room back. The title row then shows the highest 5-hour and weekly percent across accounts, the CPU and memory percent, and the network when there's room. Rex keeps a pane at least a few rows high, so a collapsed panel still shows the first accounts. Expanding fits the strip to its rows again, up to 60% of the tab. The panel remembers whether it was collapsed.
+- **Collapse** shrinks the strip so the panes above get the room back. The title row then shows the highest 5-hour and weekly percent across accounts, the CPU and memory percent, and the network when there's room, then the keys; in a narrow pane the keys come first and the rest is cut. Rex keeps a pane at least a few rows high, so a collapsed panel still shows the first accounts. Expanding fits the strip to its rows again, up to 60% of the tab. The panel remembers whether it was collapsed.
 - **Machine stats** update by themselves every 5 seconds, collapsed or not. They're of the machine the panel runs on. They come from `/proc` on Linux and from `vm_stat` and `netstat` on macOS, with CPU from Node's `os.cpus()`. On macOS, memory used is counted as Activity Monitor's "Memory Used" counts it (app memory, wired and compressed). The network counts physical interfaces only: loopback, bridges, VPN tunnels and container interfaces are left out, so no byte counts twice.
 - **Height:** the panel grows or shrinks when its content changes, such as an account added or a notice shown. A height you set by dragging the border stays until then.
 

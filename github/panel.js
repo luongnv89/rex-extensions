@@ -280,6 +280,9 @@ const ui = {
   // Auto-pilot mode (#31): `on` while the issue rows show checkboxes, and `checked`,
   // the numbers (never the row indices) of the issues checked for Start.
   autopilot: { on: false, checked: new Set() },
+  // The key list ? opens (#37), while it's open: { mode, top }, mode being a KEYMAP
+  // table's name and top how far it's scrolled; null otherwise.
+  help: null,
   // Between a paste's start and end marks, which can come in different chunks;
   // pasteCR when the last part ended in \r, so a \n starting the next is its \r\n.
   pasting: false, pasteCR: false,
@@ -637,15 +640,17 @@ const MERGE_GAP = 400;
 
 const noMerge = (ref) => `Can't merge ${ref}: the repo allows no squash, merge commit or rebase, or gh didn't say which.`;
 
-// A Merge button pressed. The pull request is found again by its number, so only
-// that one is ever merged. One merge, or one launch, at a time.
-function pressMerge(number) {
+// A Merge button pressed, or m (#37). The pull request is found again by its
+// number, so only that one is ever merged. One merge, or one launch, at a time.
+// `byKey` is y answering the question (#37): a key is no double click, so it
+// confirms however soon after the press that asked.
+function pressMerge(number, byKey = false) {
   if (ui.acting || ui.menu) return ui.acting;
   const index = ui.prs.findIndex((p) => p.number === number);
   const merge = index >= 0 ? mergeFor(index) : null;
   if (!merge) return null;
   if (askingMerge(number)) {
-    if (Date.now() - ui.confirm.at < MERGE_GAP) return null;
+    if (!byKey && Date.now() - ui.confirm.at < MERGE_GAP) return null;
     ui.confirm = null;
     ui.sel.prs = index;
     return mergeNow(number);
@@ -661,7 +666,7 @@ function pressMerge(number) {
   // list scroll, just enough to keep it in view.
   const shown = ui.buttons.some((b) => b.merge === number);
   ui.confirm = { kind: "merge", number, notice: null, at: Date.now() };
-  ui.notice = { tone: "info", text: clean(`Press Confirm merge ${merge.ref} to merge it (${method}). Any other key or click cancels.`), url: null };
+  ui.notice = { tone: "info", text: clean(`Press Confirm merge ${merge.ref} or y to merge it (${method}). Any other key or click cancels.`), url: null };
   ui.confirm.notice = ui.notice;
   draw();
   for (let i = 0; shown && i < 12 && !ui.buttons.some((b) => b.merge === number); i++) { ui.top.prs++; draw(); }
@@ -673,6 +678,12 @@ function cancelMerge() {
   if (ui.notice && ui.notice === ui.confirm?.notice) ui.notice = null;
   ui.confirm = null;
   draw();
+}
+
+// y while a Merge or Close press asks (#37): the second press, from the keyboard.
+function confirmByKey() {
+  const { kind, number } = ui.confirm;
+  return kind === "close" ? pressClose(number, true) : pressMerge(number, true);
 }
 
 // The second press: like a launch, it holds ui.acting while the CLI runs, so its
@@ -727,7 +738,7 @@ async function mergePr(number) {
 // ── Closing an issue (#27) ──────────────────────────────────────────────────
 // Every issue, on GitHub and GitLab, has a Close button. Like Merge, the first
 // press only asks: the button reads Confirm close #N, and the notice says pressing
-// it closes the issue. A second press closes that issue with `gh issue close`
+// it closes the issue. A second press, or y, closes that issue with `gh issue close`
 // (`glab issue close` on GitLab), and nothing else: no agent, no pull request.
 // Any other key or click takes the question back.
 
@@ -740,15 +751,16 @@ function closeFor(index) {
   return { number: item.number, ref: `#${item.number}`, verb: "Close", doing: "Closing", armed: askingClose(item.number), closing };
 }
 
-// A Close button pressed. The issue is found again by its number, so only that one
-// is ever closed. One close, merge or launch at a time.
-function pressClose(number) {
+// A Close button pressed, or c (#37). The issue is found again by its number, so
+// only that one is ever closed. One close, merge or launch at a time. `byKey` is y
+// answering the question, as for Merge.
+function pressClose(number, byKey = false) {
   if (ui.acting || ui.menu) return ui.acting;
   const index = ui.issues.findIndex((i) => i.number === number);
   const close = index >= 0 ? closeFor(index) : null;
   if (!close) return null;
   if (askingClose(number)) {
-    if (Date.now() - ui.confirm.at < MERGE_GAP) return null;
+    if (!byKey && Date.now() - ui.confirm.at < MERGE_GAP) return null;
     ui.confirm = null;
     ui.sel.issues = index;
     return closeNow(number);
@@ -757,7 +769,7 @@ function pressClose(number) {
   // the button, so Confirm close is drawn where Close was pressed.
   const shown = ui.buttons.some((b) => b.close === number);
   ui.confirm = { kind: "close", number, notice: null, at: Date.now() };
-  ui.notice = { tone: "info", text: clean(`Press Confirm close ${close.ref} to close it. Any other key or click cancels.`), url: null };
+  ui.notice = { tone: "info", text: clean(`Press Confirm close ${close.ref} or y to close it. Any other key or click cancels.`), url: null };
   ui.confirm.notice = ui.notice;
   draw();
   for (let i = 0; shown && i < 12 && !ui.buttons.some((b) => b.close === number); i++) { ui.top.issues++; draw(); }
@@ -943,7 +955,8 @@ function closeMenu() {
 
 // Keys and the mouse while the menu is open: ↑↓ (or k and j) move, stopping at either
 // end; enter starts the one chosen; esc or q closes it, as does the wheel or a click
-// anywhere but on a profile. Ctrl-C still closes the panel. Other keys do nothing.
+// anywhere but on a profile; ? lists these keys (#37). Ctrl-C still closes the panel.
+// Other keys do nothing.
 function menuKey(m) {
   const k = m[0], menu = ui.menu;
   if (m[1] != null) {
@@ -957,6 +970,7 @@ function menuKey(m) {
   else if (DOWN.includes(k) || k === "j") menu.sel = Math.min(menu.entries.length - 1, menu.sel + 1);
   else if (k === "\r" || k === "\n") return startChoice(menu.sel);
   else if (k === "\x1b" || k === "q") return closeMenu();
+  else if (k === "?") return openHelp("menu");
   else return;
   draw();
 }
@@ -1225,17 +1239,117 @@ function menuLines(m, cols, shown) {
 // phone's keyboard, which may have no arrows or esc (#28).
 const MENU_KEYS = [" ↑↓/jk choose · ⏎ start · esc/q cancel", " ↑↓ · ⏎ start · esc/q cancel", " ⏎ start · q cancel"];
 
+// Every button's key, by view (#37): the list ? shows, and what the form's and the
+// prompt's key hints are made of. An entry's `keys` are single keys, and no key is
+// in a view twice. `hint` is the entry's key hint; `model` says it's shown only on
+// the form's Model field (true) or only off it (false), and `custom` only while a
+// custom prompt is saved, which is when Use default shows.
+const binding = (keys, does, more = {}) => ({ keys: keys ? keys.split(" ") : [], does, ...more });
+const VIEW_KEYS = [
+  binding("s", "⚙ Profiles"),
+  binding("r", "↻ Refresh"),
+  binding("o", "↗ open the repo"),
+];
+const KEYMAP = {
+  main: [
+    binding("a", "Resolve #N or Review #N"),
+    binding("m", "Merge #N: it asks first"),
+    binding("c", "Close #N: it asks first"),
+    binding("y", "Confirm merge, Confirm close"),
+    binding("p", "☑ Auto-pilot"),
+    ...VIEW_KEYS,
+    binding("1 2", "Pull requests, Issues"),
+    binding("⇥ ← → h l", "the other list"),
+    binding("↑ ↓ j k", "select a row"),
+    binding("g G", "the first or last row"),
+    binding("⏎", "open the selected row"),
+    binding("?", "these keys"),
+    binding("q esc", "close the panel, or take a question back"),
+  ],
+  autopilot: [
+    binding("⏎", "▶ Start"),
+    binding("␣ x", "check or uncheck an issue"),
+    binding("q esc", "✕ Cancel"),
+    binding("p", "☑ Auto-pilot: leave it"),
+    ...VIEW_KEYS,
+    binding("1 2", "Pull requests, Issues"),
+    binding("⇥ ← → h l", "the other list: leaves Auto-pilot"),
+    binding("↑ ↓ j k", "select an issue"),
+    binding("g G", "the first or last issue"),
+    binding("?", "these keys"),
+  ],
+  menu: [
+    binding("↑ ↓ j k", "choose a profile"),
+    binding("⏎", "start the profile chosen"),
+    binding("?", "these keys"),
+    binding("q esc", "close the menu"),
+  ],
+  settings: [
+    binding("↑ ↓ j k", "select a profile or a prompt"),
+    binding("n", "+ New"),
+    binding("e ⏎", "Edit"),
+    binding("d", "Delete: it asks first"),
+    binding("R", "Use for Resolve"),
+    binding("V", "Use for Review"),
+    binding("?", "these keys"),
+    binding("q esc s", "✕ back to the lists"),
+  ],
+  form: [
+    binding("↑ ↓ ⇥", "the next or previous field", { hint: "↑↓ field" }),
+    binding("← → ␣", "choose a harness, model or thinking level", { hint: "←→ choose" }),
+    binding("", "type to edit", { hint: "type to edit", model: false }),
+    binding("+", "add a model", { hint: "+ add", model: true }),
+    binding("-", "remove a model you added", { hint: "- remove", model: true }),
+    binding("⏎", "Save", { hint: "⏎ save" }),
+    binding("esc", "Cancel, or ✕", { hint: "esc back" }),
+  ],
+  prompt: [
+    binding("", "type to edit", { hint: "type to edit" }),
+    binding("⏎", "Save", { hint: "⏎ save" }),
+    binding("^R", "Use default", { hint: "^R default", custom: true }),
+    binding("esc", "Cancel, or ✕", { hint: "esc back" }),
+  ],
+};
+// What ? is about, in the key list's title.
+const HELP_TITLES = { main: "the lists", autopilot: "Auto-pilot", menu: "the profile menu", settings: "Agent profiles" };
+
+// The key list, over the whole pane like the profiles view: each key and what it
+// presses, the words wrapped beside it, scrolled by ↑↓ when the pane is too short.
+function helpLines(cols, rows) {
+  ui.buttons = [];
+  ui.rows = [];
+  const h = ui.help, table = KEYMAP[h.mode];
+  const out = [` ${bold(fit(`Keys: ${HELP_TITLES[h.mode]}`, cols - 2))}`, dim("─".repeat(cols))];
+  const kw = Math.min(Math.max(...table.map((e) => width(e.keys.join(" ")))), Math.max(1, Math.floor((cols - 4) / 3)));
+  const body = [];
+  for (const e of table) {
+    wrap(e.does, Math.max(2, cols - kw - 4), Infinity).forEach((l, i) => {
+      const k = i ? "" : fit(e.keys.join(" "), kw);
+      body.push(`  ${accent(k)}${" ".repeat(kw - width(k))}  ${l}`);
+    });
+  }
+  const scrolls = body.length > rows - out.length - 1;
+  const footer = hintLines([...(scrolls ? ["↑↓ scroll"] : []), "?/esc/q close"], cols);
+  const height = Math.max(1, rows - out.length - footer.length);
+  h.top = Math.max(0, Math.min(h.top, body.length - height));
+  for (let r = 0; r < height; r++) out.push(body[h.top + r] ?? "");
+  out.push(...footer);
+  return out;
+}
+
 // Auto-pilot's bar, in place of the key hints while the mode is on (#31): Start, with
 // how many issues are checked, dimmed and doing nothing while there are none; Cancel;
 // then the keys, ⏎ first: in the mode it starts rather than opens. Start comes first,
 // so it stays whole however narrow the pane. The keys are the longest of these that
-// fits after Cancel: 50 cells, 34, 29, then 13, 9 and 6, each key by the glyph of what
+// fits after Cancel: 59 cells, 43, 38, then 15, 11 and 8, each key by the glyph of what
 // it presses (⏎▶ starts, ␣☑ checks, q✕ cancels), so a default 36-column pane, with
 // 12 to 15 cells left, still names a key that checks and one that cancels, and a phone
 // whose keyboard may have no esc, and whose taps may not reach the rows, can use them
-// (#28). Returns { text, hits: [{ from, to, action }] }, each hit a whole button as drawn.
-const AUTOPILOT_KEYS = [" ⏎ start · ␣/x check · ↑↓/jk select · esc/q cancel", " ⏎ start · ␣ check · ↑↓ · q cancel",
-  " ⏎ start · ␣ check · q cancel", " ⏎▶ · ␣☑ · q✕", " ⏎▶ ␣☑ q✕", " ␣☑ q✕"];
+// (#28). Each ends with ? for the key list (#37): "? keys" while it fits, a bare ?
+// where only the glyphs do. Returns { text, hits: [{ from, to, action }] }, each hit
+// a whole button as drawn.
+const AUTOPILOT_KEYS = [" ⏎ start · ␣/x check · ↑↓/jk select · esc/q cancel · ? keys", " ⏎ start · ␣ check · ↑↓ · q cancel · ? keys",
+  " ⏎ start · ␣ check · q cancel · ? keys", " ⏎▶ · ␣☑ · q✕ ?", " ⏎▶ ␣☑ q✕ ?", " ␣☑ q✕ ?"];
 function autopilotBar(cols, count) {
   const hits = [];
   const start = ` ${fit(count ? `▶ Start ${count}` : "▶ Start", Math.max(1, cols - 3))} `;
@@ -1280,6 +1394,8 @@ function headerTools(cols, rows, autopilot) {
 
 function draw() {
   const cols = process.stdout.columns || 60, rows = process.stdout.rows || 24;
+  // The key list (#37) covers whichever view it was opened from.
+  if (ui.help) return paint(helpLines(cols, rows), rows);
   if (ui.settings) return paint(settingsLines(cols, rows), rows);
   const out = [];
   ui.buttons = [];
@@ -1408,7 +1524,10 @@ function draw() {
   // stays in view. Otherwise a and what it acts on come first, so they survive a narrow
   // pane's cut: a resolve #12, a review #34 (#28). In Auto-pilot mode, its Start bar
   // takes their place, the list keeping its lines (#31); p names the mode on the
-  // issues it is offered on.
+  // issues it is offered on. ? keys, for the key list (#37), comes as late as it can
+  // and still be in view: after ⇥ switch, else after ⏎ open, else right after a's
+  // hint, or first. m merge #N or c close #N, for the selected row's Merge or Close,
+  // comes after ⇥ switch.
   const menuKeys = MENU_KEYS.find((k) => width(k) <= cols) ?? MENU_KEYS.at(-1);
   if (autopilot && !ui.menu) {
     // Start's count is of the checked issues it would send: none while the issues
@@ -1420,7 +1539,14 @@ function draw() {
     return paint(out, rows);
   }
   const pilot = action && autopilotOffered() ? "p auto-pilot · " : "";
-  const keys = ui.menu ? menuKeys : ` ${action ? `a ${action.key} #${action.number} · ` : ""}↑↓ select · ⏎ open · ${pilot}⇥ switch · s profiles · r refresh · o repo · q close`;
+  const lead = action ? `a ${action.key} #${action.number} · ` : "";
+  const press = view === "prs" ? mergeFor(ui.sel.prs) : closeFor(ui.sel.issues);
+  const pressKey = press ? `${view === "prs" ? "m merge" : "c close"} ${press.ref} · ` : "";
+  const rest = `s profiles · r refresh · o repo · q close`;
+  const tiers = [` ${lead}↑↓ select · ⏎ open · ${pilot}⇥ switch · ? keys · ${pressKey}${rest}`,
+    ` ${lead}↑↓ select · ⏎ open · ? keys · ${pilot}⇥ switch · ${pressKey}${rest}`,
+    ` ${lead}? keys · ↑↓ select · ⏎ open · ${pilot}⇥ switch · ${pressKey}${rest}`];
+  const keys = ui.menu ? menuKeys : tiers.find((t) => width(t.slice(0, t.indexOf("? keys") + 6)) <= cols) ?? tiers.at(-1);
   out.push(dim(fit(keys, cols)));
   paint(out, rows);
 }
@@ -1610,6 +1736,11 @@ function editPrompt(action) {
   draw();
 }
 
+// The prompt's Use default, or ctrl-r (#37): shown, and done, only while a custom
+// prompt is saved.
+const hasCustom = (st) => P.resolvePrompt(st.store, st.prompt.action) !== null;
+const useDefault = () => savePrompt("");
+
 function savePrompt(text = ui.settings.prompt.text) {
   const st = ui.settings, { action } = st.prompt, t = text.trim();
   change(() => {
@@ -1674,6 +1805,7 @@ function settingsKey(m) {
     Object.assign(st, { error: `The ${P.PROMPT_LABELS[st.promptSel]} isn't a profile: e or enter edits it`, info: null });
   } else if (k === "d") return askDelete();
   else if (k === "R" || k === "V") return assignTo(k === "R" ? "resolve" : "review");
+  else if (k === "?") return openHelp("settings");
   else return;
   draw();
 }
@@ -1702,11 +1834,13 @@ function wheel(st, by) {
   draw();
 }
 
-// Keys while a prompt is edited: text, as in the form; enter saves, esc goes back.
+// Keys while a prompt is edited: text, as in the form; enter saves, esc goes back,
+// ctrl-r is Use default (#37), and does nothing while there's no custom prompt.
 function promptKey(st, k) {
   const pr = st.prompt;
   if (k === "\x1b") return settingsBack();
   if (k === "\r" || k === "\n") return savePrompt();
+  if (k === "\x12") return hasCustom(st) ? useDefault() : undefined;
   if (k === "\x7f" || k === "\b") pr.text = [...pr.text].slice(0, -1).join("");
   else if (!k.startsWith("\x1b") && !/[\x00-\x1f\x7f-\x9f]/.test(k) && pr.text.length < P.PROMPT_MAX) pr.text += k;
   else return;
@@ -1824,12 +1958,12 @@ function settingsLines(cols, rows) {
   if (st.info) notes.push([green, st.info]);
   for (const w of st.warnings) notes.push([yellow, w]);
   if (st.mode === "edit" && st.form.harness === "opencode" && st.form.thinking) notes.push([yellow, OPENCODE_NOTE]);
+  // The form's and the prompt's key hints come from their KEYMAP tables (#37).
   const footer = hintLines(st.mode === "edit" ? (st.form.adding !== null ? ["type the model", "⏎ add", "esc cancel"]
-    : st.field === MODEL_FIELD ? ["↑↓ field", "←→ choose", "+ add", "- remove", "⏎ save", "esc back"]
-      : ["↑↓ field", "←→ choose", "type to edit", "⏎ save", "esc back"])
-    : st.mode === "prompt" ? ["type to edit", "⏎ save", "esc back"]
+    : KEYMAP.form.filter((e) => e.model === undefined || e.model === (st.field === MODEL_FIELD)).map((e) => e.hint))
+    : st.mode === "prompt" ? KEYMAP.prompt.filter((e) => !e.custom || hasCustom(st)).map((e) => e.hint)
     : st.mode === "confirm" ? ["y delete", "any other key keeps it"]
-      : ["↑↓ select", "n new", "e edit", "d delete", "R/V assign", "esc back"], cols);
+      : ["↑↓ select", "? keys", "n new", "e edit", "d delete", "R/V assign", "esc back"], cols);
   const room = Math.max(0, rows - out.length - footer.length - 1);
   const said = notes.flatMap(([tone, text]) => wrap(text, cols - 2, Infinity).map((l) => [tone, l]));
   if (said.length > room) {
@@ -1904,8 +2038,7 @@ function settingsLines(cols, rows) {
       "Sent as written to every harness, instead of the IDD skill. Empty sends the default.",
     ]) for (const l of wrap(note, cols - 4, Infinity)) { body.push("  " + dim(l)); owner.push(null); }
     body.push(""); owner.push(null);
-    const custom = P.resolvePrompt(st.store, action) !== null;
-    addButtons([["Save", () => savePrompt()], ...(custom ? [["Use default", () => savePrompt("")]] : []), ["Cancel", () => settingsBack()]], "  ", 2, null);
+    addButtons([["Save", () => savePrompt()], ...(hasCustom(st) ? [["Use default", useDefault]] : []), ["Cancel", () => settingsBack()]], "  ", 2, null);
   } else {
     const using = (id) => P.ACTION_KEYS.filter((a) => (st.store.assign[a] ?? P.DEFAULT_PROFILE.id) === id);
     entries().forEach((q, i) => {
@@ -2011,6 +2144,35 @@ function click(x, y) {
   openUrl(ui[ui.view][i]?.url);
 }
 
+// ? opens the key list of the view it's pressed in (#37): the lists, Auto-pilot, the
+// profile menu or the profiles. ?, esc or q closes it, as does a click; ↑↓ (or k and
+// j) and the wheel scroll it. It takes every other key, so none reaches the view
+// under it. Ctrl-C still closes the panel.
+function openHelp(mode) {
+  ui.help = { mode, top: 0 };
+  draw();
+}
+
+function closeHelp() {
+  ui.help = null;
+  draw();
+}
+
+function helpKey(m) {
+  const k = m[0], h = ui.help;
+  if (m[1] != null) {
+    const button = Number(m[1]);
+    if (button === 0 && m[4] === "M") return closeHelp();
+    if (button !== 64 && button !== 65) return;
+    h.top += button === 64 ? -3 : 3;
+  } else if (k === "\x03") return quit();
+  else if (k === "?" || k === "q" || k === "\x1b") return closeHelp();
+  else if (UP.includes(k) || k === "k") h.top -= 1;
+  else if (DOWN.includes(k) || k === "j") h.top += 1;
+  else return;
+  draw();
+}
+
 // While the panel runs: the alternate screen, no cursor, mouse reports (SGR), and
 // bracketed paste, so that what's pasted comes as text and not as keys.
 const MODES_ON = `${ESC}?1049h${ESC}?25l${ESC}?1000h${ESC}?1006h${ESC}?2004h`;
@@ -2042,6 +2204,9 @@ function pasteText(text) {
   draw();
 }
 
+// A row's Merge or Close button (mergeFor's or closeFor's), pressed from a key.
+const pressRow = (button, press) => button ? press(button.number) : null;
+
 const KEYS = /\x1b\[<(\d+);(\d+);(\d+)([mM])|\x1b\[[0-9;]*[A-Za-z~]|\x1bO[A-Za-z]|\x1b|[\s\S]/g;
 const PASTE_START = "\x1b[200~", PASTE_END = "\x1b[201~";
 function onInput(data) {
@@ -2054,6 +2219,10 @@ function onInput(data) {
     if (k === PASTE_START) { Object.assign(ui, { pasting: true, pasteCR: false }); continue; }
     if (k === PASTE_END) { ui.pasting = false; pasteText(pasted); pasted = ""; continue; }
     if (ui.pasting) { if (!k.startsWith("\x1b")) pasted += k; continue; }
+    // The key list takes every key and click while it's open, over any view (#37). A
+    // click that closes it drops the rest of the chunk, so a double click's second
+    // press doesn't reach the view under it.
+    if (ui.help) { helpKey(m); if (!ui.help && m[1] != null) return; continue; }
     // The profile views take every key and click while they're open.
     if (ui.settings) {
       // A terminal without bracketed paste sends a paste as keys, all in one chunk:
@@ -2079,7 +2248,12 @@ function onInput(data) {
       else if (button === 0 && m[4] === "M") click(x, y);
       continue;
     }
-    // While a Merge or Close press asks, esc and q take it back rather than close the panel (#13, #27).
+    // While a Merge or Close press asks, y answers it, as Confirm merge or Confirm close
+    // would (#37). The key that asked, m or c, pressed again changes nothing, so a key
+    // held down or repeated never merges or closes; it leaves the question and its notice.
+    if (ui.confirm && k === "y") { confirmByKey(); continue; }
+    if (ui.confirm && k === (ui.confirm.kind === "close" ? "c" : "m")) continue;
+    // Esc and q take it back rather than close the panel (#13, #27).
     if (ui.confirm && (k === "q" || (k === "\x1b" && data.length === 1))) { cancelMerge(); continue; }
     // In Auto-pilot mode they leave the mode first, nothing checked (#31).
     const autopilot = autopilotOn();
@@ -2106,8 +2280,13 @@ function onInput(data) {
     else if (k === "\r" || k === "\n") openUrl(ui[ui.view][ui.sel[ui.view]]?.url);
     else if (k === "o") openUrl(ui.repo?.url);
     else if (k === "a" && !autopilot) act(ui.view, ui.sel[ui.view], "keys");
+    // m and c press the selected row's Merge or Close, which asks first (#37): only
+    // where the row has that button, so c does nothing in Auto-pilot mode.
+    else if (k === "m" && ui.view === "prs") pressRow(mergeFor(ui.sel.prs), pressMerge);
+    else if (k === "c" && ui.view === "issues" && !autopilot) pressRow(closeFor(ui.sel.issues), pressClose);
     else if (k === "s") openSettings();
     else if (k === "r") refresh();
+    else if (k === "?") openHelp(autopilot ? "autopilot" : "main");
   }
   if (ui.pasting) pasteText(pasted);
 }
@@ -2320,6 +2499,8 @@ else {
     pressMerge, MERGE_GAP, mergeStrategy, mergeArgs, mergeGuard, refresh,
     // An issue's Close button (#27): its press.
     pressClose,
+    // Every button's key, by mode, as the key list shows them (#37).
+    KEYMAP,
     // Auto-pilot (#31): the mode's toggle, Start, the issues it sends, and the new pane's label.
     toggleAutopilot, startAutopilot, checkedNumbers, paneLabel,
     state: () => ({ cwd, target }),

@@ -685,6 +685,11 @@ function noticeLines(now = Date.now()) {
   return out;
 }
 
+// Collapsed, the panel has no footer, so the title line names its keys (#37), in
+// words while the summary still fits beside them, else by the glyph of what each
+// presses (c▸ expands, r↻ refreshes, q✕ closes): the summary gives way to them.
+const COLLAPSED_KEYS = ["c expand · r refresh · q close", "c▸ r↻ q✕"];
+
 function header(cols) {
   ui.buttons = [];
   const now = Date.now();
@@ -695,7 +700,7 @@ function header(cols) {
   // The info text's room: a space after the title, one plain space before the button
   // so its highlight never touches the text, and the last column left free.
   const room = cols - width(title) - width(refreshLabel) - 3;
-  let info = "";
+  let info = "", keys = "", infoRoom = room;
   if (ui.collapsed) {
     // Collapsed, the title line carries the peaks and the machine's CPU and memory,
     // and its network when there's room.
@@ -707,14 +712,17 @@ function header(cols) {
     const pct = (v) => label(v, (x) => `${Math.round(x)}%`);
     parts.push(`cpu ${pct(s.cpu)}`, `mem ${pct(s.mem && memPercent(s.mem))}`);
     info = parts.join(" · ");
+    const [words, glyphs] = COLLAPSED_KEYS;
+    keys = width(info) + 2 + width(words) <= room ? words : width(glyphs) <= room ? glyphs : "";
+    if (keys) infoRoom -= width(keys) + 2;
     const net = `${info} · net ${label(s.net, (n) => `↓${shortBytes(n.rx)} ↑${shortBytes(n.tx)}`)}`;
-    if (width(net) <= room) info = net;
+    if (width(net) <= infoRoom) info = net;
   } else {
     const times = ui.profiles.map((p) => p.updatedAt).filter(Boolean).map(Date.parse).filter(Number.isFinite);
     if (ui.lastLive && now - ui.lastLive < 60000) info = "updated just now";
     else if (times.length) info = `updated ${ago(new Date(Math.max(...times)).toISOString(), now)}`;
   }
-  const infoText = room > 6 ? fit(info, room) : "";
+  const infoText = [infoRoom > 6 ? fit(info, infoRoom) : "", keys].filter(Boolean).join("  ");
   // A roomier button when the line has the space for it.
   if (room - width(infoText) >= 2) refreshLabel = `  ${refreshText}  `;
   const sep = infoText ? " " : "";
