@@ -49,7 +49,7 @@ process.on("exit", () => fs.rmSync(stateHome, { recursive: true, force: true }))
 Object.assign(process.env, { REX_GITHUB_REX: "rex", REX_SESSION: "session:s", REX_BLOCK: "block:panel", REX_GITHUB_STARTUP_MS: "1", XDG_STATE_HOME: stateHome });
 process.argv.push("--target", "block:agent", "--cwd", "/start");
 const P = require("../profiles.cjs");
-const { width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput, MODES_ON, MODES_OFF, act, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, flags, locate, state, follow, splitLeft, ratioFor, fitWidth, COLUMNS, MAX_SHARE, settleResize, savedWidth, resetWidth, pressMerge, MERGE_GAP, mergeStrategy, mergeArgs, mergeGuard, refresh, pressClose, checkedNumbers, paneLabel, KEYMAP } = require("../panel.js");
+const { width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput, MODES_ON, MODES_OFF, act, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, flags, locate, state, follow, splitLeft, ratioFor, fitWidth, COLUMNS, MAX_SHARE, settleResize, savedWidth, resetWidth, pressMerge, MERGE_GAP, mergeStrategy, mergeArgs, mergeGuard, refresh, pressClose, checkedNumbers, paneLabel, KEYMAP, mergeMode, branchDelete } = require("../panel.js");
 
 // Drops colors and OSC 8 hyperlinks, leaving the text a terminal shows.
 const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b\]8;[^\x07\x1b]*(?:\x1b\\|\x07)/g, "");
@@ -180,15 +180,23 @@ test("GitHub JSON maps to the row shape", () => {
   const { github } = FORGES;
   // With the merge methods the repo allows, and each pull request's head commit, for its Merge button (#13).
   assert.deepEqual(github.repo({ nameWithOwner: "o/p", url: "https://github.com/o/p", squashMergeAllowed: false, mergeCommitAllowed: true, rebaseMergeAllowed: false }),
-    { name: "o/p", url: "https://github.com/o/p", merges: { squash: false, merge: true, rebase: false } });
+    { name: "o/p", url: "https://github.com/o/p", merges: { squash: false, merge: true, rebase: false }, autoDelete: false, defaultBranch: null });
   assert.ok(github.repoArgs.at(-1).split(",").includes("squashMergeAllowed"));
   assert.ok(github.prArgs.at(-1).split(",").includes("headRefOid"));
+  // And, for the branch a merge deletes (#39), whether GitHub deletes it itself, the
+  // default branch, and whether a pull request comes from a fork and where it merges.
+  assert.deepEqual(github.repo({ nameWithOwner: "o/p", url: "u", deleteBranchOnMerge: true, defaultBranchRef: { name: "main" } }),
+    { name: "o/p", url: "u", merges: { squash: undefined, merge: undefined, rebase: undefined }, autoDelete: true, defaultBranch: "main" });
+  for (const field of ["deleteBranchOnMerge", "defaultBranchRef"]) assert.ok(github.repoArgs.at(-1).split(",").includes(field), field);
+  for (const field of ["isCrossRepository", "baseRefName"]) assert.ok(github.prArgs.at(-1).split(",").includes(field), field);
+  assert.deepEqual([true, false, undefined, "false"].map((isCrossRepository) => github.toPr({ number: 1, isCrossRepository }).cross), [true, false, null, null]);
+  assert.equal(github.toPr({ number: 1, baseRefName: "main" }).base, "main");
   const head = "a".repeat(40);
   const p = github.toPr({
     number: 3, title: "Fix", body: "## Why\nBecause", author: { login: "ann" }, isDraft: true, headRefName: "fix", headRefOid: head,
     updatedAt: "2026-01-01T00:00:00Z", url: "u", reviewDecision: "CHANGES_REQUESTED", statusCheckRollup: [{ state: "PENDING" }],
   });
-  assert.deepEqual(p, { ref: "#3", number: 3, title: "Fix", body: "Because", author: "ann", branch: "fix", head, draft: true, review: "changes", checks: "pending", updatedAt: "2026-01-01T00:00:00Z", url: "u" });
+  assert.deepEqual(p, { ref: "#3", number: 3, title: "Fix", body: "Because", author: "ann", branch: "fix", head, cross: null, base: null, draft: true, review: "changes", checks: "pending", updatedAt: "2026-01-01T00:00:00Z", url: "u" });
   const i = github.toIssue({ number: 4, title: "Bug", body: "", author: { login: "ann" }, labels: [{ name: "bug", color: "d73a4a" }], updatedAt: "t", url: "u" });
   assert.deepEqual(i.labels, [{ name: "bug", color: "d73a4a" }]);
   assert.equal(i.ref, "#4");
@@ -1980,13 +1988,18 @@ test("the wheel reaches the prompt rows and the prompt's buttons in a short pane
     lines = at(wheel(true));
     assert.equal(ui.settings.promptSel, "review", where(lines));
     assert.ok(lines.some((l) => /^▌ Review prompt +Edit $/.test(l ?? "")), where(lines));
-    // On to the last, Auto-pilot's (#31), where the wheel stops.
-    lines = at(wheel(true) + wheel(true));
+    // On to Auto-pilot's (#31).
+    lines = at(wheel(true));
     assert.equal(ui.settings.promptSel, "autopilot", where(lines));
     assert.ok(lines.some((l) => /^▌ Auto-pilot prompt +Edit $/.test(l ?? "")), where(lines));
     fitsWithHints(lines, cols, rows, "↑↓ select", "esc back");
+    // On to the last, the merge mode's (#39), where the wheel stops.
+    lines = at(wheel(true) + wheel(true));
+    assert.equal(ui.settings.promptSel, "merge", where(lines));
+    assert.ok(lines.some((l) => /^▌ Merge mode +Change $/.test(l ?? "")), where(lines));
+    fitsWithHints(lines, cols, rows, "↑↓ select", "esc back");
     // And back up to the profiles.
-    for (let i = 0; i < 3; i++) lines = at(wheel(false));
+    for (let i = 0; i < 4; i++) lines = at(wheel(false));
     assert.equal(ui.settings.promptSel, null, where(lines));
     assert.equal(ui.settings.sel, n, where(lines));
     lines = at(wheel(true));
@@ -2727,11 +2740,16 @@ async function followFolder(t) {
 // the CLI accepts takes the pull request out of the list, unless `queued`: then it
 // stays open, as with auto-merge or a merge queue. `reply` answers the merge, and
 // `view` the look at its state afterwards. Its open issues are `issues`; a close
-// the CLI accepts (`closeReply`) takes the issue out of the list (#27). Restored
-// when the test ends.
-function fakeForge(t, { forge = "github", open = [10, 11, 12, 13, 14], merges = ALL_MERGES, reply = { code: 0, stdout: "" }, queued = false, view = null, issues = [], closeReply = { code: 0, stdout: "" } } = {}) {
+// the CLI accepts (`closeReply`) takes the issue out of the list (#27). On GitHub,
+// for the branch a merge deletes (#39): the pull requests come from this repo
+// unless `cross` says otherwise (null: gh doesn't say), into main, the repo's
+// default branch; `autoDelete` is the repo's own deleting of merged branches; and
+// `deleteReply` answers `gh api`'s delete, whose branches go in state.deleted.
+// Restored when the test ends.
+function fakeForge(t, { forge = "github", open = [10, 11, 12, 13, 14], merges = ALL_MERGES, reply = { code: 0, stdout: "" }, queued = false, view = null, issues = [], closeReply = { code: 0, stdout: "" },
+  cross = false, autoDelete = false, deleteReply = { code: 0, stdout: "" }, branch = (n) => `b${n}` } = {}) {
   t.after(() => { git = missing("git"); gh = missing("gh"); glab = missing("glab"); hold = () => false; held.length = 0; });
-  const state = { open: open.slice(), issues: issues.slice() };
+  const state = { open: open.slice(), issues: issues.slice(), deleted: [] };
   const host = forge === "gitlab" ? "gitlab.com" : "github.com";
   git = (args) => args[0] === "rev-parse" ? { code: 0, stdout: "/repo\n" }
     : args[0] === "remote" ? { code: 0, stdout: `origin\tgit@${host}:o/p.git (fetch)\n` } : { code: 1, stderr: "no" };
@@ -2746,14 +2764,19 @@ function fakeForge(t, { forge = "github", open = [10, 11, 12, 13, 14], merges = 
   };
   if (forge === "github") {
     gh = (args) => {
-      if (args[0] === "repo") return { code: 0, stdout: JSON.stringify({ nameWithOwner: "o/p", url: "https://x/o/p", squashMergeAllowed: merges.squash, mergeCommitAllowed: merges.merge, rebaseMergeAllowed: merges.rebase }) };
+      if (args[0] === "repo") return { code: 0, stdout: JSON.stringify({ nameWithOwner: "o/p", url: "https://x/o/p", squashMergeAllowed: merges.squash, mergeCommitAllowed: merges.merge, rebaseMergeAllowed: merges.rebase,
+        deleteBranchOnMerge: autoDelete, defaultBranchRef: { name: "main" } }) };
+      if (args[0] === "api") {
+        if (deleteReply.code === 0) state.deleted.push(decodeURIComponent(args.at(-1).split("/git/refs/heads/")[1]));
+        return deleteReply;
+      }
       if (args[0] === "issue" && args[1] === "close") return close(args);
       if (args[0] === "issue") return { code: 0, stdout: JSON.stringify(state.issues.map((n) => ({
         number: n, title: `Issue ${n}`, body: `About ${n}`, author: { login: "a" }, labels: [], updatedAt: iso(60), url: `https://x/issues/${n}`,
       }))) };
       if (args[1] === "list") return { code: 0, stdout: JSON.stringify(state.open.map((n) => ({
-        number: n, title: `Title ${n}`, body: `Body ${n}`, author: { login: "a" }, isDraft: false, headRefName: `b${n}`, headRefOid: headOf(n),
-        updatedAt: iso(60), url: `https://x/pull/${n}`, reviewDecision: "", statusCheckRollup: [],
+        number: n, title: `Title ${n}`, body: `Body ${n}`, author: { login: "a" }, isDraft: false, headRefName: branch(n), headRefOid: headOf(n),
+        ...(cross === null ? {} : { isCrossRepository: cross }), baseRefName: "main", updatedAt: iso(60), url: `https://x/pull/${n}`, reviewDecision: "", statusCheckRollup: [],
       }))) };
       if (args[1] === "merge") return merge(args);
       if (args[1] === "view") return view ?? { code: 0, stdout: JSON.stringify({ state: isOpen(args) ? "OPEN" : "MERGED" }) };
@@ -2865,7 +2888,8 @@ test("a Merge press only asks: the button reads Confirm merge, the notice names 
     // One button asks; the notice under the list says so.
     assert.equal(after.filter((l) => l?.includes("Confirm merge") && !l.includes("Press")).length, 1, after.join("\n"));
     assert.equal(ui.notice?.tone, "info");
-    assert.equal(ui.notice.text, `Press Confirm merge ${ref} or y to merge it (${method}). Any other key or click cancels.`);
+    // With the merge mode (#39): none saved deletes the branch.
+    assert.equal(ui.notice.text, `Press Confirm merge ${ref} or y to merge it (${method}, then delete its branch). Any other key or click cancels.`);
     // Drawn red, so it reads as the press that merges.
     const raw = rawScreen(draw).find((l) => l?.includes(`Confirm merge ${ref}`));
     assert.match(raw, /\x1b\[31m Confirm merge/, raw);
@@ -2931,7 +2955,8 @@ test("the second press merges that pull request, and only that one, by the metho
 test("on GitLab the second press runs glab mr merge for that merge request, with the head it showed (#13)", async (t) => {
   const { lines } = await loadForge(t, { forge: "gitlab" });
   await quietly(() => mergeVia(lines, "!11"));
-  assert.deepEqual(mergeCalls("glab"), [["mr", "merge", "11", "--yes", "--sha", headOf(11)]]);
+  // With no merge mode saved, GitLab deletes the branch once it merges (#39).
+  assert.deepEqual(mergeCalls("glab"), [["mr", "merge", "11", "--yes", "--remove-source-branch", "--sha", headOf(11)]]);
   assert.equal(callOpts[calls.findIndex((c) => c[0] === "glab" && c[2] === "merge")].cwd, "/repo");
   assert.deepEqual(viewCalls("glab"), [["mr", "view", "11", "--output", "json"]]);
   assert.ok(!calls.some((c) => c[0] === "gh"));
@@ -2950,7 +2975,7 @@ test("a merge says Merged and takes the pull request out of the list, and the ne
   });
   assert.deepEqual(state.open, [10, 11, 13, 14]);
   assert.equal(ui.notice?.tone, "ok");
-  assert.equal(ui.notice.text, "Merged #12");
+  assert.equal(ui.notice.text, "Merged #12 and deleted its branch b12");
   // The merge's refresh read the list again.
   assert.ok(cliCalls("gh").some((c) => c[0] === "pr" && c[1] === "list"), JSON.stringify(cliCalls("gh")));
   assert.deepEqual(ui.prs.map((p) => p.number), [10, 11, 13, 14]);
@@ -3006,7 +3031,7 @@ test("a refresh that began before a merge and answers after it doesn't list the 
     assert.ok(reading, "the refresh is reading the list");
     hold = () => false;
     await mergeVia(lines, "#12");
-    assert.equal(ui.notice?.text, "Merged #12");
+    assert.equal(ui.notice?.text, "Merged #12 and deleted its branch b12");
     // The merge's own refresh waits for the running one; the next poll reads again.
     assert.equal(cliCalls("gh").filter((c) => c[0] === "pr" && c[1] === "list").length, 1, JSON.stringify(calls));
     assert.equal(ui.fetchedAt, 0);
@@ -3133,7 +3158,7 @@ test("a double click on Merge only asks: a second press within MERGE_GAP keeps t
     await idle();
   });
   assert.deepEqual(mergeCalls(), [["pr", "merge", "12", "--squash", "--match-head-commit", headOf(12)]]);
-  assert.equal(ui.notice?.text, "Merged #12");
+  assert.equal(ui.notice?.text, "Merged #12 and deleted its branch b12");
 });
 
 test("a GitHub repo that allows no merge method, or doesn't say, keeps the Merge button, says why and runs no merge (#13)", async (t) => {
@@ -3182,7 +3207,7 @@ test("while a merge runs its progress stays up, and a, Review and another Merge 
     await ui.acting;
     await idle();
   });
-  assert.equal(ui.notice?.text, "Merged #12");
+  assert.equal(ui.notice?.text, "Merged #12 and deleted its branch b12");
   assert.deepEqual(mergeCalls(), [["pr", "merge", "12", "--squash", "--match-head-commit", headOf(12)]]);
 });
 
@@ -3234,7 +3259,7 @@ test("while a merge runs its button reads Merging #N… until the forge says wha
     await idle();
   });
   // Merged: the row, and its button, are gone.
-  assert.equal(ui.notice?.text, "Merged #12");
+  assert.equal(ui.notice?.text, "Merged #12 and deleted its branch b12");
   assert.equal(ui.merging, null);
   assert.ok(!ui.prs.some((p) => p.number === 12));
   assert.ok(!ui.buttons.some((b) => b.merge === 12));
@@ -3310,13 +3335,18 @@ test("the CLIs' merge arguments come from an integer, a known method and a commi
   assert.deepEqual(mergeArgs(7, "rebase"), ["pr", "merge", "7", "--rebase"]);
   assert.deepEqual(mergeArgs(7, "merge", "f".repeat(64)), ["pr", "merge", "7", "--merge", "--match-head-commit", "f".repeat(64)]);
   const { github, gitlab } = FORGES;
-  assert.deepEqual(gitlab.mergeArgs(7, null, headOf(7)), ["mr", "merge", "7", "--yes", "--sha", headOf(7)]);
-  assert.deepEqual(gitlab.mergeArgs(7, null, undefined), ["mr", "merge", "7", "--yes"]);
+  assert.deepEqual(gitlab.mergeArgs(7, null, headOf(7), "keep"), ["mr", "merge", "7", "--yes", "--sha", headOf(7)]);
+  assert.deepEqual(gitlab.mergeArgs(7, null, undefined, "keep"), ["mr", "merge", "7", "--yes"]);
+  // The merge mode that deletes (#39), as any mode but "keep" does, none included:
+  // GitLab deletes the branch when it merges.
+  for (const mode of ["delete", undefined, "", "Keep", "keep\n"]) {
+    assert.deepEqual(gitlab.mergeArgs(7, null, headOf(7), mode), ["mr", "merge", "7", "--yes", "--remove-source-branch", "--sha", headOf(7)], JSON.stringify(mode));
+  }
   assert.deepEqual(github.mergeArgs(7, { merges: { squash: false, merge: true, rebase: true } }, headOf(7)), ["pr", "merge", "7", "--merge", "--match-head-commit", headOf(7)]);
   // A head that isn't 40 or 64 lowercase hex digits isn't passed.
   for (const head of ["abc", "$(id)", "A".repeat(40), `${headOf(7)} --admin`, `${headOf(7)}\n`, 42]) {
     assert.deepEqual(mergeArgs(7, "merge", head), ["pr", "merge", "7", "--merge"], String(head));
-    assert.deepEqual(gitlab.mergeArgs(7, null, head), ["mr", "merge", "7", "--yes"], String(head));
+    assert.deepEqual(gitlab.mergeArgs(7, null, head, "keep"), ["mr", "merge", "7", "--yes"], String(head));
   }
   for (const n of [0, -1, 1.5, "7", "7; id", NaN, undefined]) {
     assert.throws(() => mergeArgs(n, "squash"), /not a number/, String(n));
@@ -3326,9 +3356,14 @@ test("the CLIs' merge arguments come from an integer, a known method and a commi
   }
   for (const s of ["admin", "--squash", "", undefined, "toString"]) assert.throws(() => mergeArgs(7, s), /not a merge method/, String(s));
   assert.throws(() => github.mergeArgs(7, { merges: {} }), /not a merge method/);
-  // Never a flag that deletes a branch, skips the rules or waits.
-  const built = [mergeArgs(7, "squash", headOf(7)), mergeArgs(7, "merge"), mergeArgs(7, "rebase"), gitlab.mergeArgs(7, null, headOf(7))].flat();
+  // Never a flag that skips the rules or waits. gh pr merge never deletes a branch,
+  // in either merge mode (#39): its --delete-branch deletes the local one too; and
+  // in the mode that keeps it, neither does glab mr merge.
+  const built = [mergeArgs(7, "squash", headOf(7)), mergeArgs(7, "merge"), mergeArgs(7, "rebase"), gitlab.mergeArgs(7, null, headOf(7), "keep"),
+    ...["delete", "keep"].map((mode) => github.mergeArgs(7, { merges: ALL_MERGES }, headOf(7), mode))].flat();
   for (const flag of ["--auto", "--admin", "--delete-branch", "-d", "--auto-merge", "--remove-source-branch", "--rebase-skip"]) assert.ok(!built.some((a) => a.startsWith(flag) && a !== "--rebase"), flag);
+  const deleting = gitlab.mergeArgs(7, null, headOf(7), "delete");
+  for (const flag of ["--auto", "--admin", "--auto-merge", "--rebase-skip", "-d"]) assert.ok(!deleting.some((a) => a.startsWith(flag)), flag);
   // The look at a merge's result: merged, still open, or can't tell.
   assert.deepEqual(github.viewArgs(7), ["pr", "view", "7", "--json", "state"]);
   assert.deepEqual(gitlab.viewArgs(7), ["mr", "view", "7", "--output", "json"]);
@@ -3365,6 +3400,232 @@ test("mergeGuard drops a merged pull request from a refresh that began before th
   assert.deepEqual(numbers(g.filter(list, "/r", after)), [11, 12]);
   assert.deepEqual(numbers(g.filter(list, "/r", before)), [11, 12]);
   assert.deepEqual(g.filter(undefined, "/r", after), []);
+});
+
+// ── Merge mode (#39) ────────────────────────────────────────────────────────
+
+// The merge mode's file in the panel's state folder: `content` written there (null:
+// none), and gone again when the test ends, so no other test merges in its mode.
+const MERGE_FILE = path.join(stateHome, "rex-github", "merge");
+function mergeModeFile(t, content) {
+  fs.rmSync(MERGE_FILE, { recursive: true, force: true });
+  if (content !== null) { fs.mkdirSync(path.dirname(MERGE_FILE), { recursive: true }); fs.writeFileSync(MERGE_FILE, content); }
+  t.after(() => fs.rmSync(MERGE_FILE, { recursive: true, force: true }));
+}
+const apiCalls = () => cliCalls("gh").filter((c) => c[0] === "api");
+const deleteOf = (branch) => ["api", "--hostname", "x", "-X", "DELETE", `repos/o/p/git/refs/heads/${branch}`];
+
+test("with no merge mode saved, or a file that doesn't say keep, a merge deletes the pull request's branch on GitHub once it merged (#39)", async (t) => {
+  for (const content of [null, "", "delete", "garbage", "KEEP", "keep it"]) {
+    mergeModeFile(t, content);
+    const { lines, state } = await loadForge(t);
+    await quietly(async () => { await mergeVia(lines, "#12"); await idle(); });
+    const where = JSON.stringify(content);
+    // gh pr merge itself never deletes a branch; gh api deletes it on GitHub, after
+    // gh pr view said the pull request merged.
+    assert.deepEqual(mergeCalls(), [["pr", "merge", "12", "--squash", "--match-head-commit", headOf(12)]], where);
+    assert.deepEqual(apiCalls(), [deleteOf("b12")], where);
+    const order = cliCalls("gh").map((c) => c.slice(0, 2).join(" "));
+    assert.ok(order.indexOf("pr view") < order.indexOf(`api --hostname`), order.join(", "));
+    assert.equal(callOpts[calls.findIndex((c) => c[0] === "gh" && c[1] === "api")].cwd, "/repo");
+    assert.deepEqual(state.deleted, ["b12"], where);
+    assert.equal(ui.notice?.tone, "ok", where);
+    assert.equal(ui.notice.text, "Merged #12 and deleted its branch b12", where);
+    assert.ok(!ui.prs.some((p) => p.number === 12), where);
+    // Nothing touches the local branch or checkout.
+    assert.ok(!calls.some((c) => c[0] === "git" && c[1] !== "rev-parse" && c[1] !== "remote"), JSON.stringify(calls));
+  }
+});
+
+test("with Merge and keep branch saved, a merge leaves the branch where it is, and the question says so (#39)", async (t) => {
+  for (const content of ["keep", "keep\n", " keep "]) {
+    // Written after the panel started: the mode is read at the merge, not once at start.
+    mergeModeFile(t, content);
+    const { lines } = await loadForge(t);
+    await quietly(async () => {
+      pressButton(lines, "Merge #12");
+      assert.equal(ui.notice.text, "Press Confirm merge #12 or y to merge it (squash, keeping its branch). Any other key or click cancels.");
+      later();
+      pressButton(screen(draw), "Confirm merge #12");
+      await ui.acting;
+      await idle();
+    });
+    assert.equal(mergeCalls().length, 1);
+    assert.deepEqual(apiCalls(), [], JSON.stringify(content));
+    assert.equal(ui.notice?.text, "Merged #12");
+    assert.ok(!ui.prs.some((p) => p.number === 12));
+  }
+});
+
+test("on GitLab, glab mr merge gets --remove-source-branch in the mode that deletes, and not in the one that keeps (#39)", async (t) => {
+  for (const [content, args] of [[null, ["mr", "merge", "11", "--yes", "--remove-source-branch", "--sha", headOf(11)]], ["keep", ["mr", "merge", "11", "--yes", "--sha", headOf(11)]]]) {
+    mergeModeFile(t, content);
+    const { lines } = await loadForge(t, { forge: "gitlab" });
+    await quietly(async () => { await mergeVia(lines, "!11"); await idle(); });
+    assert.deepEqual(mergeCalls("glab"), [args], String(content));
+    assert.ok(!calls.some((c) => c[0] === "gh"), String(content));
+    assert.equal(ui.notice?.text, "Merged !11");
+  }
+});
+
+test("a merge that fails, waits for checks or a queue, or can't be read deletes no branch, in either mode (#39)", async (t) => {
+  for (const content of [null, "keep"]) {
+    for (const options of [
+      { reply: { code: 1, stderr: "GraphQL: Pull request is not mergeable\n" } },
+      { queued: true },
+      { queued: true, view: { code: 1, stderr: "HTTP 502" } },
+      { view: { code: 0, stdout: "not json" } },
+    ]) {
+      mergeModeFile(t, content);
+      const { lines, state } = await loadForge(t, options);
+      await quietly(async () => { await mergeVia(lines, "#12"); await idle(); });
+      const where = `${content} ${JSON.stringify(options)}`;
+      assert.equal(mergeCalls().length, 1, where);
+      assert.deepEqual(apiCalls(), [], where);
+      assert.deepEqual(state.deleted, [], where);
+      assert.ok(!/deleted/.test(ui.notice?.text ?? ""), where);
+    }
+  }
+});
+
+test("a fork's branch, one gh says nothing about, the base or default branch, and a repo that deletes it itself are left alone (#39)", async (t) => {
+  for (const [options, notice] of [
+    [{ cross: true }, "Merged #12 and kept its branch b12: it's in a fork"],
+    [{ cross: null }, "Merged #12 and kept its branch b12: gh didn't say whether it's in a fork"],
+    [{ branch: () => "main" }, "Merged #12 and kept its branch main: it's the branch it merged into, or the default one"],
+    [{ autoDelete: true }, "Merged #12"],
+  ]) {
+    mergeModeFile(t, null);
+    const { lines, state } = await loadForge(t, options);
+    await quietly(async () => { await mergeVia(lines, "#12"); await idle(); });
+    const where = JSON.stringify(options);
+    assert.equal(mergeCalls().length, 1, where);
+    assert.deepEqual(apiCalls(), [], where);
+    assert.deepEqual(state.deleted, [], where);
+    assert.equal(ui.notice?.tone, "ok", where);
+    assert.equal(ui.notice.text, notice, where);
+    assert.ok(!ui.prs.some((p) => p.number === 12), where);
+  }
+});
+
+test("a branch already gone counts as deleted; any other failure says so, and the merge still stands (#39)", async (t) => {
+  mergeModeFile(t, null);
+  let { lines } = await loadForge(t, { deleteReply: { code: 1, stdout: '{"message":"Reference does not exist","status":"422"}', stderr: "gh: Reference does not exist (HTTP 422)\n" } });
+  await quietly(async () => { await mergeVia(lines, "#12"); await idle(); });
+  assert.deepEqual(apiCalls(), [deleteOf("b12")]);
+  assert.equal(ui.notice?.tone, "ok");
+  assert.equal(ui.notice.text, "Merged #12; its branch b12 was already deleted");
+  assert.ok(!ui.prs.some((p) => p.number === 12));
+  for (const deleteReply of [{ code: 1, stderr: "gh: Resource not accessible by integration (HTTP 403)\nmore\n" }, { error: Object.assign(new Error("spawn gh ETIMEDOUT"), { code: "ETIMEDOUT" }) }]) {
+    ({ lines } = await loadForge(t, { deleteReply }));
+    await quietly(async () => { await mergeVia(lines, "#12"); await idle(); });
+    assert.equal(mergeCalls().length, 1);
+    assert.equal(apiCalls().length, 1);
+    assert.equal(ui.notice?.tone, "error");
+    assert.match(ui.notice.text, /^Merged #12, but couldn't delete its branch b12: /);
+    if (deleteReply.stderr) assert.equal(ui.notice.text, "Merged #12, but couldn't delete its branch b12: gh: Resource not accessible by integration (HTTP 403)");
+    assert.ok(!/Can't merge/.test(ui.notice.text));
+    // Merged all the same: out of the list, and the refresh doesn't bring it back.
+    assert.ok(!ui.prs.some((p) => p.number === 12));
+    assert.ok(cliCalls("gh").some((c) => c[0] === "pr" && c[1] === "list"), "no refresh after the merge");
+  }
+});
+
+test("a branch is deleted only by a name git takes, URL-encoded, in a checked repo on its own host (#39)", () => {
+  const repo = { name: "o/p", url: "https://ghe.example.com/o/p", autoDelete: false, defaultBranch: "main" };
+  const pr = (branch, more = {}) => ({ branch, cross: false, base: "main", ...more });
+  const endpoint = (branch) => branchDelete(repo, pr(branch))?.args;
+  assert.deepEqual(endpoint("feat/39-x"), ["api", "--hostname", "ghe.example.com", "-X", "DELETE", "repos/o/p/git/refs/heads/feat/39-x"]);
+  assert.equal(endpoint("fix/#1%é")?.at(-1), "repos/o/p/git/refs/heads/fix/%231%25%C3%A9");
+  assert.equal(endpoint("a&b=c")?.at(-1), "repos/o/p/git/refs/heads/a%26b%3Dc");
+  for (const bad of ["", "-d", "--delete", "/x", "x/", "x//y", "a..b", "../main", "x.", "x.lock", "a/b.lock/c", ".hidden", "a/.b", "a b", "a\tb", "a\nb", "a\x7fb",
+    "a~1", "a^", "a:b", "a?", "a*", "a[b", "a\\b", "a@{1}", "@", "x".repeat(256), null, undefined, 12, ["x"]]) {
+    assert.deepEqual(branchDelete(repo, pr(bad)), { kept: "its name isn't one git takes" }, JSON.stringify(bad));
+  }
+  // The repo and its host: only owner/repo, and a plain http(s) host name.
+  for (const name of ["o", "o/p/q", "../p", "o/..", "./p", "o/p?x", "{owner}/{repo}", "o /p", "", null]) {
+    assert.deepEqual(branchDelete({ ...repo, name }, pr("x")), { kept: "the repo's name or host can't be read" }, String(name));
+  }
+  for (const url of ["", null, "git@github.com:o/p.git", "ssh://github.com/o/p", "file:///o/p", "https://-x.com/o/p", "not a url"]) {
+    assert.deepEqual(branchDelete({ ...repo, url }, pr("x")), { kept: "the repo's name or host can't be read" }, String(url));
+  }
+  assert.equal(branchDelete({ ...repo, url: "https://GitHub.com/o/p" }, pr("x")).args[2], "github.com");
+  // Never a fork's, nor one gh says nothing of, nor the base or default branch.
+  assert.deepEqual(branchDelete(repo, pr("x", { cross: true })), { kept: "it's in a fork" });
+  for (const cross of [null, undefined, "false", 0]) assert.deepEqual(branchDelete(repo, pr("x", { cross })), { kept: "gh didn't say whether it's in a fork" }, String(cross));
+  assert.equal(branchDelete(repo, pr("release", { base: "release" })).kept, "it's the branch it merged into, or the default one");
+  assert.equal(branchDelete(repo, pr("main", { base: "release" })).kept, "it's the branch it merged into, or the default one");
+  assert.equal(branchDelete({ ...repo, defaultBranch: null }, pr("x")).kept, "gh didn't say which branch is the default");
+  assert.equal(branchDelete(repo, pr("x", { base: null })).kept, "gh didn't say which branch is the default");
+  // A repo that deletes merged branches itself: nothing to do.
+  assert.equal(branchDelete({ ...repo, autoDelete: true }, pr("x")), null);
+  assert.equal(FORGES.gitlab.branchDelete, undefined);
+});
+
+test("the profiles view's Merge mode row shows the mode, and e, enter or Change switches it and saves it for the next start (#39)", (t) => {
+  claudeHome(t);
+  mergeModeFile(t, null);
+  const stored = fs.readFileSync(storeFile(), "utf8");
+  setupGitHub("issues");
+  let lines = screen(() => key("s"));
+  // Under the prompt rows, after Auto-pilot's; the default, with nothing saved.
+  const at = (label) => lines.findIndex((l) => l?.replace(/^[▌ ] /, "").startsWith(label));
+  for (let i = 0; i < 10 && ui.settings.promptSel !== "merge"; i++) lines = screen(() => key("j"));
+  assert.equal(ui.settings.promptSel, "merge");
+  assert.ok(at("Merge mode") > at("Auto-pilot prompt") && at("Auto-pilot prompt") > 0, lines.join("\n"));
+  assert.match(lines[at("Merge mode")], /^▌ Merge mode +Change $/);
+  assert.equal(lines[at("Merge mode") + 1].replace(/^▌/, "").trim(), "Merge and delete branch");
+  assert.ok(shows(lines, "e change"), lines.join("\n"));
+  // e switches it, and the file says so.
+  lines = screen(() => key("e"));
+  assert.equal(fs.readFileSync(MERGE_FILE, "utf8"), "keep");
+  assert.equal(lines[at("Merge mode") + 1].replace(/^▌/, "").trim(), "Merge and keep branch");
+  assert.ok(shows(lines, "Merging a pull request now keeps its branch"), lines.join("\n"));
+  assert.equal(ui.settings.promptSel, "merge");
+  // Enter switches it back; then a click on Change.
+  lines = screen(() => key("\r"));
+  assert.equal(fs.readFileSync(MERGE_FILE, "utf8"), "delete");
+  assert.equal(lines[at("Merge mode") + 1].replace(/^▌/, "").trim(), "Merge and delete branch");
+  lines = screen(() => pressButton(lines, " Change "));
+  assert.equal(fs.readFileSync(MERGE_FILE, "utf8"), "keep");
+  // It's no profile: d, R and V say so, and change nothing.
+  for (const k of ["d", "R", "V"]) {
+    lines = screen(() => key(k));
+    assert.ok(shows(lines, "The merge mode isn't a profile: e or enter changes it"), lines.join("\n"));
+    assert.equal(ui.settings.mode, "list");
+  }
+  assert.equal(fs.readFileSync(storeFile(), "utf8"), stored);
+  // Closed and opened again, it's still the mode saved: it's read from the file,
+  // which another panel may have changed meanwhile.
+  screen(() => key("\x1b"));
+  assert.equal(ui.settings, null);
+  lines = screen(() => key("s"));
+  for (let i = 0; i < 10 && ui.settings.promptSel !== "merge"; i++) lines = screen(() => key("j"));
+  assert.equal(lines[at("Merge mode") + 1].replace(/^▌/, "").trim(), "Merge and keep branch");
+  fs.writeFileSync(MERGE_FILE, "delete");
+  lines = screen(draw);
+  assert.equal(lines[at("Merge mode") + 1].replace(/^▌/, "").trim(), "Merge and delete branch");
+  // ↑ goes back to the Auto-pilot prompt.
+  screen(() => key("k"));
+  assert.equal(ui.settings.promptSel, "autopilot");
+  screen(() => key("\x1b"));
+});
+
+test("a merge mode that can't be saved says why, and the row keeps the mode the file holds (#39)", (t) => {
+  claudeHome(t);
+  mergeModeFile(t, null);
+  // A folder where the file goes: writing it fails, and reading it means delete.
+  fs.mkdirSync(MERGE_FILE, { recursive: true });
+  setupGitHub("issues");
+  let lines = screen(() => key("s"));
+  for (let i = 0; i < 10 && ui.settings.promptSel !== "merge"; i++) lines = screen(() => key("j"));
+  lines = screen(() => key("e"));
+  assert.match(ui.settings.error ?? "", /^Can't save the merge mode: /);
+  assert.ok(shows(lines, "Can't save the merge mode:"), lines.join("\n"));
+  const at = lines.findIndex((l) => l?.replace(/^[▌ ] /, "").startsWith("Merge mode"));
+  assert.equal(lines[at + 1].replace(/^▌/, "").trim(), "Merge and delete branch");
+  assert.ok(fs.statSync(MERGE_FILE).isDirectory());
+  screen(() => key("\x1b"));
 });
 
 // ── Models (#24) ────────────────────────────────────────────────────────────
@@ -4425,7 +4686,7 @@ const footerOf = (cols, view) => { setupGitHub(view); return screenAt(cols, 24, 
 test("m presses the selected pull request's Merge, which asks; y then merges it, as the second click does (#37)", async (t) => {
   for (const [forge, cli, ref, merged] of [
     ["github", "gh", "#11", ["pr", "merge", "11", "--squash", "--match-head-commit", headOf(11)]],
-    ["gitlab", "glab", "!11", ["mr", "merge", "11", "--yes", "--sha", headOf(11)]],
+    ["gitlab", "glab", "!11", ["mr", "merge", "11", "--yes", "--remove-source-branch", "--sha", headOf(11)]],
   ]) {
     await loadForge(t, { forge });
     ui.sel.prs = 1;
@@ -4441,7 +4702,7 @@ test("m presses the selected pull request's Merge, which asks; y then merges it,
       await idle();
     });
     assert.deepEqual(mergeCalls(cli), [merged], forge);
-    assert.equal(ui.notice?.text, `Merged ${ref}`, forge);
+    assert.equal(ui.notice?.text, forge === "github" ? `Merged ${ref} and deleted its branch b11` : `Merged ${ref}`, forge);
     assert.equal(ui.confirm, null, forge);
   }
 });
@@ -4674,7 +4935,7 @@ const BUTTON_KEYS = {
     [/^Merg(e|ing) [#!]\d/, "m"], [/^Clos(e|ing) #\d/, "c"], [/^Confirm (merge|close) #/, "y"]],
   autopilot: [[/^☑/, "p"], [/^⚙/, "s"], [/^↻/, "r"], [/^↗/, "o"], [/^((Pull|Merge) requests|Issues)/, "1"], [/^▶ Start/, "⏎"], [/^✕ Cancel$/, "esc"]],
   menu: [[/^│/, "⏎"]],
-  settings: [[/^\+ New$/, "n"], [/^✕$/, "esc"], [/^(Use for Resolve|Resolve ✓)$/, "R"], [/^(Use for Review|Review ✓)$/, "V"], [/^Edit$/, "e"], [/^Delete$/, "d"]],
+  settings: [[/^\+ New$/, "n"], [/^✕$/, "esc"], [/^(Use for Resolve|Resolve ✓)$/, "R"], [/^(Use for Review|Review ✓)$/, "V"], [/^Edit$/, "e"], [/^Delete$/, "d"], [/^Change$/, "e"]],
   form: [[/^Save$/, "⏎"], [/^(Cancel|✕)$/, "esc"]],
   prompt: [[/^Save$/, "⏎"], [/^Use default$/, "^R"], [/^(Cancel|✕)$/, "esc"]],
 };
@@ -4697,7 +4958,8 @@ test("every view's key table names each key once, and every button drawn in it h
     ],
     autopilot: [() => { setupGitHub("issues"); screen(() => key("p")); ui.autopilot.checked.add(12); }],
     menu: [() => { setupGitHub("issues"); screen(() => key("a")); }],
-    settings: [() => { setupGitHub("issues"); screen(() => key("s")); }, () => screen(() => key("j")), () => screen(() => key("jj"))],
+    // The last: the merge mode's row (#39), past the prompt rows.
+    settings: [() => { setupGitHub("issues"); screen(() => key("s")); }, () => screen(() => key("j")), () => screen(() => key("jj")), () => screen(() => key("jjjj"))],
     form: [() => screen(() => key("n"))],
     // One key at a time: a chunk that leaves the form drops the text after it, as a paste's.
     prompt: [() => screen(() => { key("\x1b"); key("qsjjje"); })],

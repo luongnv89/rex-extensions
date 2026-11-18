@@ -149,12 +149,16 @@ function plain(md) {
 
 // ── Forges: GitHub through `gh`, GitLab through `glab` ──────────────────────
 // Each turns its CLI's JSON into one shape the rows draw from:
-//   repo  { name, url, merges? }
-//   pr    { ref, number, title, body, author, branch, head?, draft, review, checks, updatedAt, url }
+//   repo  { name, url, merges?, autoDelete?, defaultBranch? }
+//   pr    { ref, number, title, body, author, branch, head?, cross?, base?, draft, review, checks, updatedAt, url }
 //   issue { ref, number, title, body, author, labels: [{ name, color }], updatedAt, url }
 // `number` is the bare number an agent is handed; `ref` is only for display. For a
 // pull request's Merge button (#13), `head` is its head commit and, on GitHub,
-// `merges` says which merge methods the repo allows.
+// `merges` says which merge methods the repo allows. For the branch a merge
+// deletes (#39), on GitHub: `cross` says whether the pull request comes from
+// another repo (a fork), null when gh didn't say; `base` is the branch
+// it merges into; `autoDelete` says whether GitHub already deletes a merged pull
+// request's branch itself; `defaultBranch` is the repo's default branch, or null.
 
 const hex = (color) => (color || "").replace(/^#/, "");
 const REVIEW = { APPROVED: "approved", CHANGES_REQUESTED: "changes", REVIEW_REQUIRED: "review" };
@@ -165,12 +169,16 @@ const MERGE_REVIEW = { requested_changes: "changes", not_approved: "review" };
 const FORGES = {
   github: {
     name: "GitHub", cli: "gh", prs: "Pull requests", pr: "pull request",
-    repoArgs: ["repo", "view", "--json", "nameWithOwner,url,squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed"],
-    prArgs: ["pr", "list", "--limit", String(LIMIT), "--json", "number,title,body,author,isDraft,headRefName,headRefOid,updatedAt,url,reviewDecision,statusCheckRollup"],
+    repoArgs: ["repo", "view", "--json", "nameWithOwner,url,squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed,deleteBranchOnMerge,defaultBranchRef"],
+    prArgs: ["pr", "list", "--limit", String(LIMIT), "--json", "number,title,body,author,isDraft,headRefName,headRefOid,isCrossRepository,baseRefName,updatedAt,url,reviewDecision,statusCheckRollup"],
     issueArgs: ["issue", "list", "--limit", String(LIMIT), "--json", "number,title,body,author,labels,updatedAt,url"],
-    repo: (r) => ({ name: r.nameWithOwner, url: r.url, merges: { squash: r.squashMergeAllowed, merge: r.mergeCommitAllowed, rebase: r.rebaseMergeAllowed } }),
+    repo: (r) => ({
+      name: r.nameWithOwner, url: r.url, merges: { squash: r.squashMergeAllowed, merge: r.mergeCommitAllowed, rebase: r.rebaseMergeAllowed },
+      autoDelete: r.deleteBranchOnMerge === true, defaultBranch: typeof r.defaultBranchRef?.name === "string" ? r.defaultBranchRef.name : null,
+    }),
     toPr: (p) => ({
       ref: `#${p.number}`, number: p.number, title: clean(p.title), body: plain(p.body), author: p.author?.login, branch: p.headRefName, head: p.headRefOid,
+      cross: typeof p.isCrossRepository === "boolean" ? p.isCrossRepository : null, base: typeof p.baseRefName === "string" ? p.baseRefName : null,
       draft: Boolean(p.isDraft), review: REVIEW[p.reviewDecision] ?? null, checks: checks(p.statusCheckRollup),
       updatedAt: p.updatedAt, url: p.url,
     }),
@@ -180,11 +188,14 @@ const FORGES = {
     }),
     // Merging (#13): `gh pr merge` by the repo's method, then `gh pr view` for what
     // became of it: true when merged, false while still open (auto-merge or a merge
-    // queue), null when it can't tell.
+    // queue), null when it can't tell. Then, in the merge mode that deletes (#39),
+    // `gh api` deletes the merged branch on GitHub, never the local one: see
+    // branchDelete.
     mark: "#",
     mergeMethod: (repo) => MERGE_NAMES[mergeStrategy(repo)] ?? null,
     mergeArgs: (number, repo, head) => mergeArgs(number, mergeStrategy(repo), head),
     viewArgs: (number) => ["pr", "view", String(whole(number)), "--json", "state"],
+    branchDelete: (repo, pr) => branchDelete(repo, pr),
     merged: (j) => (j?.state === "MERGED" ? true : j?.state === "OPEN" ? false : null),
     // Closing an issue (#27): `gh issue close`, by its number alone.
     closeArgs: (number) => ["issue", "close", String(whole(number))],
@@ -209,9 +220,11 @@ const FORGES = {
     }),
     // Merging (#13): `glab mr merge` by the project's own merge method, which glab
     // applies when no method is passed, then `glab mr view` for what became of it.
+    // In the merge mode that deletes (#39), --remove-source-branch has GitLab delete
+    // the branch once it merges: nothing is deleted by the panel itself.
     mark: "!",
     mergeMethod: () => "the project's merge method",
-    mergeArgs: (iid, _repo, head) => gitlabMergeArgs(iid, head),
+    mergeArgs: (iid, _repo, head, mode) => gitlabMergeArgs(iid, head, mode),
     viewArgs: (iid) => ["mr", "view", String(whole(iid)), "--output", "json"],
     merged: (j) => (j?.state === "merged" ? true : j?.state === "opened" ? false : null),
     // Closing an issue (#27): `glab issue close`, by its iid alone.
@@ -577,6 +590,11 @@ function mergeStrategy(repo) {
 
 // `gh pr merge`'s arguments, built from an integer, a known method and a commit
 // hash only: never from a title or body. Without a hash it can't check the head.
+// Never --delete-branch (#39): gh would delete the local branch too and switch
+// your checkout, and a failure there would exit non-zero after the merge itself
+// went through. The branch is deleted on GitHub afterwards instead, by
+// branchDelete's `gh api` call, whose only other input is the pull request's
+// branch name: checked against git's rules for a branch name and URL-encoded.
 function mergeArgs(number, strategy, head = null) {
   whole(number);
   if (!["squash", "merge", "rebase"].includes(strategy)) throw new Error("not a merge method");
@@ -587,11 +605,78 @@ function mergeArgs(number, strategy, head = null) {
 
 // `glab mr merge`'s: --yes, since no one is there to answer its prompt, and no
 // method, so the project's own applies. With a pipeline running glab sets the merge
-// request to merge when it passes; the look at the result afterwards says so.
-function gitlabMergeArgs(iid, head = null) {
+// request to merge when it passes; the look at the result afterwards says so. In
+// any merge mode but "keep" (#39), --remove-source-branch: GitLab deletes the branch
+// when the merge request merges, then or once its pipeline passes, and never when
+// the merge fails.
+function gitlabMergeArgs(iid, head = null, mode = "delete") {
   const args = ["mr", "merge", String(whole(iid)), "--yes"];
+  if (mode !== "keep") args.push("--remove-source-branch");
   if (isCommit(head)) args.push("--sha", head);
   return args;
+}
+
+// ── Deleting a merged pull request's branch (#39) ───────────────────────────
+// The settings' Merge mode: "delete" (the default) deletes a pull request's branch
+// once the forge says it merged; "keep" leaves it. It's kept in STATE's `merge`
+// file, read again at every merge and every time the settings draw it: anything
+// but "keep" there (no file, an empty or damaged one) means delete.
+
+const MERGE_MODES = { delete: "Merge and delete branch", keep: "Merge and keep branch" };
+const mergeFile = () => path.join(STATE, "merge");
+
+function mergeMode() {
+  try { return fs.readFileSync(mergeFile(), "utf8").trim() === "keep" ? "keep" : "delete"; } catch { return "delete"; }
+}
+
+// Throws, with why, when the file can't be written.
+function saveMergeMode(mode) {
+  try {
+    fs.mkdirSync(STATE, { recursive: true });
+    fs.writeFileSync(mergeFile(), mode === "keep" ? "keep" : "delete");
+  } catch (e) { throw new Error(`Can't save the merge mode: ${e.message}`); }
+}
+
+// owner/repo, as gh names a repo: no "." or ".." for either part.
+const isRepoName = (name) => typeof name === "string" && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(name) && !name.split("/").some((s) => s === "." || s === "..");
+
+// A branch name git itself would take (git check-ref-format's rules): nothing that
+// could be read as a flag, a path out of the endpoint, or another ref.
+function isBranchName(b) {
+  return typeof b === "string" && b.length > 0 && b.length <= 255 && b !== "@" &&
+    !/[\x00-\x20\x7f~^:?*[\\]/.test(b) && !b.includes("..") && !b.includes("//") && !b.includes("@{") &&
+    !b.startsWith("-") && !b.startsWith("/") && !b.endsWith("/") && !b.endsWith(".") &&
+    !b.split("/").some((s) => s.startsWith(".") || s.endsWith(".lock"));
+}
+
+// The host of the repo's web URL, for gh api's --hostname: gh would otherwise send
+// the request to github.com, whatever the repo's host. Null when it isn't a plain
+// http(s) URL with a host name.
+function hostOf(url) {
+  try {
+    const u = new URL(url);
+    return /^https?:$/.test(u.protocol) && /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::\d{1,5})?$/i.test(u.host) ? u.host.toLowerCase() : null;
+  } catch { return null; }
+}
+
+// What becomes of a merged GitHub pull request's branch: { args } for the `gh api`
+// call that deletes it on GitHub, or { kept } with why it stays; null when the repo
+// deletes merged branches itself. Only a branch of this repo is ever deleted: never
+// one of a fork, or one gh didn't say is not; never the branch it merged into or
+// the repo's default branch, nor any while gh didn't say which that is; and only
+// by a name, repo and host that pass their checks. `pr` and `repo` are the list's,
+// as they were when the merge was pressed.
+function branchDelete(repo, pr) {
+  if (repo?.autoDelete === true) return null;
+  const branch = pr?.branch;
+  if (pr?.cross !== false) return { kept: pr?.cross === true ? "it's in a fork" : "gh didn't say whether it's in a fork" };
+  if (!isBranchName(branch)) return { kept: "its name isn't one git takes" };
+  if (typeof repo?.defaultBranch !== "string" || typeof pr.base !== "string") return { kept: "gh didn't say which branch is the default" };
+  if (branch === pr.base || branch === repo.defaultBranch) return { kept: "it's the branch it merged into, or the default one" };
+  const host = hostOf(repo.url);
+  if (!isRepoName(repo.name) || !host) return { kept: "the repo's name or host can't be read" };
+  const ref = branch.split("/").map(encodeURIComponent).join("/");
+  return { args: ["api", "--hostname", host, "-X", "DELETE", `repos/${repo.name}/git/refs/heads/${ref}`] };
 }
 
 // The pull requests merged from the panel. A refresh that began before a merge
@@ -666,7 +751,9 @@ function pressMerge(number, byKey = false) {
   // list scroll, just enough to keep it in view.
   const shown = ui.buttons.some((b) => b.merge === number);
   ui.confirm = { kind: "merge", number, notice: null, at: Date.now() };
-  ui.notice = { tone: "info", text: clean(`Press Confirm merge ${merge.ref} or y to merge it (${method}). Any other key or click cancels.`), url: null };
+  // The notice names the merge mode too (#39): whether the branch goes with it.
+  const then = mergeMode() === "keep" ? "keeping its branch" : "then delete its branch";
+  ui.notice = { tone: "info", text: clean(`Press Confirm merge ${merge.ref} or y to merge it (${method}, ${then}). Any other key or click cancels.`), url: null };
   ui.confirm.notice = ui.notice;
   draw();
   for (let i = 0; shown && i < 12 && !ui.buttons.some((b) => b.merge === number); i++) { ui.top.prs++; draw(); }
@@ -701,7 +788,9 @@ async function mergePr(number) {
   const ref = `${forge?.mark ?? "#"}${number}`;
   if (!pr || !forge?.mergeArgs || !root) return say("error", `The ${forge?.pr ?? "pull request"} ${ref} isn't in the list any more, so nothing was merged.`);
   if (!forge.mergeMethod(repo)) return say("error", noMerge(ref));
-  const args = forge.mergeArgs(number, repo, pr.head);
+  // The merge mode (#39), read now, and the same for the merge and its branch.
+  const mode = mergeMode();
+  const args = forge.mergeArgs(number, repo, pr.head, mode);
   const sh = (a) => run(forge.cli, a, { cwd: root }).catch((e) =>
     ({ code: -1, stdout: "", stderr: e.code === "ENOENT" ? `${forge.cli} isn't installed` : e.message }));
   // Its button reads Merging #N… from the first frame on, and takes no press (#20).
@@ -727,12 +816,29 @@ async function mergePr(number) {
       ui.prs = ui.prs.filter((p) => p.number !== number);
       ui.sel.prs = Math.min(ui.sel.prs, Math.max(0, ui.prs.length - 1));
     }
-    say("ok", `Merged ${ref}`);
+    // Only now, with the forge saying it merged, is its branch deleted (#39); a
+    // failure there is said, but the merge stands.
+    if (mode === "delete" && forge.branchDelete) await deleteBranch(forge, sh, ref, repo, pr);
+    else say("ok", `Merged ${ref}`);
   } else if (merged === false) say("ok", `${ref} will merge when its checks pass or the queue reaches it`);
   else say("ok", `Merge sent for ${ref}; refreshing to see its state`);
   // Read the list again: now, or on the next poll when a refresh is already running.
   ui.fetchedAt = 0;
   refresh();
+}
+
+// A merged pull request's branch, deleted on GitHub by `gh api` (#39), and the
+// notice that says how it went. "Reference does not exist" is a branch already
+// gone (HTTP 422): deleted all the same.
+async function deleteBranch(forge, sh, ref, repo, pr) {
+  const plan = forge.branchDelete(repo, pr);
+  if (!plan) return say("ok", `Merged ${ref}`);
+  if (plan.kept) return say("ok", `Merged ${ref} and kept its branch ${pr.branch ?? ""}: ${plan.kept}`);
+  say("info", `Merged ${ref}; deleting its branch ${pr.branch}…`);
+  const r = await sh(plan.args);
+  if (r.code === 0) return say("ok", `Merged ${ref} and deleted its branch ${pr.branch}`);
+  if (`${r.stderr}\n${r.stdout}`.includes("Reference does not exist")) return say("ok", `Merged ${ref}; its branch ${pr.branch} was already deleted`);
+  say("error", `Merged ${ref}, but couldn't delete its branch ${pr.branch}: ${firstLine(r.stderr) || firstLine(r.stdout) || `${forge.cli} exited ${r.code}`}`);
 }
 
 // ── Closing an issue (#27) ──────────────────────────────────────────────────
@@ -1285,9 +1391,9 @@ const KEYMAP = {
     binding("q esc", "close the menu"),
   ],
   settings: [
-    binding("↑ ↓ j k", "select a profile or a prompt"),
+    binding("↑ ↓ j k", "select a profile, a prompt or the merge mode"),
     binding("n", "+ New"),
-    binding("e ⏎", "Edit"),
+    binding("e ⏎", "Edit, or Change the merge mode"),
     binding("d", "Delete: it asks first"),
     binding("R", "Use for Resolve"),
     binding("V", "Use for Review"),
@@ -1601,9 +1707,13 @@ const DEFAULT_PROMPTS = {
 };
 // A prompt's reasons start with its field's name ("Resolve prompt: …").
 const PROMPT_FIELDS = P.PROMPT_KEYS.map((a) => ({ key: "prompt", word: P.PROMPT_LABELS[a] }));
+// The merge mode's row (#39), under the prompt rows: ↑↓ and the wheel go through
+// BELOW_ROWS in this order after the last profile.
+const MERGE_ROW = "merge";
+const BELOW_ROWS = [...P.PROMPT_KEYS, MERGE_ROW];
 
-// `promptSel` is the action whose prompt row is selected, under the profiles; null
-// while a profile is. `prompt` is the prompt being edited: { action, text }.
+// `promptSel` is the row selected under the profiles: an action's prompt, or
+// MERGE_ROW, the merge mode's (#39); null while a profile is. `prompt` is the prompt being edited: { action, text }.
 // `scroll` is how far the wheel moved the form or the prompt from where it shows.
 function openSettings() {
   ui.settings = { mode: "list", sel: 0, promptSel: null, form: null, prompt: null, field: 0, scroll: 0, error: null, fieldErrors: {}, info: null, ...readStore() };
@@ -1755,6 +1865,15 @@ function assignTo(action) {
   change(() => saveStore(P.assignProfile(st.store, action, p.id)), `${ACTION_LABELS[action]} now starts ${p.name}`);
 }
 
+// The merge mode row's Change, e or enter (#39): the other mode, saved at once in
+// STATE's merge file. A file that can't be written says why, and the row keeps
+// showing the mode the file still holds.
+function toggleMergeMode() {
+  const st = ui.settings, next = mergeMode() === "keep" ? "delete" : "keep";
+  Object.assign(st, { promptSel: MERGE_ROW, mode: "list" });
+  change(() => saveMergeMode(next), next === "keep" ? "Merging a pull request now keeps its branch" : "Merging a pull request now deletes its branch");
+}
+
 function editSelected() {
   const st = ui.settings, p = selectedEntry(st);
   if (p.id !== P.DEFAULT_PROFILE.id) return editProfile(p);
@@ -1796,12 +1915,14 @@ function settingsKey(m) {
   if (st.mode === "prompt") return promptKey(st, k);
   selectedEntry(st);
   if (k === "\x1b" || k === "q" || k === "s") return closeSettings();
-  const at = P.PROMPT_KEYS.indexOf(st.promptSel);
+  const at = P.PROMPT_KEYS.indexOf(st.promptSel), merge = st.promptSel === MERGE_ROW;
   if (UP.includes(k) || k === "k") step(st, -1);
   else if (DOWN.includes(k) || k === "j") step(st, 1);
   else if (k === "n") return editProfile(null);
-  else if (k === "e" || k === "\r" || k === "\n") return at >= 0 ? editPrompt(st.promptSel) : editSelected();
-  else if (at >= 0 && (k === "d" || k === "R" || k === "V")) {
+  else if (k === "e" || k === "\r" || k === "\n") return merge ? toggleMergeMode() : at >= 0 ? editPrompt(st.promptSel) : editSelected();
+  else if (merge && (k === "d" || k === "R" || k === "V")) {
+    Object.assign(st, { error: "The merge mode isn't a profile: e or enter changes it", info: null });
+  } else if (at >= 0 && (k === "d" || k === "R" || k === "V")) {
     Object.assign(st, { error: `The ${P.PROMPT_LABELS[st.promptSel]} isn't a profile: e or enter edits it`, info: null });
   } else if (k === "d") return askDelete();
   else if (k === "R" || k === "V") return assignTo(k === "R" ? "resolve" : "review");
@@ -1811,14 +1932,14 @@ function settingsKey(m) {
 }
 
 // ↑ and ↓ in the list, and the wheel: from the last profile on to the prompt rows,
-// and back.
+// then the merge mode's (#39), and back.
 function step(st, by) {
-  const at = P.PROMPT_KEYS.indexOf(st.promptSel);
+  const at = BELOW_ROWS.indexOf(st.promptSel);
   if (by < 0) {
-    if (at >= 0) st.promptSel = P.PROMPT_KEYS[at - 1] ?? null;
+    if (at >= 0) st.promptSel = BELOW_ROWS[at - 1] ?? null;
     else st.sel = Math.max(0, st.sel - 1);
-  } else if (at >= 0) st.promptSel = P.PROMPT_KEYS[Math.min(at + 1, P.PROMPT_KEYS.length - 1)];
-  else if (st.sel === entries().length - 1) st.promptSel = P.PROMPT_KEYS[0];
+  } else if (at >= 0) st.promptSel = BELOW_ROWS[Math.min(at + 1, BELOW_ROWS.length - 1)];
+  else if (st.sel === entries().length - 1) st.promptSel = BELOW_ROWS[0];
   else st.sel += 1;
 }
 
@@ -1963,7 +2084,7 @@ function settingsLines(cols, rows) {
     : KEYMAP.form.filter((e) => e.model === undefined || e.model === (st.field === MODEL_FIELD)).map((e) => e.hint))
     : st.mode === "prompt" ? KEYMAP.prompt.filter((e) => !e.custom || hasCustom(st)).map((e) => e.hint)
     : st.mode === "confirm" ? ["y delete", "any other key keeps it"]
-      : ["↑↓ select", "? keys", "n new", "e edit", "d delete", "R/V assign", "esc back"], cols);
+      : ["↑↓ select", "? keys", "n new", st.promptSel === MERGE_ROW ? "e change" : "e edit", "d delete", "R/V assign", "esc back"], cols);
   const room = Math.max(0, rows - out.length - footer.length - 1);
   const said = notes.flatMap(([tone, text]) => wrap(text, cols - 2, Infinity).map((l) => [tone, l]));
   if (said.length > room) {
@@ -2073,23 +2194,29 @@ function settingsLines(cols, rows) {
     // they fit: the wheel or ↓ goes on to them.
     if (!st.promptSel && st.sel === entries().length - 1) selEnd = Infinity;
     // Each action's prompt, then Auto-pilot's (#31), under the profiles: your own, or
-    // the default it sends without one. The selected one's Edit sits at the right
-    // edge, so a click on the row only selects it.
-    for (const a of P.PROMPT_KEYS) {
+    // the default it sends without one; then the merge mode (#39), in plain words.
+    // The selected one's button (Edit, or Change) sits at the right edge, so a click
+    // on the row only selects it.
+    const belowRow = (key, title, value, button, press) => {
       body.push(""); owner.push(null);
-      const on = st.promptSel === a && st.mode === "list", bar = on ? accent("▌") : " ", edit = " Edit ";
-      const select = () => { Object.assign(st, { promptSel: a, error: null, mode: "list" }); draw(); };
-      const custom = P.resolvePrompt(st.store, a), label = fit(P.PROMPT_LABELS[a], cols - 3 - (on ? width(edit) + 2 : 0));
+      const on = st.promptSel === key && st.mode === "list", bar = on ? accent("▌") : " ", b = ` ${button} `;
+      const select = () => { Object.assign(st, { promptSel: key, error: null, mode: "list" }); draw(); };
+      const label = fit(title, cols - 3 - (on ? width(b) + 2 : 0));
       if (on) {
         selStart = body.length;
-        const x = cols - 1 - width(edit);
-        hits[body.length] = [{ from: x, to: x + width(edit), action: () => editPrompt(a) }];
-        body.push(`${bar} ${bold(label)}${" ".repeat(Math.max(1, x - 2 - width(label)))}${invert(edit)}`);
+        const x = cols - 1 - width(b);
+        hits[body.length] = [{ from: x, to: x + width(b), action: press }];
+        body.push(`${bar} ${bold(label)}${" ".repeat(Math.max(1, x - 2 - width(label)))}${invert(b)}`);
       } else body.push(`${bar} ${label}`);
-      body.push(`${bar}   ${custom ? fit(custom, cols - 4) : dim(fit(`default: ${DEFAULT_PROMPTS[a]}`, cols - 4))}`);
+      body.push(`${bar}   ${value}`);
       owner.push(select, select);
       if (on) selEnd = body.length;
+    };
+    for (const a of P.PROMPT_KEYS) {
+      const custom = P.resolvePrompt(st.store, a);
+      belowRow(a, P.PROMPT_LABELS[a], custom ? fit(custom, cols - 4) : dim(fit(`default: ${DEFAULT_PROMPTS[a]}`, cols - 4)), "Edit", () => editPrompt(a));
     }
+    belowRow(MERGE_ROW, "Merge mode", fit(MERGE_MODES[mergeMode()], cols - 4), "Change", () => toggleMergeMode());
   }
   // Keep the selected entry (or field) in view. A prompt keeps its end in view: the
   // line you type on, and its reason. The wheel scrolls the form and the prompt
@@ -2497,6 +2624,8 @@ else {
     // A pull request's Merge button (#13): its press, the rules it builds the CLI's
     // arguments by, and the refresh a merge starts.
     pressMerge, MERGE_GAP, mergeStrategy, mergeArgs, mergeGuard, refresh,
+    // The merge mode (#39): the one in force now, and what a merge does with a branch.
+    mergeMode, branchDelete,
     // An issue's Close button (#27): its press.
     pressClose,
     // Every button's key, by mode, as the key list shows them (#37).
