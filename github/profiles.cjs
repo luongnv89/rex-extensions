@@ -10,6 +10,11 @@
 // once, and store version 4 that holds it (PROMPT_KEYS, PROMPT_TOKENS, the
 // {numbers} token, expandNumbers, and validatePromptTemplate taking the key).
 // Profiles are still assigned to Resolve and Review only (ACTION_KEYS).
+// Ahead of herdr-github too: an OpenCode profile's model. OpenCode's TUI has
+// no --model flag, so buildLaunch gives a command plan that starts it with
+// OPENCODE_CONFIG_CONTENT and --standalone (see buildLaunch); without a model it is
+// still an agent plan. OpenCode is no longer in NO_MODEL, and its custom models
+// must be provider/model (OPENCODE_MODEL).
 "use strict";
 
 // Agent profiles for the Resolve and Review actions: which harness starts, with
@@ -27,8 +32,8 @@ const HARNESS_NAMES = {
   vibe: "Mistral Vibe",
 };
 
-// The thinking levels each harness accepts. OpenCode has no flag for one when it
-// starts interactively, so it takes none. Neither does Mistral Vibe: its thinking
+// The thinking levels each harness accepts. OpenCode has no flag or setting for
+// one when it starts interactively, so it takes none. Neither does Mistral Vibe: its thinking
 // level is set per model in its own config.toml.
 const THINKING = {
   mcc: ["low", "medium", "high", "xhigh", "max"],
@@ -45,8 +50,10 @@ const THINKING = {
 // the Anthropic ones `pi --list-models` lists, so those two commands can refresh
 // them; Claude Code (and mcc) and Mistral Vibe have no such command. Claude Code
 // takes an alias (fable, opus, sonnet, haiku) or a full name; Mistral Vibe only
-// the names in its own model list. OpenCode takes no model. A profile may still
-// hold a model in neither list: it is kept and started as it is.
+// the names in its own model list. OpenCode ships none: which models it has
+// depends on the providers you signed in to, so `opencode models` lists them and
+// you add yours, as provider/model. A profile may still hold a model in neither
+// list: it is kept and started as it is.
 const MODELS = {
   mcc: ["fable", "opus", "sonnet", "haiku", "claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
   claude: ["fable", "opus", "sonnet", "haiku", "claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
@@ -56,7 +63,10 @@ const MODELS = {
   vibe: ["mistral-large-4-0-3", "mistral-medium-3.5", "glm-5-3", "zai-glm-5-3-flash"],
 };
 // The harnesses that take no model, so offer none and take no custom one.
-const NO_MODEL = ["opencode"];
+const NO_MODEL = [];
+// An OpenCode model is provider/model, as `opencode models` lists them.
+const OPENCODE_MODEL = /^[^/]+\/[^/].*$/;
+const OPENCODE_MODEL_RULE = "Model: OpenCode takes provider/model, as `opencode models` lists them";
 
 // The two actions a profile can be assigned to.
 const ACTION_KEYS = ["resolve", "review"];
@@ -185,6 +195,11 @@ function expandNumbers(template, numbers) {
 //     and Mistral Vibe, which herdr has no agent kind for. Vibe's --model flag
 //     works only in headless mode, so its model goes in VIBE_ACTIVE_MODEL, set by
 //     env(1); a checked model holds no = or space, so it stays one word.
+//     OpenCode with a model too: its TUI has no --model flag, so the model goes in
+//     OPENCODE_CONFIG_CONTENT, set by env(1). The background service OpenCode
+//     connects to doesn't read that variable, so it starts with --standalone, its
+//     own server; its sessions are still listed with the others. A checked model
+//     holds no quote or backslash, so the JSON stays as written.
 // An empty model or thinking level adds no flag: the harness's own default holds.
 function buildLaunch(profile, prompt) {
   const errors = validateProfile(profile);
@@ -202,12 +217,16 @@ function buildLaunch(profile, prompt) {
   } else if (harness === "pi") {
     if (model) flags.push("--model", model);
     if (thinking) flags.push("--thinking", thinking);
-  } else if (harness === "opencode" && (model || thinking)) {
+  } else if (harness === "opencode" && thinking) {
     // The consequence first: a notice cut short in a narrow pane still says it.
-    warnings.push("OpenCode ignores this profile's model and thinking level: it has no flag for them when it starts");
+    warnings.push("OpenCode ignores this profile's thinking level: it has no flag for it when it starts");
   }
   if (harness === "mcc") return { mode: "command", argv: ["mcc", "run", "--", ...flags, prompt], warnings };
   if (harness === "vibe") return { mode: "command", argv: [...(model ? ["env", `VIBE_ACTIVE_MODEL=${model}`] : []), "vibe", prompt], warnings };
+  if (harness === "opencode" && model) {
+    const config = `OPENCODE_CONFIG_CONTENT=${JSON.stringify({ model })}`;
+    return { mode: "command", argv: ["env", config, "opencode", "--standalone", "--prompt", prompt], warnings };
+  }
   return { mode: "agent", kind: harness, extraArgs: flags, warnings };
 }
 
@@ -432,13 +451,14 @@ function modelChoices(store, harness) {
 
 // Adds `name` to the models offered for `harness`. Returns a new store; throws,
 // starting "Model: ", when it can't: the MODEL rule, a harness that takes no
-// model, or a name already offered.
+// model, an OpenCode model that isn't provider/model, or a name already offered.
 function addCustomModel(store, harness, name) {
   if (!HARNESSES.includes(harness)) throw new Error(`No harness ${harness}`);
   if (NO_MODEL.includes(harness)) throw new Error(`Model: ${HARNESS_NAMES[harness]} takes no model`);
   const t = typeof name === "string" ? name.trim() : "";
   if (!t) throw new Error("Model: type the model's name");
   if (!MODEL.test(t)) throw new Error(MODEL_RULE);
+  if (harness === "opencode" && !OPENCODE_MODEL.test(t)) throw new Error(OPENCODE_MODEL_RULE);
   if (modelChoices(store, harness).includes(t)) throw new Error(`Model: ${t} is already offered for ${HARNESS_NAMES[harness]}`);
   return { ...store, customModels: { ...store.customModels, [harness]: [...addedModels(store, harness), t] } };
 }

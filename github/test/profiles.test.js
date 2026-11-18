@@ -52,12 +52,24 @@ test("each harness's launch: flags after --, or mcc run with the prompt last", (
   assert.deepEqual(launch({ harness: "codex", thinking: "low" }).extraArgs, ["-c", 'model_reasoning_effort="low"']);
 });
 
-test("OpenCode starts without flags, and says its model and thinking level are ignored", () => {
-  const l = P.buildLaunch(ok({ harness: "opencode", model: "x", thinking: "high" }), PROMPT);
-  assert.deepEqual([l.mode, l.kind, l.extraArgs], ["agent", "opencode", []]);
-  assert.equal(l.warnings.length, 1);
-  assert.equal(l.warnings[0], "OpenCode ignores this profile's model and thinking level: it has no flag for them when it starts");
-  assert.deepEqual(P.buildLaunch(ok({ harness: "opencode" }), PROMPT).warnings, []);
+test("OpenCode without a model starts as an agent, with no flags", () => {
+  assert.deepEqual(P.buildLaunch(ok({ harness: "opencode" }), PROMPT), { mode: "agent", kind: "opencode", extraArgs: [], warnings: [] });
+});
+
+test("OpenCode with a model runs as a command, its model in OPENCODE_CONFIG_CONTENT, on its own server", () => {
+  // Its TUI has no --model flag, and the background service doesn't read the variable.
+  assert.deepEqual(P.buildLaunch(ok({ harness: "opencode", model: "opencode/hy4-flash-free" }), PROMPT), {
+    mode: "command",
+    argv: ["env", 'OPENCODE_CONFIG_CONTENT={"model":"opencode/hy4-flash-free"}', "opencode", "--standalone", "--prompt", PROMPT],
+    warnings: [],
+  });
+});
+
+test("OpenCode says it ignores a thinking level, with or without a model", () => {
+  const why = "OpenCode ignores this profile's thinking level: it has no flag for it when it starts";
+  assert.deepEqual(P.buildLaunch(ok({ harness: "opencode", thinking: "high" }), PROMPT).warnings, [why]);
+  const l = P.buildLaunch(ok({ harness: "opencode", model: "a/b", thinking: "high" }), PROMPT);
+  assert.deepEqual([l.mode, l.argv.at(-3), l.warnings], ["command", "--standalone", [why]]);
 });
 
 test("Mistral Vibe runs as a command, its model in VIBE_ACTIVE_MODEL, with no thinking levels", () => {
@@ -386,9 +398,10 @@ test("shellJoin quotes every word so a shell reads back the same words", () => {
 
 // ── Models (#24) ────────────────────────────────────────────────────────────
 
-test("MODELS: a short list of valid model names for each harness that takes one, none for OpenCode", () => {
+test("MODELS: a short list of valid model names for each harness, none built in for OpenCode", () => {
   assert.deepEqual(Object.keys(P.MODELS), P.HARNESSES);
-  assert.deepEqual(P.NO_MODEL, ["opencode"]);
+  // OpenCode takes a model now, but which it has depends on your providers: you add yours.
+  assert.deepEqual(P.NO_MODEL, []);
   assert.deepEqual(P.MODELS.opencode, []);
   for (const harness of P.HARNESSES.filter((h) => h !== "opencode")) {
     const list = P.MODELS[harness];
@@ -410,6 +423,7 @@ test("modelChoices: the built-in models, then the ones you added, each once", ()
   assert.deepEqual(P.modelChoices(store, "pi"), P.MODELS.pi);
   assert.deepEqual(P.modelChoices(P.emptyStore(), "claude"), P.MODELS.claude);
   assert.deepEqual(P.modelChoices(store, "opencode"), []);
+  assert.deepEqual(P.modelChoices({ ...store, customModels: { opencode: ["opencode/big-pickle"] } }, "opencode"), ["opencode/big-pickle"]);
   assert.deepEqual(P.modelChoices(store, "nope"), []);
   assert.deepEqual(P.modelChoices(null, "mcc"), P.MODELS.mcc);
 });
@@ -429,7 +443,11 @@ test("addCustomModel and removeCustomModel: the MODEL rule, a harness that takes
   assert.throws(() => P.addCustomModel(s, "codex", "  "), /^Error: Model: type the model's name$/);
   assert.throws(() => P.addCustomModel(s, "codex", "gpt-mine"), /^Error: Model: gpt-mine is already offered for Codex$/);
   assert.throws(() => P.addCustomModel(s, "codex", "gpt-5.5"), /already offered/);
-  assert.throws(() => P.addCustomModel(s, "opencode", "x"), /^Error: Model: OpenCode takes no model$/);
+  // OpenCode takes provider/model, as `opencode models` lists them.
+  assert.deepEqual(P.addCustomModel(s, "opencode", "opencode/big-pickle").customModels.opencode, ["opencode/big-pickle"]);
+  for (const bad of ["big-pickle", "opencode/"]) {
+    assert.throws(() => P.addCustomModel(s, "opencode", bad), /^Error: Model: OpenCode takes provider\/model, as `opencode models` lists them$/, bad);
+  }
   assert.throws(() => P.addCustomModel(s, "nope", "x"), /No harness/);
   // The same name can be added for another harness.
   assert.deepEqual(P.addCustomModel(s, "pi", "gpt-mine").customModels.pi, ["gpt-mine"]);
@@ -481,7 +499,6 @@ test("custom models it can't use are skipped, and make the file read only", () =
   const cases = [
     [{ nope: ["x"] }, 'Skipped the custom models of "nope": there is no such harness'],
     [{ "\u001b[31m": ["x"] }, "Skipped the custom models of a harness: there is no such harness"],
-    [{ opencode: ["x"] }, "Skipped the custom models of OpenCode: it takes no model"],
     [{ codex: "gpt" }, "Skipped the custom models of Codex: they aren't a list"],
     [{ codex: ["ok", "opus[1m]"] }, "Skipped the custom models of Codex: #2: Model: letters, digits and . _ : / @ + - only, starting with a letter or digit"],
     [{ codex: ["ok", 5] }, "Skipped the custom models of Codex: #2: Model: letters, digits and . _ : / @ + - only, starting with a letter or digit"],
@@ -492,6 +509,8 @@ test("custom models it can't use are skipped, and make the file read only", () =
     assert.equal(r.readOnly, true, JSON.stringify(models));
     assert.deepEqual(r.warnings, [first, why], JSON.stringify(models));
   }
+  // OpenCode's are read like any other harness's.
+  assert.deepEqual(hand({ opencode: ["opencode/big-pickle"] }), { store: { ...P.emptyStore(), customModels: { opencode: ["opencode/big-pickle"] } }, warnings: [], readOnly: false });
   // What can be used is still offered.
   assert.deepEqual(hand({ codex: ["ok", "opus[1m]"] }).store.customModels, { codex: ["ok"] });
   for (const models of [[], "x", 5]) {
