@@ -858,17 +858,23 @@ async function deleteBranch(forge, sh, ref, repo, pr) {
 //    leaves it unmerged as git sees it, but only while it's not checked out and
 //    its tip is still the head commit that merged: one that moved since is kept.
 // Never the branch it merged into or the repo's default branch, and only a branch
-// whose name git takes. git runs with GIT_TERMINAL_PROMPT=0, so a remote asking
-// for a password fails rather than waits for an answer no one can give. Returns the
-// steps, { text, failed }, in the order they ran, for the merge's notice.
+// whose name git takes, and only when the default branch is known: on GitLab,
+// whose CLI doesn't say which it is, no local branch is deleted. git runs with
+// GIT_TERMINAL_PROMPT=0 and detached, with no terminal of its own, so a remote
+// asking for a password or a passphrase (ssh's too) fails rather than prompts over
+// the panel. Returns the steps, { text, failed }, in the order they ran, for the
+// merge's notice; a failure's reason is git's first fatal: or error: line.
 async function localCleanup(root, repo, pr) {
   const branch = pr?.branch;
   if (!isBranchName(branch) || branch === pr.base || branch === repo?.defaultBranch) return [];
   const main = isBranchName(repo?.defaultBranch) ? repo.defaultBranch : null;
   const steps = [];
-  const git = (args) => run("git", args, { cwd: root, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } }).catch((e) =>
+  const git = (args) => run("git", args, { cwd: root, detached: true, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } }).catch((e) =>
     ({ code: -1, stdout: "", stderr: e.code === "ENOENT" ? "git isn't installed" : e.message }));
-  const why = (r) => firstLine(r.stderr) || firstLine(r.stdout) || `git exited ${r.code}`;
+  // git pull's stderr starts with the fetch's "From <remote>" or a hint: the reason
+  // is on its fatal: or error: line.
+  const why = (r) => `${r.stderr ?? ""}`.split("\n").map((l) => l.trim()).find((l) => /^(fatal|error):/.test(l))
+    || firstLine(r.stderr) || firstLine(r.stdout) || `git exited ${r.code}`;
   const ok = (text) => steps.push({ text, failed: false });
   const fail = (text, r) => steps.push({ text: `${text}: ${why(r)}`, failed: true });
   const head = await git(["branch", "--show-current"]);
@@ -898,7 +904,7 @@ async function localCleanup(root, repo, pr) {
     const r = await git(["fetch", "--prune"]);
     if (r.code !== 0) fail("couldn't prune the deleted branches", r);
   }
-  if (current !== branch) {
+  if (main && current !== branch) {
     const tip = await git(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
     // Not found: there's no local copy to delete.
     if (tip.code === 0) {

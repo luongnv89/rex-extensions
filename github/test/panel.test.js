@@ -3642,6 +3642,8 @@ test("on the merged branch with nothing uncommitted, a merge that deletes ends o
       if (c[0] !== "git" || !localGit().some((l) => l.join(" ") === c.slice(1).join(" "))) return;
       assert.equal(callOpts[i].cwd, "/repo", c.join(" "));
       assert.equal(callOpts[i].env?.GIT_TERMINAL_PROMPT, "0", c.join(" "));
+      // With no terminal of its own, so ssh can't prompt over the panel either.
+      assert.equal(callOpts[i].detached, true, c.join(" "));
     });
     assert.ok(!ui.prs.some((p) => p.number === 12), where);
   }
@@ -3682,15 +3684,16 @@ test("on the merged branch with uncommitted changes, or with no default branch k
   assert.equal(ui.notice?.tone, "ok");
   assert.equal(ui.notice.text, "Merged #12 and deleted its branch b12; stayed on b12: it has uncommitted changes");
   // GitLab doesn't say which branch is the default: the checkout stays on the
-  // merged branch, and a local copy elsewhere still goes.
+  // merged branch, and no local branch is deleted, since it could be the default.
   ({ lines, state } = await loadForge(t, { forge: "gitlab", current: "b11", tips: { b11: headOf(11) } }));
   await quietly(async () => { await mergeVia(lines, "!11"); await idle(); });
   assert.deepEqual(localGit(), [["branch", "--show-current"], ["fetch", "--prune"]]);
   assert.equal(ui.notice?.text, "Merged !11; stayed on b11: the default branch isn't known");
   ({ lines, state } = await loadForge(t, { forge: "gitlab", tips: { b11: headOf(11) } }));
   await quietly(async () => { await mergeVia(lines, "!11"); await idle(); });
-  assert.deepEqual(state.local.tips, {});
-  assert.equal(ui.notice?.text, "Merged !11; deleted the local b11");
+  assert.deepEqual(localGit(), [["branch", "--show-current"], ["fetch", "--prune"]]);
+  assert.deepEqual(state.local.tips, { b11: headOf(11) });
+  assert.equal(ui.notice?.text, "Merged !11");
   // The branch it merged into, or the default one, is never touched here.
   ({ lines, state } = await loadForge(t, { branch: () => "main", current: "main", tips: { main: headOf(12) } }));
   await quietly(async () => { await mergeVia(lines, "#12"); await idle(); });
@@ -3706,7 +3709,8 @@ test("a git step that fails is said in red, the steps it doesn't stop still run,
     [{ gitFail: { switch: { code: 1, stderr: "error: Your local changes would be overwritten by checkout:\n" } } },
       [["branch", "--show-current"], ["status", "--porcelain"], ["switch", "main"], ["fetch", "--prune"]],
       "couldn't switch to main: error: Your local changes would be overwritten by checkout:"],
-    [{ gitFail: { pull: { code: 128, stderr: "fatal: Not possible to fast-forward, aborting.\n" } } }, BACK_TO_MAIN,
+    // As git prints it: the fetch's lines and a hint first, the reason after.
+    [{ gitFail: { pull: { code: 128, stderr: "From github.com:o/p\n   1111111..2222222  main       -> origin/main\nhint: Diverging branches can't be fast-forwarded, you need to either:\nfatal: Not possible to fast-forward, aborting.\n" } } }, BACK_TO_MAIN,
       "switched to main; couldn't pull main: fatal: Not possible to fast-forward, aborting.; deleted the local b12"],
     [{ gitFail: { delete: { code: 1, stderr: "error: cannot delete branch 'b12' used by worktree at '/wt'\n" } } }, BACK_TO_MAIN,
       "switched to main; pulled main; couldn't delete the local b12: error: cannot delete branch 'b12' used by worktree at '/wt'"],
