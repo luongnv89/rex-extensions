@@ -189,8 +189,8 @@ const FORGES = {
     // Merging (#13): `gh pr merge` by the repo's method, then `gh pr view` for what
     // became of it: true when merged, false while still open (auto-merge or a merge
     // queue), null when it can't tell. Then, in the merge mode that deletes (#39),
-    // `gh api` deletes the merged branch on GitHub, never the local one: see
-    // branchDelete.
+    // `gh api` deletes the merged branch on GitHub: see branchDelete. The local
+    // branch and checkout are git's, afterwards (#41): see localCleanup.
     mark: "#",
     mergeMethod: (repo) => MERGE_NAMES[mergeStrategy(repo)] ?? null,
     mergeArgs: (number, repo, head) => mergeArgs(number, mergeStrategy(repo), head),
@@ -595,6 +595,8 @@ function mergeStrategy(repo) {
 // went through. The branch is deleted on GitHub afterwards instead, by
 // branchDelete's `gh api` call, whose only other input is the pull request's
 // branch name: checked against git's rules for a branch name and URL-encoded.
+// The local branch and checkout are tidied after that, step by step, by
+// localCleanup (#41), so a step that fails is said without hiding the merge.
 function mergeArgs(number, strategy, head = null) {
   whole(number);
   if (!["squash", "merge", "rebase"].includes(strategy)) throw new Error("not a merge method");
@@ -816,10 +818,13 @@ async function mergePr(number) {
       ui.prs = ui.prs.filter((p) => p.number !== number);
       ui.sel.prs = Math.min(ui.sel.prs, Math.max(0, ui.prs.length - 1));
     }
-    // Only now, with the forge saying it merged, is its branch deleted (#39); a
-    // failure there is said, but the merge stands.
-    if (mode === "delete" && forge.branchDelete) await deleteBranch(forge, sh, ref, repo, pr);
-    else say("ok", `Merged ${ref}`);
+    // Only now, with the forge saying it merged, is its branch deleted (#39), and
+    // then the checkout tidied (#41); a failure there is said, but the merge stands.
+    if (mode === "delete") {
+      const [tone, text] = forge.branchDelete ? await deleteBranch(forge, sh, ref, repo, pr) : ["ok", `Merged ${ref}`];
+      const steps = await localCleanup(root, repo, pr);
+      say(tone === "error" || steps.some((s) => s.failed) ? "error" : tone, [text, ...steps.map((s) => s.text)].join("; "));
+    } else say("ok", `Merged ${ref}`);
   } else if (merged === false) say("ok", `${ref} will merge when its checks pass or the queue reaches it`);
   else say("ok", `Merge sent for ${ref}; refreshing to see its state`);
   // Read the list again: now, or on the next poll when a refresh is already running.
@@ -827,18 +832,91 @@ async function mergePr(number) {
   refresh();
 }
 
-// A merged pull request's branch, deleted on GitHub by `gh api` (#39), and the
-// notice that says how it went. "Reference does not exist" is a branch already
-// gone (HTTP 422): deleted all the same.
+// A merged pull request's branch, deleted on GitHub by `gh api` (#39), and
+// [tone, text] for the notice that says how it went. "Reference does not exist"
+// is a branch already gone (HTTP 422): deleted all the same.
 async function deleteBranch(forge, sh, ref, repo, pr) {
   const plan = forge.branchDelete(repo, pr);
-  if (!plan) return say("ok", `Merged ${ref}`);
-  if (plan.kept) return say("ok", `Merged ${ref} and kept its branch ${pr.branch ?? ""}: ${plan.kept}`);
+  if (!plan) return ["ok", `Merged ${ref}`];
+  if (plan.kept) return ["ok", `Merged ${ref} and kept its branch ${pr.branch ?? ""}: ${plan.kept}`];
   say("info", `Merged ${ref}; deleting its branch ${pr.branch}…`);
   const r = await sh(plan.args);
-  if (r.code === 0) return say("ok", `Merged ${ref} and deleted its branch ${pr.branch}`);
-  if (`${r.stderr}\n${r.stdout}`.includes("Reference does not exist")) return say("ok", `Merged ${ref}; its branch ${pr.branch} was already deleted`);
-  say("error", `Merged ${ref}, but couldn't delete its branch ${pr.branch}: ${firstLine(r.stderr) || firstLine(r.stdout) || `${forge.cli} exited ${r.code}`}`);
+  if (r.code === 0) return ["ok", `Merged ${ref} and deleted its branch ${pr.branch}`];
+  if (`${r.stderr}\n${r.stdout}`.includes("Reference does not exist")) return ["ok", `Merged ${ref}; its branch ${pr.branch} was already deleted`];
+  return ["error", `Merged ${ref}, but couldn't delete its branch ${pr.branch}: ${firstLine(r.stderr) || firstLine(r.stdout) || `${forge.cli} exited ${r.code}`}`];
+}
+
+// ── Back on the default branch after a merge (#41) ──────────────────────────
+// In the merge mode that deletes, once the forge says the pull request merged,
+// the panel also tidies the checkout it merged from (the repo's folder), with git:
+//  - checked out on the merged branch with nothing uncommitted, it switches to the
+//    repo's default branch; on the default branch with nothing uncommitted, it
+//    pulls it, --ff-only, so a default branch with commits of its own is left as it
+//    is; the pull's --prune drops the remote-tracking branches whose branch is
+//    gone. Otherwise `git fetch --prune` does that alone;
+//  - it deletes the local copy of the merged branch, with -D since a squash merge
+//    leaves it unmerged as git sees it, but only while it's not checked out and
+//    its tip is still the head commit that merged: one that moved since is kept.
+// Never the branch it merged into or the repo's default branch, and only a branch
+// whose name git takes, and only when the default branch is known: on GitLab,
+// whose CLI doesn't say which it is, no local branch is deleted. git runs with
+// GIT_TERMINAL_PROMPT=0 and detached, with no terminal of its own, so a remote
+// asking for a password or a passphrase (ssh's too) fails rather than prompts over
+// the panel. Returns the steps, { text, failed }, in the order they ran, for the
+// merge's notice; a failure's reason is git's first fatal: or error: line.
+async function localCleanup(root, repo, pr) {
+  const branch = pr?.branch;
+  if (!isBranchName(branch) || branch === pr.base || branch === repo?.defaultBranch) return [];
+  const main = isBranchName(repo?.defaultBranch) ? repo.defaultBranch : null;
+  const steps = [];
+  const git = (args) => run("git", args, { cwd: root, detached: true, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } }).catch((e) =>
+    ({ code: -1, stdout: "", stderr: e.code === "ENOENT" ? "git isn't installed" : e.message }));
+  // git pull's stderr starts with the fetch's "From <remote>" or a hint: the reason
+  // is on its fatal: or error: line.
+  const why = (r) => `${r.stderr ?? ""}`.split("\n").map((l) => l.trim()).find((l) => /^(fatal|error):/.test(l))
+    || firstLine(r.stderr) || firstLine(r.stdout) || `git exited ${r.code}`;
+  const ok = (text) => steps.push({ text, failed: false });
+  const fail = (text, r) => steps.push({ text: `${text}: ${why(r)}`, failed: true });
+  const head = await git(["branch", "--show-current"]);
+  if (head.code !== 0) { fail("couldn't read the checkout", head); return steps; }
+  // Empty on a detached HEAD: on no branch, so none is switched from.
+  let current = head.stdout.trim();
+  let clean = false;
+  if (main && (current === branch || current === main)) {
+    const status = await git(["status", "--porcelain"]);
+    if (status.code !== 0) { fail("couldn't read the checkout", status); return steps; }
+    clean = status.stdout.trim() === "";
+  }
+  if (current === branch) {
+    if (!main) ok(`stayed on ${branch}: the default branch isn't known`);
+    else if (!clean) ok(`stayed on ${branch}: it has uncommitted changes`);
+    else {
+      const r = await git(["switch", main]);
+      if (r.code !== 0) fail(`couldn't switch to ${main}`, r);
+      else { current = main; ok(`switched to ${main}`); }
+    }
+  }
+  if (main && current === main && clean) {
+    const r = await git(["pull", "--ff-only", "--prune"]);
+    if (r.code === 0) ok(`pulled ${main}`);
+    else fail(`couldn't pull ${main}`, r);
+  } else {
+    const r = await git(["fetch", "--prune"]);
+    if (r.code !== 0) fail("couldn't prune the deleted branches", r);
+  }
+  if (main && current !== branch) {
+    const tip = await git(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
+    // Not found: there's no local copy to delete.
+    if (tip.code === 0) {
+      if (!isCommit(pr.head) || tip.stdout.trim() !== pr.head) ok(`kept the local ${branch}: its tip isn't the commit that merged`);
+      else {
+        const r = await git(["branch", "-D", "--", branch]);
+        if (r.code === 0) ok(`deleted the local ${branch}`);
+        else fail(`couldn't delete the local ${branch}`, r);
+      }
+    }
+  }
+  return steps;
 }
 
 // ── Closing an issue (#27) ──────────────────────────────────────────────────
