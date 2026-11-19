@@ -87,11 +87,11 @@ Once the profile is known, the panel:
 
 1. takes the action's custom prompt from the profiles file, if it has one;
 2. checks that the skill is installed for that agent: `issue-resolver` for an issue, `issue-pr-review` for a pull request (not with a custom prompt);
-3. finds where the new pane goes: to the right of your agent, side by side, the one in the pane the panel follows, else one in another pane of the panel's tab, else to the right of the pane the panel follows. It reads each pane's foreground program from Rex, and knows `claude`, `codex`, `gemini`, `opencode`, `pi` and `vibe` (Mistral Vibe, which runs as `vibe-rs`);
+3. finds where the new pane goes: to the right of your agent, side by side, the one in the pane the panel follows, else one in another pane of the panel's tab, else to the right of the pane the panel follows. It reads each pane's foreground program from Rex, and knows `claude`, `codex`, `gemini`, `opencode`, `pi`, `vibe` (Mistral Vibe, which runs as `vibe-rs`) and `devin`;
 4. opens a new pane there, in the repo's folder, labelled `resolve-N` or `review-N`, and starts the profile's agent in it with its model and thinking level, and the prompt as the last word of its command line: for Claude `/issue-resolver 12` or `/issue-pr-review 34`; other agents get "Use the issue-resolver skill on issue #12." With a custom prompt, it sends that prompt with the number filled in. Nothing from the title or description goes into the prompt;
 5. checks after 3 seconds that the agent is still running.
 
-The command lines are `mcc run -- [flags] <prompt>` (with mcc's full path), `claude [flags] <prompt>`, `codex [flags] <prompt>`, `pi [flags] <prompt>`, `opencode --prompt <prompt>`, or `env OPENCODE_CONFIG_CONTENT={"model":"M"} opencode --standalone --prompt <prompt>` when the OpenCode profile has a model, and `vibe <prompt>`, or `env VIBE_ACTIVE_MODEL=M vibe <prompt>` when the Mistral Vibe profile has a model. Rex passes each word as it is, so no shell reads the prompt.
+The command lines are `mcc run -- [flags] <prompt>` (with mcc's full path), `claude [flags] <prompt>`, `codex [flags] <prompt>`, `pi [flags] <prompt>`, `opencode --prompt <prompt>`, or `env OPENCODE_CONFIG_CONTENT={"model":"M"} opencode --standalone --prompt <prompt>` when the OpenCode profile has a model, and `vibe <prompt>`, or `env VIBE_ACTIVE_MODEL=M vibe <prompt>` when the Mistral Vibe profile has a model, and `devin [--model M] -- <prompt>`. Rex passes each word as it is, so no shell reads the prompt.
 
 Your own agent and its conversation are left alone, and focus stays where it was. The panel shows what it is doing above the key hints, in yellow while it starts the agent, green once it runs, and red with the reason when something fails. If the agent fails at once, Rex keeps its pane open so you can read why.
 
@@ -204,7 +204,7 @@ The prompts are kept in the profiles file (see [Where they're kept](#where-theyr
 A profile says which agent Resolve or Review starts:
 
 - **Name** and **id**: the id is 1 to 32 lowercase letters, digits or `-`. `default` is taken.
-- **Harness**: Claude Code via `mcc run`, Claude Code, Codex, Pi, OpenCode or Mistral Vibe.
+- **Harness**: Claude Code via `mcc run`, Claude Code, Codex, Pi, OpenCode, Mistral Vibe or Devin.
 - **Model** (optional): chosen from the models the harness takes (see [Models](#models)). Left at **harness default**, the harness uses its own default.
 - **Thinking** (optional): only the levels the harness takes. Left empty, the harness uses its own default.
 
@@ -220,10 +220,13 @@ How the fields become flags:
 | Pi | `--model M` | `--thinking L` | off, minimal, low, medium, high, xhigh, max |
 | OpenCode | `OPENCODE_CONFIG_CONTENT={"model":"M"}` (environment), with `--standalone` | none | none |
 | Mistral Vibe | `VIBE_ACTIVE_MODEL=M` (environment) | none | none |
+| Devin | `--model M` | none (part of the model's name) | none |
 
 OpenCode's interactive command has no `--model` flag (OpenCode 2.3 says `Unrecognized flag: --model`), so the panel passes the model as a one-line OpenCode config in the `OPENCODE_CONFIG_CONTENT` environment variable. OpenCode normally connects to its background service, which doesn't read that variable, so with a model the panel adds `--standalone`: OpenCode runs its own server for that pane. Its sessions are still listed with the others (`opencode session list`). Without a model, OpenCode starts as before, with its own default. The model is `provider/model`, as `opencode models` lists them, such as `opencode/big-pickle`. A model OpenCode doesn't know isn't an error: OpenCode starts its default model, while the panel's notice still names the model you set. OpenCode has no thinking flag when it starts interactively, so a thinking level on an OpenCode profile (one set in the file) is ignored. The profile form says so, and so does the notice when the agent starts.
 
 Mistral Vibe's `--model` flag works only in headless mode, so the panel passes the model in the `VIBE_ACTIVE_MODEL` environment variable instead, which Vibe reads when it starts interactively. The model is a name from Vibe's own model list, the one `/model` shows in Vibe: in Vibe 3.1.2, `mistral-large-4-0-3`, `mistral-medium-3.5`, `glm-5-3` and `zai-glm-5-3-flash`. Other names for the same models, such as `mistral-large-4` from Mistral's online model catalog, aren't accepted. An alias Vibe doesn't know isn't an error: Vibe starts its default model and says so in its pane, while the panel's notice still names the model you set. Vibe sets the thinking level per model in its own `~/.vibe/config.toml`, so a Mistral Vibe profile takes none. Vibe finds the IDD skills in `~/.vibe/skills`, `~/.agents/skills` and the same folders in the repo, which are among the folders the panel looks in.
+
+Devin, Cognition's Devin CLI, takes its prompt after `--`: `devin` reads a word before it as a path to open in Devin Desktop, and stops with `neither a known subcommand nor an existing path` when there is none. `--model` takes a family, an alias or a model's own name, as `devin models list` prints them. Its thinking level is part of the model's name, such as `claude-opus-5-5-high` or `gpt-6-sol-none`, so a Devin profile takes no thinking level: pick the level in the model, or a family such as `claude-opus-5.5` for its default level. Devin's short aliases (`opus`, `sonnet`, `fable`, `gpt`) name older models than the families of the same name, so the form doesn't offer them. Devin finds the IDD skills in `~/.config/devin/skills`, `~/.config/cognition/skills`, `~/.agents/skills` and a repo's `.devin/skills`, `.cognition/skills` or `.agents/skills`, which are among the folders the panel looks in.
 
 A model is letters, digits and `. _ : / @ + -`, starting with a letter or digit. Spaces, quotes and other shell characters are refused, and so are aliases with brackets such as `opus[1m]`: use the full model name instead.
 
@@ -238,8 +241,9 @@ The form's **Model** field is a choice, like **Harness** and **Thinking**: **har
 | Pi | `anthropic/claude-fable-5-2`, `anthropic/claude-opus-5-5`, `anthropic/claude-sonnet-5-5`, `anthropic/claude-haiku-5-5` |
 | OpenCode | none: add yours with `+`, as `provider/model` from `opencode models` |
 | Mistral Vibe | `mistral-large-4-0-3`, `mistral-medium-3.5`, `glm-5-3`, `zai-glm-5-3-flash` |
+| Devin | `adaptive`, `swe-2`, `claude-fable-5.2`, `claude-opus-5.5`, `claude-sonnet-5.5`, `claude-haiku-5.5`, `gpt-6.2-astra`, `gpt-6-sol`, `gemini-4-carbon` |
 
-The lists are kept by hand in `profiles.cjs` (`MODELS`). `codex debug models --bundled` and `pi --list-models` print the models Codex and Pi know, so those two can be refreshed from them; Claude Code and Mistral Vibe have no command that lists theirs. OpenCode ships none: its models depend on the providers you signed in to.
+The lists are kept by hand in `profiles.cjs` (`MODELS`). `codex debug models --bundled`, `pi --list-models` and `devin models list` print the models Codex, Pi and Devin know, so those can be refreshed from them (Devin's are its family names); Claude Code and Mistral Vibe have no command that lists theirs. OpenCode ships none: its models depend on the providers you signed in to.
 
 To use a model that isn't listed, select **Model** and press `+`, type its name and press enter: it is checked by the rule above (and, for OpenCode, must be `provider/model`), added for that harness and chosen. From then on the form offers it for that harness, after the built-in ones. Esc takes it back. To remove a model you added, choose it and press `-`; built-in models can't be removed. Added models are saved at once, in the profiles file (see [Where they're kept](#where-theyre-kept)), under the same rules as the profiles.
 
@@ -255,9 +259,9 @@ A profile that can't be saved shows why, in red, and nothing is written.
 
 The profile form's **Test** button, or ctrl-t, checks that the profile's agent can start with the harness, model and thinking level in the form, without starting it and without saving anything. It runs, in the repo's folder, commands that only print and exit, never with a prompt, so no agent works on anything and no tokens are spent:
 
-- `<harness> --version` for every harness (`mcc`, `claude`, `codex`, `pi`, `opencode` or `vibe`), found on your `PATH`: the command is there and runs;
+- `<harness> --version` for every harness (`mcc`, `claude`, `codex`, `pi`, `opencode`, `vibe` or `devin`), found on your `PATH`: the command is there and runs;
 - for Claude Code via `mcc run`, `mcc env -q --shell bash`: mcc finds the Claude Code account it would use in the repo, as Resolve and Review read it;
-- with a model, for Pi `pi --list-models` and for OpenCode `opencode models`: the model is one they list. That matters most for OpenCode, which starts its default model when it doesn't know the profile's.
+- with a model, for Pi `pi --list-models`, for OpenCode `opencode models` and for Devin `devin models list --process-model in-process` (so no background daemon starts): the model is one they list, for Devin as a family, an alias or a model's own name. That matters most for OpenCode, which starts its default model when it doesn't know the profile's.
 
 Each command gets 15 seconds. The settings say `Testing OpenCode…` (or the harness you chose) while they run, then, in green, what passed, as in `Test passed: opencode runs (opencode v2.3.2), and it lists the model openai/gpt-5.5. Nothing was saved.`, or, in red, the first check that failed and why: the command isn't on your `PATH`, a command failed (with the first line it printed) or didn't answer in time, mcc found no account, or the model isn't listed. A harness, model or thinking level the profile can't take shows its reason under the field, and nothing runs. Claude Code, Codex and Mistral Vibe have no list of the models they can start, and no harness says whether a thinking level works until it starts, so a passed test says when the model or thinking level is checked only when the agent starts. The name and id aren't tested: a new profile can be tested before you name it. Press **Test** again after changing the harness, model or thinking level: a result shown goes once you change them, and one that comes back after you changed them, or left the form, isn't shown. While a model is being typed after `+`, add it (enter) or take it back (esc) first: the test doesn't add it.
 
@@ -334,7 +338,7 @@ It sends nothing anywhere except through `gh` to GitHub, or `glab` to GitLab, an
 - **"The Auto-pilot prompt is N characters with M issues in it, more than 500":** your Auto-pilot prompt, with the checked issues' numbers filled in, is too long to send. Uncheck some issues, or shorten the prompt.
 - **"A prompt in the file can't be used":** a prompt edited by hand in the profiles file breaks those rules. Its action sends the default meanwhile, and the file is read only: fix or remove the prompt in the file.
 - **Mistral Vibe starts with another model than the profile's:** Vibe didn't know the model alias, so it started its default model; its pane says which. Use an alias from Vibe's model list (`/model` in Vibe), or leave the model empty.
-- **A custom prompt like `/issue-resolver {number}` does nothing on Codex, Pi or OpenCode:** a custom prompt is sent as written, and only Claude Code runs a `/skill` as a command. Write it as prose for other agents, such as `Use the issue-resolver skill on issue #{number}.`, or leave it empty for the default.
+- **A custom prompt like `/issue-resolver {number}` does nothing on Codex, Pi, OpenCode or Devin:** a custom prompt is sent as written, and only Claude Code runs a `/skill` as a command. Write it as prose for other agents, such as `Use the issue-resolver skill on issue #{number}.`, or leave it empty for the default.
 
 ## Develop
 

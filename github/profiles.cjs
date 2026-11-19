@@ -16,6 +16,9 @@
 // OPENCODE_CONFIG_CONTENT and --standalone (see buildLaunch); without a model it is
 // still an agent plan. OpenCode is no longer in NO_MODEL, and its custom models
 // must be provider/model (OPENCODE_MODEL).
+// Ahead of herdr-github too: the Devin harness ("devin", Cognition's Devin CLI). It
+// runs as a command, `devin [--model M] -- <prompt>`, since herdr has no agent kind
+// for it; its Test lists models with `devin models list`.
 "use strict";
 
 // Agent profiles for the Resolve and Review actions: which harness starts, with
@@ -23,7 +26,7 @@
 
 // The harnesses a profile can start. "mcc" is Claude Code started by `mcc run`,
 // which picks the Claude Code account (profile) set for the project.
-const HARNESSES = ["mcc", "claude", "codex", "pi", "opencode", "vibe"];
+const HARNESSES = ["mcc", "claude", "codex", "pi", "opencode", "vibe", "devin"];
 const HARNESS_NAMES = {
   mcc: "Claude Code via mcc run",
   claude: "Claude Code",
@@ -31,11 +34,13 @@ const HARNESS_NAMES = {
   pi: "Pi",
   opencode: "OpenCode",
   vibe: "Mistral Vibe",
+  devin: "Devin",
 };
 
 // The thinking levels each harness accepts. OpenCode has no flag or setting for
 // one when it starts interactively, so it takes none. Neither does Mistral Vibe: its thinking
-// level is set per model in its own config.toml.
+// level is set per model in its own config.toml. Nor Devin: its thinking level is
+// part of the model's name (claude-opus-5-5-high, gpt-6-sol-none).
 const THINKING = {
   mcc: ["low", "medium", "high", "xhigh", "max"],
   claude: ["low", "medium", "high", "xhigh", "max"],
@@ -43,6 +48,7 @@ const THINKING = {
   pi: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
   opencode: [],
   vibe: [],
+  devin: [],
 };
 
 // The models each harness offers in the profile form, before the ones you add
@@ -53,8 +59,11 @@ const THINKING = {
 // takes an alias (fable, opus, sonnet, haiku) or a full name; Mistral Vibe only
 // the names in its own model list. OpenCode ships none: which models it has
 // depends on the providers you signed in to, so `opencode models` lists them and
-// you add yours, as provider/model. A profile may still hold a model in neither
-// list: it is kept and started as it is.
+// you add yours, as provider/model. Devin's are family names from `devin models
+// list`, which start the family's default level; that list also has each level's
+// own name (claude-opus-5-5-high), which you can add. Its short aliases (opus,
+// sonnet, fable, gpt) name older models, so none is offered. A profile may still
+// hold a model in neither list: it is kept and started as it is.
 const MODELS = {
   mcc: ["fable", "opus", "sonnet", "haiku", "claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
   claude: ["fable", "opus", "sonnet", "haiku", "claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
@@ -62,6 +71,7 @@ const MODELS = {
   pi: ["anthropic/claude-fable-5-2", "anthropic/claude-opus-5-5", "anthropic/claude-sonnet-5-5", "anthropic/claude-haiku-5-5"],
   opencode: [],
   vibe: ["mistral-large-4-0-3", "mistral-medium-3.5", "glm-5-3", "zai-glm-5-3-flash"],
+  devin: ["adaptive", "swe-2", "claude-fable-5.2", "claude-opus-5.5", "claude-sonnet-5.5", "claude-haiku-5.5", "gpt-6.2-astra", "gpt-6-sol", "gemini-4-carbon"],
 };
 // The harnesses that take no model, so offer none and take no custom one.
 const NO_MODEL = [];
@@ -201,6 +211,9 @@ function expandNumbers(template, numbers) {
 //     connects to doesn't read that variable, so it starts with --standalone, its
 //     own server; its sessions are still listed with the others. A checked model
 //     holds no quote or backslash, so the JSON stays as written.
+//     Devin too, which herdr has no agent kind for: `devin [--model M] -- <prompt>`.
+//     Its prompt must follow --: Devin reads a word before it as a path to open
+//     in Devin Desktop, and stops when there is none.
 // An empty model or thinking level adds no flag: the harness's own default holds.
 function buildLaunch(profile, prompt) {
   const errors = validateProfile(profile);
@@ -218,11 +231,14 @@ function buildLaunch(profile, prompt) {
   } else if (harness === "pi") {
     if (model) flags.push("--model", model);
     if (thinking) flags.push("--thinking", thinking);
+  } else if (harness === "devin") {
+    if (model) flags.push("--model", model);
   } else if (harness === "opencode" && thinking) {
     // The consequence first: a notice cut short in a narrow pane still says it.
     warnings.push("OpenCode ignores this profile's thinking level: it has no flag for it when it starts");
   }
   if (harness === "mcc") return { mode: "command", argv: ["mcc", "run", "--", ...flags, prompt], warnings };
+  if (harness === "devin") return { mode: "command", argv: ["devin", ...flags, "--", prompt], warnings };
   if (harness === "vibe") return { mode: "command", argv: [...(model ? ["env", `VIBE_ACTIVE_MODEL=${model}`] : []), "vibe", prompt], warnings };
   if (harness === "opencode" && model) {
     const config = `OPENCODE_CONFIG_CONTENT=${JSON.stringify({ model })}`;
@@ -241,7 +257,8 @@ function buildLaunch(profile, prompt) {
 //   "version" — `<bin> --version`, for every harness: the command is there and runs;
 //   "account" — `mcc env -q --shell bash`, for mcc: the Claude Code account `mcc
 //     run` would use in the repo, as Resolve and Review read it (parseMccEnv);
-//   "models" — the models Pi (`pi --list-models`) or OpenCode (`opencode models`)
+//   "models" — the models Pi (`pi --list-models`), OpenCode (`opencode models`) or
+//     Devin (`devin models list`, run in-process so it starts no background daemon)
 //     can start, when the profile has a model, which must be among them (listsModel).
 // Claude Code, Codex and Mistral Vibe have no list of the models they can start
 // (Codex's `debug models --bundled` is only the built-in ones), so their model is
@@ -254,7 +271,7 @@ function buildCheck(profile) {
   const { harness } = p, model = p.model || "";
   const steps = [{ kind: "version", args: ["--version"] }];
   if (harness === "mcc") steps.push({ kind: "account", args: ["env", "-q", "--shell", "bash"] });
-  const lists = { pi: ["--list-models"], opencode: ["models"] }[harness];
+  const lists = { pi: ["--list-models"], opencode: ["models"], devin: ["models", "list", "--process-model", "in-process"] }[harness];
   if (model && lists) steps.push({ kind: "models", args: lists });
   return { bin: harness, steps, modelChecked: model ? Boolean(lists) : null };
 }
@@ -262,11 +279,18 @@ function buildCheck(profile) {
 // Whether a "models" step's output lists `model`. OpenCode prints one
 // provider/model a line; Pi a table whose first two columns are the provider and
 // the model, under a heading line, so its model is either provider/model or the
-// model alone.
+// model alone. Devin's `--model` takes a family, an alias or a model's own name:
+// it prints each family as a heading, `Claude Opus 5.5 (claude-opus-5.5)`, then,
+// indented, `aliases: opus, …` and one model a line, its name first.
 function listsModel(harness, text, model) {
   if (typeof model !== "string" || !model) return false;
   for (const line of String(text ?? "").split(/\r?\n/)) {
     const words = line.trim().split(/\s+/);
+    if (harness === "devin") {
+      if (!/^\s/.test(line)) { if (line.trimEnd().endsWith(`(${model})`)) return true; continue; }
+      if (words[0] === "aliases:" ? words.slice(1).join("").split(",").includes(model) : words[0] === model) return true;
+      continue;
+    }
     if (words[0] === "provider" && words[1] === "model") continue;
     if (harness === "opencode" && words.length === 1 && words[0] === model) return true;
     if (harness === "pi" && words.length >= 2 && (words[1] === model || `${words[0]}/${words[1]}` === model)) return true;

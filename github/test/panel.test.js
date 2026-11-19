@@ -865,6 +865,15 @@ test("a skill Claude has only from a plugin is found, under its plugin's name", 
   fs.mkdirSync(path.join(dir, "repo", ".codex", "skills", "issue-resolver"), { recursive: true });
   fs.writeFileSync(path.join(dir, "repo", ".codex", "skills", "issue-resolver", "SKILL.md"), "x");
   assert.equal(findSkill("codex", "issue-resolver", path.join(dir, "repo")), "issue-resolver");
+  // Devin's own folders: ~/.config/devin, ~/.config/cognition, and a repo's .cognition.
+  assert.equal(findSkill("devin", "issue-pr-review", "/repo"), null);
+  for (const folder of [path.join(dir, ".config", "devin"), path.join(dir, ".config", "cognition"), path.join(dir, "repo", ".cognition")]) {
+    const skill = path.join(folder, "skills", "issue-pr-review");
+    fs.mkdirSync(skill, { recursive: true });
+    fs.writeFileSync(path.join(skill, "SKILL.md"), "x");
+    assert.equal(findSkill("devin", "issue-pr-review", path.join(dir, "repo")), "issue-pr-review", folder);
+    fs.rmSync(skill, { recursive: true });
+  }
   setupGitHub("issues");
   fakeRex(agentHere());
   await screenAsync(() => startWithMenu());
@@ -902,6 +911,9 @@ test("agentOf names the agent a terminal runs, to place the new pane beside it",
   const vibeRs = "/home/u/.local/share/uv/tools/mistral-vibe/lib/python3.14/site-packages/vibe/_bin/vibe-rs";
   assert.equal(agentOf({ foreground: { name: "vibe-rs", path: vibeRs, invoked_path: vibeRs, argv0: vibeRs } }), "vibe");
   assert.equal(agentOf({ foreground: { name: "vibe", argv0: "vibe" } }), "vibe");
+  // Devin runs from a versioned folder, by its own name.
+  const devin = "/home/u/.local/share/devin/cli/_versions/3000.14.30821/bin/devin";
+  assert.equal(agentOf({ foreground: { name: "devin", path: devin, invoked_path: "/home/u/.local/bin/devin", argv0: "devin" } }), "devin");
   for (const p of [shellProc(), nodeProc("/x/panel.js"), { foreground: null }, null, { foreground: { name: "vim", argv0: "vim" } }]) assert.equal(agentOf(p), null);
   assert.equal(agentOf({ foreground: { name: "toString" } }), null, "an inherited property isn't an agent");
 });
@@ -919,6 +931,9 @@ test("agentArgv puts each harness's flags first and the prompt last, as one word
   // Mistral Vibe runs as a command: its model is an environment variable, set by env(1).
   assert.deepEqual(argv({ harness: "vibe" }), ["vibe", "Fix #12: it's $(bad)"]);
   assert.deepEqual(argv({ harness: "vibe", model: "mistral-medium-3.5" }), ["env", "VIBE_ACTIVE_MODEL=mistral-medium-3.5", "vibe", "Fix #12: it's $(bad)"]);
+  // Devin runs as a command, its prompt after --.
+  assert.deepEqual(argv({ harness: "devin" }), ["devin", "--", "Fix #12: it's $(bad)"]);
+  assert.deepEqual(argv({ harness: "devin", model: "swe-2" }), ["devin", "--model", "swe-2", "--", "Fix #12: it's $(bad)"]);
 });
 
 // ── Profiles: per-row buttons, harnesses, mcc ───────────────────────────────
@@ -1010,6 +1025,8 @@ test("each harness starts with its own model and thinking flags; empty ones add 
     [{ harness: "opencode", thinking: "high" }, ["opencode", "--prompt", use]],
     [{ harness: "vibe", model: "mistral-medium-3.5" }, ["env", "VIBE_ACTIVE_MODEL=mistral-medium-3.5", "vibe", use]],
     [{ harness: "vibe" }, ["vibe", use]],
+    [{ harness: "devin", model: "claude-opus-5.5" }, ["devin", "--model", "claude-opus-5.5", "--", use]],
+    [{ harness: "devin" }, ["devin", "--", use]],
   ];
   for (const [p, command] of cases) {
     useProfiles(dir, [{ id: "p", name: "P", ...p }], { resolve: "p" });
@@ -3862,8 +3879,11 @@ test("the Model field steps through the harness's models, the harness default fi
   assert.deepEqual([ui.settings.form.harness, ui.settings.form.model], ["codex", ""]);
   screen(() => onInput(Buffer.from("\x1b[B\x1b[C")));
   assert.equal(ui.settings.form.model, P.MODELS.codex[0]);
-  // Mistral Vibe offers its own list; OpenCode only the default.
+  // Devin and Mistral Vibe offer their own lists; OpenCode only the default.
   screen(() => onInput(Buffer.from("\x1b[A\x1b[D\x1b[D\x1b[D\x1b[B")));
+  assert.equal(ui.settings.form.harness, "devin");
+  for (const want of [...P.MODELS.devin, ""]) { screen(() => onInput(Buffer.from("\x1b[C"))); assert.equal(ui.settings.form.model, want); }
+  screen(() => onInput(Buffer.from("\x1b[A\x1b[D\x1b[B")));
   assert.equal(ui.settings.form.harness, "vibe");
   for (const want of [...P.MODELS.vibe, ""]) { screen(() => onInput(Buffer.from("\x1b[C"))); assert.equal(ui.settings.form.model, want); }
   screen(() => onInput(Buffer.from("\x1b[A\x1b[D\x1b[B\x1b[C")));
