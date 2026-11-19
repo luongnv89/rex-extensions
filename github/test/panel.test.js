@@ -5408,3 +5408,119 @@ test("a Test result shown goes once → changes the harness, as it was about ano
   assert.equal(ui.settings.info, "Added openai/my-model to OpenCode's models");
   screen(() => key("\x1b\x1b"));
 });
+
+// ── A profile's own launch arguments (#48) ──────────────────────────────────
+
+test("the form's Args are typed, saved, edited and cleared, and their reason shows under them (#48)", (t) => {
+  claudeHome(t);
+  setupGitHub("issues");
+  screen(() => key("s"));
+  // Args is the form's last field, "none" while empty: ↑ from Name reaches it.
+  let lines = screen(() => key("je"));
+  assert.ok(lines.some((l) => /^ {2}Args {5}none/.test(l ?? "")), lines.join("\n"));
+  assert.equal(ui.settings.form.args, "");
+  lines = screen(() => key("\x1b[A"));
+  assert.ok(lines.some((l) => /^▌ Args/.test(l ?? "")), lines.join("\n"));
+  // Typed with spaces between the words, as many as you like, and saved as a list.
+  screen(() => key("--dangerously-skip-permissions  --verbose"));
+  lines = screen(() => key("\r"));
+  assert.equal(ui.settings.mode, "list");
+  assert.ok(text(lines).includes("Saved Claude Code"), lines.join("\n"));
+  const saved = (args) => ({
+    version: 5, profiles: [{ id: "cc", name: "Claude Code", harness: "claude", args }], assign: { resolve: "cc", review: "cc" },
+    prompts: { resolve: null, review: null, autopilot: null }, customModels: {},
+  });
+  assert.deepEqual(JSON.parse(storeText()), saved(["--dangerously-skip-permissions", "--verbose"]));
+  // Edited: the form shows them on one line, and what's added is saved with them.
+  screen(() => key("e"));
+  assert.equal(ui.settings.form.args, "--dangerously-skip-permissions --verbose");
+  screen(() => key("\x1b[A -c model_reasoning_effort=high\r"));
+  assert.deepEqual(JSON.parse(storeText()), saved(["--dangerously-skip-permissions", "--verbose", "-c", "model_reasoning_effort=high"]));
+  // Args it can't take: the reasons show under the field, and nothing is saved.
+  const before = storeText();
+  screen(() => key("e\x1b[A a\\b --"));
+  lines = screen(() => key("\r"));
+  assert.equal(ui.settings.mode, "edit");
+  assert.equal(ui.settings.error, null);
+  assert.equal(ui.settings.fieldErrors.args,
+    "Args: word 5 has a space, a control or invisible character, a line break or a backslash; Args: word 6 is --, which would move the prompt: leave it out");
+  const args = lines.findIndex((l) => /^▌ Args/.test(l ?? ""));
+  assert.ok(lines.slice(args + 1).join(" ").replace(/\s+/g, " ").includes("Args: word 5 has a space"), lines.join("\n"));
+  assert.equal(storeText(), before);
+  // Cleared: the profile has no args, and the file goes back to the version it was.
+  screen(() => key("\x7f".repeat(120)));
+  assert.equal(ui.settings.form.args, "");
+  screen(() => key("\r"));
+  assert.equal(ui.settings.mode, "list");
+  const plain = { version: 1, profiles: [{ id: "cc", name: "Claude Code", harness: "claude" }], assign: { resolve: "cc", review: "cc" } };
+  assert.deepEqual(JSON.parse(storeText()), plain);
+  assert.equal(storeText(), `${JSON.stringify(plain, null, 2)}\n`);
+  // Pasted, its line breaks and tabs are spaces between words.
+  screen(() => key("e\x1b[A"));
+  screen(() => key("\x1b[200~--a\n--b\tc\x1b[201~"));
+  assert.equal(ui.settings.form.args, "--a --b c");
+  screen(() => key("\r"));
+  assert.deepEqual(JSON.parse(storeText()).profiles[0].args, ["--a", "--b", "c"]);
+  screen(() => key("\x1b\x1b"));
+});
+
+test("a profile's args reach the agent's command line, after its flags and before its prompt (#48)", async (t) => {
+  const dir = home(t, { ".agents/skills/issue-resolver/SKILL.md": "x" });
+  const use = "Use the issue-resolver skill on issue #12.";
+  const args = ["--yolo", "x=1"];
+  const cases = [
+    [{ harness: "claude", model: "sonnet", thinking: "high" }, ["claude", "--model", "sonnet", "--effort", "high", ...args, "/issue-resolver 12"]],
+    [{ harness: "codex", model: "gpt-5", thinking: "high" }, ["codex", "-m", "gpt-5", "-c", 'model_reasoning_effort="high"', ...args, use]],
+    [{ harness: "pi", thinking: "minimal" }, ["pi", "--thinking", "minimal", ...args, use]],
+    [{ harness: "opencode" }, ["opencode", ...args, "--prompt", use]],
+    [{ harness: "opencode", model: "opencode/big-pickle" }, ["env", 'OPENCODE_CONFIG_CONTENT={"model":"opencode/big-pickle"}', "opencode", "--standalone", ...args, "--prompt", use]],
+    [{ harness: "vibe" }, ["vibe", ...args, use]],
+    [{ harness: "vibe", model: "mistral-medium-3.5" }, ["env", "VIBE_ACTIVE_MODEL=mistral-medium-3.5", "vibe", ...args, use]],
+    [{ harness: "devin", model: "swe-2" }, ["devin", "--model", "swe-2", ...args, "--", use]],
+  ];
+  for (const [p, command] of cases) {
+    // The store as the panel saves it: version 5, the args in the profile.
+    const store = P.assignProfile(P.upsertProfile(P.emptyStore(), { id: "p", name: "P", ...p, args }), "resolve", "p");
+    fs.writeFileSync(useProfiles(dir, []), P.serializeStore(store));
+    setupGitHub("issues");
+    fakeRex(agentHere());
+    await screenAsync(() => startWithMenu());
+    assert.deepEqual(splitCommand(), command, JSON.stringify(p));
+  }
+});
+
+test("an mcc profile's args go to claude after --, after its model and thinking flags (#48)", async (t) => {
+  const dir = home(t, { ".claude/skills/issue-pr-review/SKILL.md": "x" });
+  const store = P.assignProfile(P.upsertProfile(P.emptyStore(), { id: "deep", name: "Deep", harness: "mcc", model: "opus", thinking: "max", args: ["--dangerously-skip-permissions"] }), "review", "deep");
+  fs.writeFileSync(useProfiles(dir, []), P.serializeStore(store));
+  const bin = mccOnPath(t);
+  mccEnv(path.join(dir, ".claude"));
+  setupGitHub("prs");
+  fakeRex(agentHere());
+  await screenAsync(() => startWithMenu());
+  assert.deepEqual(splitCommand(), [bin, "run", "--", "--model", "opus", "--effort", "max", "--dangerously-skip-permissions", "/issue-pr-review 12"]);
+});
+
+test("agentArgv keeps a profile's args where buildLaunch put them, the prompt last (#48)", () => {
+  const prompt = "Fix #12";
+  const argv = (p) => agentArgv(P.buildLaunch({ id: "p", name: "P", ...p, args: ["--a"] }, prompt), prompt, "/bin/mcc");
+  assert.deepEqual(argv({ harness: "mcc" }), ["/bin/mcc", "run", "--", "--a", prompt]);
+  assert.deepEqual(argv({ harness: "claude", thinking: "low" }), ["claude", "--effort", "low", "--a", prompt]);
+  assert.deepEqual(argv({ harness: "opencode" }), ["opencode", "--a", "--prompt", prompt]);
+  assert.deepEqual(argv({ harness: "devin" }), ["devin", "--a", "--", prompt]);
+});
+
+test("Test doesn't run a profile's args, and says they are checked only when it starts (#48)", async (t) => {
+  claudeHome(t);
+  onPath(t, "codex");
+  tools.codex = () => ({ code: 0, stdout: "codex-cli 0.167.0\n" });
+  newProfile({ harness: "codex", args: "--search" });
+  calls.length = 0;
+  let lines = await tested(() => key("\x14"));
+  assert.deepEqual(calls, [["codex", "--version"]]);
+  assert.ok(text(lines).includes("Test passed: codex runs (codex-cli 0.167.0). Nothing was saved. Its args are checked only when it starts."), lines.join("\n"));
+  Object.assign(ui.settings.form, { model: "gpt-5.5", thinking: "high" });
+  lines = await tested(() => key("\x14"));
+  assert.ok(text(lines).includes("Its model, thinking level and args are checked only when it starts."), lines.join("\n"));
+  screen(() => key("\x1b\x1b"));
+});
