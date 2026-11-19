@@ -618,3 +618,52 @@ test("a hand-edited Auto-pilot prompt it can't use is skipped and makes the file
   assert.equal(hand({}, 5).readOnly, true);
   assert.equal(P.STORE_VERSION, 4);
 });
+
+test("buildCheck names the commands that check a profile can start: --version, mcc's account, and Pi's or OpenCode's models (#43)", () => {
+  const steps = (p) => P.buildCheck(p).steps.map((s) => [s.kind, ...s.args].join(" "));
+  for (const harness of ["claude", "codex", "vibe"]) {
+    assert.deepEqual(P.buildCheck({ harness }), { bin: harness, steps: [{ kind: "version", args: ["--version"] }], modelChecked: null });
+    // These have no list of the models they can start: the model isn't checked.
+    const withModel = P.buildCheck({ harness, model: P.MODELS[harness][0], thinking: P.THINKING[harness][0] });
+    assert.deepEqual([withModel.bin, withModel.steps.length, withModel.modelChecked], [harness, 1, false]);
+  }
+  assert.deepEqual(steps({ harness: "mcc", model: "opus", thinking: "high" }), ["version --version", "account env -q --shell bash"]);
+  assert.equal(P.buildCheck({ harness: "mcc", model: "opus" }).modelChecked, false);
+  assert.deepEqual(steps({ harness: "pi" }), ["version --version"]);
+  assert.deepEqual(steps({ harness: "pi", model: "anthropic/claude-opus-5-5" }), ["version --version", "models --list-models"]);
+  assert.deepEqual(steps({ harness: "opencode", model: "opencode/big-pickle" }), ["version --version", "models models"]);
+  assert.equal(P.buildCheck({ harness: "opencode", model: "opencode/big-pickle" }).modelChecked, true);
+  // Only the harness, model and thinking level are checked: a profile with no name or id yet can be tested.
+  assert.doesNotThrow(() => P.buildCheck({ id: "", name: "", harness: "claude" }));
+});
+
+test("buildCheck throws the reasons of a harness, model or thinking level that can't start, field by field (#43)", () => {
+  assert.throws(() => P.buildCheck(null), /^Error: Harness: /);
+  assert.throws(() => P.buildCheck({ harness: "bash" }), /^Error: Harness: one of /);
+  assert.throws(() => P.buildCheck({ harness: "claude", model: "--dangerous" }), /^Error: Model: /);
+  assert.throws(() => P.buildCheck({ harness: "codex", thinking: "max" }), /^Error: Thinking: one of low, medium, high, xhigh$/);
+  assert.throws(() => P.buildCheck({ harness: "codex", model: "a b", thinking: "max" }), /^Error: Model: .*; Thinking: /);
+});
+
+test("listsModel finds a model in OpenCode's and Pi's model lists, and nothing else (#43)", () => {
+  const opencode = "opencode/big-pickle\nopenai/gpt-5.5\n";
+  assert.equal(P.listsModel("opencode", opencode, "openai/gpt-5.5"), true);
+  assert.equal(P.listsModel("opencode", opencode, "openai/gpt-5"), false);
+  assert.equal(P.listsModel("opencode", opencode, "gpt-5.5"), false);
+  const pi = [
+    "provider             model                         context  max-out  thinking  images",
+    "anthropic            claude-opus-5-5               1M       128K     yes       yes   ",
+    "groq                 openai/gpt-oss-120b           131K     65K      yes       no    ",
+  ].join("\n");
+  assert.equal(P.listsModel("pi", pi, "anthropic/claude-opus-5-5"), true);
+  assert.equal(P.listsModel("pi", pi, "claude-opus-5-5"), true);
+  assert.equal(P.listsModel("pi", pi, "groq/openai/gpt-oss-120b"), true);
+  assert.equal(P.listsModel("pi", pi, "openai/gpt-oss-120b"), true);
+  assert.equal(P.listsModel("pi", pi, "anthropic/claude-haiku-5-5"), false);
+  assert.equal(P.listsModel("pi", pi, "openai/claude-opus-5-5"), false);
+  // The table's heading isn't a model, and no list holds an empty one.
+  assert.equal(P.listsModel("pi", pi, "provider/model"), false);
+  assert.equal(P.listsModel("pi", pi, ""), false);
+  assert.equal(P.listsModel("opencode", null, "openai/gpt-5.5"), false);
+  assert.equal(P.listsModel("codex", "gpt-5.5\n", "gpt-5.5"), false);
+});
