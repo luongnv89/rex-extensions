@@ -5351,3 +5351,40 @@ test("Test runs once at a time, and drops its result when the form closes or its
   assert.deepEqual([ui.settings.mode, ui.settings.info, ui.settings.error], ["list", null, null]);
   screen(() => key("\x1b"));
 });
+
+test("a Test result shown goes once → changes the harness, as it was about another profile; other messages stay (#43)", async (t) => {
+  claudeHome(t);
+  onPath(t, "opencode");
+  tools.opencode = (args) => args[0] === "--version" ? { code: 0, stdout: "opencode v2.3.2\n" }
+    : args[0] === "models" ? { code: 0, stdout: "openai/gpt-5.5\n" } : { code: 1, stderr: "unexpected" };
+  newProfile({ harness: "opencode", model: "openai/gpt-5.5" });
+  ui.settings.field = 2;
+  let lines = await tested(() => key("\x14"));
+  assert.ok(text(lines).includes("Test passed: opencode runs (opencode v2.3.2), and it lists the model openai/gpt-5.5."), lines.join("\n"));
+  // → on Harness: Mistral Vibe, which the pass said nothing of.
+  lines = screen(() => key("\x1b[C"));
+  assert.equal(ui.settings.form.harness, "vibe");
+  assert.equal(ui.settings.info, null);
+  assert.ok(!text(lines).includes("Test passed"), lines.join("\n"));
+  // A fail goes too.
+  Object.assign(ui.settings.form, { harness: "opencode", model: "openai/gpt-5" });
+  lines = await tested(() => key("\x14"));
+  assert.ok(text(lines).includes("Test failed: OpenCode doesn't list the model openai/gpt-5"), lines.join("\n"));
+  lines = screen(() => key("\x1b[C"));
+  assert.equal(ui.settings.form.harness, "vibe");
+  assert.equal(ui.settings.error, null);
+  assert.ok(!text(lines).includes("Test failed"), lines.join("\n"));
+  // A message Test didn't put there, here a model added after the pass, stays.
+  Object.assign(ui.settings.form, { harness: "opencode", model: "openai/gpt-5.5" });
+  await tested(() => key("\x14"));
+  ui.settings.field = 3;
+  screen(() => key("+"));
+  screen(() => key("openai/my-model"));
+  screen(() => key("\r"));
+  assert.equal(ui.settings.info, "Added openai/my-model to OpenCode's models");
+  ui.settings.field = 2;
+  screen(() => key("\x1b[C"));
+  assert.equal(ui.settings.form.harness, "vibe");
+  assert.equal(ui.settings.info, "Added openai/my-model to OpenCode's models");
+  screen(() => key("\x1b\x1b"));
+});

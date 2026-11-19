@@ -1895,6 +1895,23 @@ const TEST_MS = 15000;
 // The fields Test checks: the name and id don't change what starts.
 const TESTED = ["harness", "model", "thinking"];
 
+// Shows what Test found for `profile`, and keeps it on the form with that profile,
+// so it can be taken back when those fields change.
+function testSays(st, profile, said) {
+  Object.assign(st, { info: null, error: null }, said);
+  st.form.tested = { ...profile, said: said.info ?? said.error };
+}
+
+// A shown Test result is about the harness, model and thinking it tested: once the
+// form holds others, it goes. Any other message stays.
+function dropStaleTest(st) {
+  const form = st.form, was = form?.tested;
+  if (!was || TESTED.every((k) => form[k] === was[k])) return;
+  if (st.info === was.said) st.info = null;
+  if (st.error === was.said) st.error = null;
+  form.tested = null;
+}
+
 // The form's Test (#43), ^T or its button: checks that the profile as the form
 // holds it can start, with the commands P.buildCheck names (none of them given a
 // prompt, so no agent works on anything), and says what it found in the status
@@ -1912,14 +1929,15 @@ async function testForm() {
   let check;
   try { check = P.buildCheck(profile); } catch (e) {
     const why = splitErrors(e.message, true);
-    Object.assign(st, { info: null, error: `Test failed: ${why.error ?? "see the reason under the field"}`, fieldErrors: { ...st.fieldErrors, ...why.fieldErrors } });
+    st.fieldErrors = { ...st.fieldErrors, ...why.fieldErrors };
+    testSays(st, profile, { error: `Test failed: ${why.error ?? "see the reason under the field"}` });
     return draw();
   }
   // The fields it checks can start, so the reasons under them are gone.
   for (const k of TESTED) delete st.fieldErrors[k];
   const bin = which(check.bin);
   if (!bin) {
-    Object.assign(st, { info: null, error: `Test failed: ${check.bin} isn't on your PATH. Install ${shown}, or choose another harness` });
+    testSays(st, profile, { error: `Test failed: ${check.bin} isn't on your PATH. Install ${shown}, or choose another harness` });
     return draw();
   }
   // What the status lines say while it runs.
@@ -1954,8 +1972,8 @@ async function testForm() {
     if (check.modelChecked) found.push(`it lists the model ${profile.model}`);
     const later = [profile.model && !check.modelChecked && "model", profile.thinking && "thinking level"].filter(Boolean);
     const unchecked = later.length ? ` Its ${later.join(" and ")} ${later.length > 1 ? "are" : "is"} checked only when it starts.` : "";
-    if (failed) Object.assign(st, { info: null, error: `Test failed: ${failed}` });
-    else Object.assign(st, { error: null, info: `Test passed: ${found.join(", and ")}. Nothing was saved.${unchecked}` });
+    if (failed) testSays(st, profile, { error: `Test failed: ${failed}` });
+    else testSays(st, profile, { info: `Test passed: ${found.join(", and ")}. Nothing was saved.${unchecked}` });
   }
   draw();
 }
@@ -2176,6 +2194,7 @@ function formKey(st, k) {
     if (!choices(form, "thinking").includes(form.thinking)) form.thinking = "";
     if (offered && !P.modelChoices(st.store, form.harness).includes(form.model)) form.model = "";
     delete st.fieldErrors[field.key];
+    dropStaleTest(st);
     return draw();
   }
   if (k === "\x7f" || k === "\b") form[field.key] = [...form[field.key]].slice(0, -1).join("");
