@@ -62,7 +62,9 @@ const THINKING = {
 // you add yours, as provider/model. Devin's are family names from `devin models
 // list`, which start the family's default level; that list also has each level's
 // own name (claude-opus-5-5-high), which you can add. Its short aliases (opus,
-// sonnet, fable, gpt) name older models, so none is offered. A profile may still
+// sonnet, fable, gpt) name older models, so none is offered. Nor is `adaptive`,
+// though Devin lists it: it routes each request to a model Devin picks (such as
+// swe-2-max), so a profile with it doesn't start the model it names. A profile may still
 // hold a model in neither list: it is kept and started as it is.
 const MODELS = {
   mcc: ["fable", "opus", "sonnet", "haiku", "claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
@@ -71,7 +73,7 @@ const MODELS = {
   pi: ["anthropic/claude-fable-5-2", "anthropic/claude-opus-5-5", "anthropic/claude-sonnet-5-5", "anthropic/claude-haiku-5-5"],
   opencode: [],
   vibe: ["mistral-large-4-0-3", "mistral-medium-3.5", "glm-5-3", "zai-glm-5-3-flash"],
-  devin: ["adaptive", "swe-2", "claude-fable-5.2", "claude-opus-5.5", "claude-sonnet-5.5", "claude-haiku-5.5", "gpt-6.2-astra", "gpt-6-sol", "gemini-4-carbon"],
+  devin: ["swe-2", "claude-fable-5.2", "claude-opus-5.5", "claude-sonnet-5.5", "claude-haiku-5.5", "gpt-6.2-astra", "gpt-6-sol", "gemini-4-carbon"],
 };
 // The harnesses that take no model, so offer none and take no custom one.
 const NO_MODEL = [];

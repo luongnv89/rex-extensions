@@ -428,9 +428,10 @@ test("MODELS: a short list of valid model names for each harness, none built in 
   for (const h of ["mcc", "claude"]) for (const m of ["fable", "opus", "sonnet", "haiku", "claude-opus-5-5"]) assert.ok(P.MODELS[h].includes(m), `${h} ${m}`);
   assert.deepEqual(P.MODELS.vibe, ["mistral-large-4-0-3", "mistral-medium-3.5", "glm-5-3", "zai-glm-5-3-flash"]);
   assert.ok(P.MODELS.pi.every((m) => m.includes("/")), "pi takes provider/id");
-  // Devin's family names, not its short aliases, which name older models.
-  for (const m of ["adaptive", "swe-2", "claude-opus-5.5", "claude-fable-5.2"]) assert.ok(P.MODELS.devin.includes(m), `devin ${m}`);
-  for (const m of ["opus", "sonnet", "fable", "gpt"]) assert.ok(!P.MODELS.devin.includes(m), `devin ${m}`);
+  // Devin's family names, not its short aliases, which name older models, nor
+  // `adaptive`, which routes each request to a model Devin picks (#49).
+  for (const m of ["swe-2", "claude-opus-5.5", "claude-fable-5.2"]) assert.ok(P.MODELS.devin.includes(m), `devin ${m}`);
+  for (const m of ["opus", "sonnet", "fable", "gpt", "adaptive"]) assert.ok(!P.MODELS.devin.includes(m), `devin ${m}`);
 });
 
 test("modelChoices: the built-in models, then the ones you added, each once", () => {
