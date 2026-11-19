@@ -1485,6 +1485,7 @@ const KEYMAP = {
     binding("+", "add a model", { hint: "+ add", model: true }),
     binding("-", "remove a model you added", { hint: "- remove", model: true }),
     binding("⏎", "Save", { hint: "⏎ save" }),
+    binding("^T", "Test: checks the agent can start, and saves nothing", { hint: "^T test" }),
     binding("esc", "Cancel, or ✕", { hint: "esc back" }),
   ],
   prompt: [
@@ -1889,6 +1890,105 @@ function saveForm() {
   }, `Saved ${profile.name}`);
 }
 
+// How long Test (#43) waits for each command it runs.
+const TEST_MS = 15000;
+// The fields Test checks: the name and id don't change what starts.
+const TESTED = ["harness", "model", "thinking"];
+
+// Shows what Test found for `profile`, and keeps it on the form with that profile,
+// so it can be taken back when those fields change.
+function testSays(st, profile, said) {
+  Object.assign(st, { info: null, error: null }, said);
+  st.form.tested = { ...profile, said: said.info ?? said.error };
+}
+
+// A shown Test result is about the harness, model and thinking it tested: once the
+// form holds others, it goes. Any other message stays.
+function dropStaleTest(st) {
+  const form = st.form, was = form?.tested;
+  if (!was || TESTED.every((k) => form[k] === was[k])) return;
+  if (st.info === was.said) st.info = null;
+  if (st.error === was.said) st.error = null;
+  form.tested = null;
+}
+
+// The form's Test (#43), ^T or its button: checks that the profile as the form
+// holds it can start, with the commands P.buildCheck names (none of them given a
+// prompt, so no agent works on anything), and says what it found in the status
+// lines. It saves nothing and adds no model: the form stays as it is. The result
+// is dropped if the form closed or its harness, model or thinking changed meanwhile.
+async function testForm() {
+  const st = ui.settings, form = st?.form;
+  if (!form || st.mode !== "edit" || form.testing) return;
+  if (form.adding !== null) {
+    Object.assign(st, { info: null, error: "Add the model first (enter), or take it back (esc), then test" });
+    return draw();
+  }
+  const profile = Object.fromEntries(TESTED.map((k) => [k, form[k]]));
+  const shown = P.HARNESS_NAMES[profile.harness] ?? profile.harness;
+  let check;
+  try { check = P.buildCheck(profile); } catch (e) {
+    const why = splitErrors(e.message, true);
+    st.fieldErrors = { ...st.fieldErrors, ...why.fieldErrors };
+    testSays(st, profile, { error: `Test failed: ${why.error ?? "see the reason under the field"}` });
+    return draw();
+  }
+  // The fields it checks can start, so the reasons under them are gone.
+  for (const k of TESTED) delete st.fieldErrors[k];
+  const bin = which(check.bin);
+  if (!bin) {
+    testSays(st, profile, { error: `Test failed: ${check.bin} isn't on your PATH. Install ${shown}, or choose another harness` });
+    return draw();
+  }
+  // What the status lines say while it runs.
+  form.testing = `Testing ${shown}…`;
+  Object.assign(st, { info: null, error: null });
+  draw();
+  // A command's output goes on one line, without its colors or any other control character.
+  const one = (text) => fit(clean(firstLine(String(text ?? "").replace(/\x1b\[[0-?]*[ -\/]*[@-~]/g, ""))).trim(), 160);
+  const said = (r) => one(r.stderr) || one(r.stdout);
+  const cwd = ui.root || os.homedir();
+  let version = "", failed = null;
+  for (const step of check.steps) {
+    const command = [check.bin, ...step.args].join(" ");
+    const r = await run(bin, step.args, { cwd, timeout: TEST_MS }).catch((e) =>
+      ({ code: -1, stdout: "", stderr: e.killed || e.signal ? `no answer in ${TEST_MS / 1000}s` : e.message }));
+    if (r.code !== 0) { failed = `\`${command}\` failed: ${said(r) || `exit ${r.code}`}`; break; }
+    if (step.kind === "version") version = fit(one(r.stdout) || one(r.stderr), 80);
+    if (step.kind === "account" && !P.parseMccEnv(r.stdout, os.homedir())) {
+      failed = `\`${command}\` didn't name the Claude Code account mcc would use in this repo`;
+      break;
+    }
+    if (step.kind === "models" && !P.listsModel(profile.harness, r.stdout, profile.model)) {
+      failed = `${shown} doesn't list the model ${profile.model}: \`${command}\` lists the ones it can start`;
+      break;
+    }
+  }
+  form.testing = false;
+  if (ui.settings !== st || st.form !== form) return;
+  if (TESTED.every((k) => form[k] === profile[k])) {
+    const found = [`${check.bin} runs${version ? ` (${version})` : ""}`];
+    if (profile.harness === "mcc") found.push("mcc finds the Claude Code account for this repo");
+    if (check.modelChecked) found.push(`it lists the model ${profile.model}`);
+    const later = [profile.model && !check.modelChecked && "model", profile.thinking && "thinking level"].filter(Boolean);
+    const unchecked = later.length ? ` Its ${later.join(" and ")} ${later.length > 1 ? "are" : "is"} checked only when it starts.` : "";
+    if (failed) testSays(st, profile, { error: `Test failed: ${failed}` });
+    else testSays(st, profile, { info: `Test passed: ${found.join(", and ")}. Nothing was saved.${unchecked}` });
+  }
+  draw();
+}
+
+// Test from its key or its button: what it didn't expect is said, never thrown.
+function pressTest() {
+  const st = ui.settings, form = st?.form;
+  testForm().catch((e) => {
+    if (form) form.testing = false;
+    if (ui.settings !== st || st.form !== form) return;
+    Object.assign(st, { info: null, error: `Test failed: ${e.message}` });
+    draw();
+  });
+}
+
 // A change to the models offered, from the form: its reason shows under Model, and
 // the other fields keep theirs.
 function changeModels(fn, info) {
@@ -2061,6 +2161,8 @@ function addKey(st, k) {
 
 function formKey(st, k) {
   const form = st.form, field = FIELDS[st.field];
+  // ctrl-t, as letters are typed into the fields: Test (#43).
+  if (k === "\x14") return pressTest();
   if (form.adding !== null) return addKey(st, k);
   if (k === "\x1b") return settingsBack();
   if (k === "\r" || k === "\n") return saveForm();
@@ -2092,6 +2194,7 @@ function formKey(st, k) {
     if (!choices(form, "thinking").includes(form.thinking)) form.thinking = "";
     if (offered && !P.modelChoices(st.store, form.harness).includes(form.model)) form.model = "";
     delete st.fieldErrors[field.key];
+    dropStaleTest(st);
     return draw();
   }
   if (k === "\x7f" || k === "\b") form[field.key] = [...form[field.key]].slice(0, -1).join("");
@@ -2156,6 +2259,7 @@ function settingsLines(cols, rows) {
   if (st.error) notes.push([red, st.error]);
   if (st.info) notes.push([green, st.info]);
   for (const w of st.warnings) notes.push([yellow, w]);
+  if (st.mode === "edit" && st.form.testing) notes.push([yellow, st.form.testing]);
   if (st.mode === "edit" && st.form.harness === "opencode" && st.form.thinking) notes.push([yellow, OPENCODE_NOTE]);
   // The form's and the prompt's key hints come from their KEYMAP tables (#37).
   const footer = hintLines(st.mode === "edit" ? (st.form.adding !== null ? ["type the model", "⏎ add", "esc cancel"]
@@ -2211,7 +2315,7 @@ function settingsLines(cols, rows) {
       if (on) selEnd = body.length;
     });
     body.push(""); owner.push(null);
-    addButtons([["Save", () => saveForm()], ["Cancel", () => settingsBack()]], "  ", 2, null);
+    addButtons([["Save", () => saveForm()], ["Test", pressTest], ["Cancel", () => settingsBack()]], "  ", 2, null);
   } else if (st.mode === "prompt") {
     // The text, broken into lines of the pane's width, the cursor after it; empty,
     // what the action sends instead. Then its reason, what to know, and the buttons.

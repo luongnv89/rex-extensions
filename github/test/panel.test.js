@@ -34,13 +34,15 @@ const missing = (name) => () => ({ code: 1, stderr: `no ${name} in tests` });
 let git = missing("git"), gh = missing("gh"), glab = missing("glab");
 let hold = () => false;
 const held = [];
+// Any other command a test scripts, by name: the agents a profile's Test runs (#43).
+const tools = {};
 const answer = (cb, r) => cb(r.error ?? (r.code ? Object.assign(new Error("exit"), { code: r.code }) : null), r.stdout ?? "", r.stderr ?? "");
 require("node:child_process").execFile = (cmd, args, opts, cb) => {
   const name = path.basename(cmd);
   calls.push([name, ...args]);
   callOpts.push(opts);
   if (hold(name, args)) { held.push({ name, args, answer: (r) => answer(cb, r) }); return; }
-  const r = name === "rex" ? rex(args) : name === "mcc" ? mcc(args) : name === "git" ? git(args) : name === "gh" ? gh(args) : name === "glab" ? glab(args) : { code: 1, stderr: `no ${name} in tests` };
+  const r = name === "rex" ? rex(args) : name === "mcc" ? mcc(args) : name === "git" ? git(args) : name === "gh" ? gh(args) : name === "glab" ? glab(args) : tools[name] ? tools[name](args) : { code: 1, stderr: `no ${name} in tests` };
   setImmediate(() => answer(cb, r));
 };
 // The panel keeps its state (its view, its width) in a folder of its own, for the run.
@@ -5140,7 +5142,7 @@ const BUTTON_KEYS = {
   autopilot: [[/^☑/, "p"], [/^⚙/, "s"], [/^↻/, "r"], [/^↗/, "o"], [/^((Pull|Merge) requests|Issues)/, "1"], [/^▶ Start/, "⏎"], [/^✕ Cancel$/, "esc"]],
   menu: [[/^│/, "⏎"]],
   settings: [[/^\+ New$/, "n"], [/^✕$/, "esc"], [/^(Use for Resolve|Resolve ✓)$/, "R"], [/^(Use for Review|Review ✓)$/, "V"], [/^Edit$/, "e"], [/^Delete$/, "d"], [/^Change$/, "e"]],
-  form: [[/^Save$/, "⏎"], [/^(Cancel|✕)$/, "esc"]],
+  form: [[/^Save$/, "⏎"], [/^Test$/, "^T"], [/^(Cancel|✕)$/, "esc"]],
   prompt: [[/^Save$/, "⏎"], [/^Use default$/, "^R"], [/^(Cancel|✕)$/, "esc"]],
 };
 
@@ -5188,5 +5190,201 @@ test("every view's key table names each key once, and every button drawn in it h
     if (mode === "autopilot") { ui.autopilot.on = false; ui.autopilot.checked.clear(); }
     if (mode === "menu") ui.menu = null;
   }
+  screen(() => key("\x1b\x1b"));
+});
+
+// ── The profile form's Test (#43) ───────────────────────────────────────────
+
+// PATH set to exactly one new folder, holding an executable for each of `names`;
+// restored after the test, with what the test scripted for them.
+function onPath(t, ...names) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rex-github-bin-"));
+  for (const n of names) {
+    fs.writeFileSync(path.join(dir, n), "#!/bin/sh\nexit 0\n");
+    fs.chmodSync(path.join(dir, n), 0o755);
+  }
+  process.env.PATH = dir;
+  t.after(() => { process.env.PATH = PATH; fs.rmSync(dir, { recursive: true, force: true }); for (const n of names) delete tools[n]; });
+}
+// fn, then the frames until Test has said what it found: the last one's lines.
+async function tested(fn) {
+  const { write } = process.stdout, cols = process.stdout.columns, rows = process.stdout.rows;
+  let frame = "";
+  process.stdout.write = function (s, ...rest) {
+    if (typeof s === "string" && s.startsWith("\x1b[?2026h")) { frame = s; return true; }
+    return write.call(this, s, ...rest);
+  };
+  process.stdout.columns = 60; process.stdout.rows = 24;
+  try { fn(); for (let i = 0; i < 200 && ui.settings?.form?.testing; i++) await tick(); } finally { Object.assign(process.stdout, { write, columns: cols, rows }); }
+  const lines = [];
+  for (const m of frame.matchAll(/\x1b\[(\d+);1H(.*?)\x1b\[0m\x1b\[K/g)) lines[m[1] - 1] = strip(m[2]);
+  return lines;
+}
+// The form of a new profile, holding `fields`.
+function newProfile(fields) {
+  setupGitHub("issues");
+  screen(() => key("s"));
+  screen(() => key("n"));
+  Object.assign(ui.settings.form, fields);
+}
+const storeText = () => fs.existsSync(storeFile()) ? fs.readFileSync(storeFile(), "utf8") : null;
+
+test("the new-profile form's Test checks that its agent starts with its model, says so, and saves and starts nothing (#43)", async (t) => {
+  claudeHome(t);
+  onPath(t, "opencode");
+  tools.opencode = (args) => args[0] === "--version" ? { code: 0, stdout: "opencode v2.3.2\n" }
+    : args[0] === "models" ? { code: 0, stdout: "opencode/big-pickle\nopenai/gpt-5.5\n" } : { code: 1, stderr: "unexpected" };
+  newProfile({ name: "Big pickle", id: "bp", harness: "opencode", model: "openai/gpt-5.5" });
+  const before = storeText();
+  let lines = screen(draw);
+  assert.match(lines[0], /New profile/);
+  assert.match(lines.join("\n"), / Save {3}Test {3}Cancel \n/);
+  assert.ok(text(lines).includes("^T test"), lines.join("\n"));
+  calls.length = 0;
+  callOpts.length = 0;
+  lines = await tested(() => pressButton(lines, " Test "));
+  // Each command runs in the repo's folder, and is given a time to answer in.
+  assert.deepEqual(calls, [["opencode", "--version"], ["opencode", "models"]]);
+  for (const o of callOpts) assert.deepEqual([o.cwd, o.timeout], ["/repo", 15000]);
+  assert.ok(text(lines).includes("Test passed: opencode runs (opencode v2.3.2), and it lists the model openai/gpt-5.5. Nothing was saved."), lines.join("\n"));
+  // Nothing saved, no pane opened and no agent started: the form is still open, as it was.
+  assert.equal(storeText(), before);
+  assert.deepEqual(opened, []);
+  assert.ok(!calls.some((c) => c[0] === "rex"), JSON.stringify(calls));
+  assert.equal(ui.settings.mode, "edit");
+  assert.deepEqual([ui.settings.form.name, ui.settings.form.id, ui.settings.form.harness, ui.settings.form.model], ["Big pickle", "bp", "opencode", "openai/gpt-5.5"]);
+  // A model OpenCode doesn't list fails, and says why; ^T tests too.
+  ui.settings.form.model = "openai/gpt-5";
+  lines = await tested(() => key("\x14"));
+  assert.ok(text(lines).includes("Test failed: OpenCode doesn't list the model openai/gpt-5: `opencode models` lists the ones it can start"), lines.join("\n"));
+  assert.equal(storeText(), before);
+  screen(() => key("\x1b\x1b"));
+});
+
+test("Test says why a profile can't start: not on PATH, a command that fails or doesn't answer, or a field it can't take (#43)", async (t) => {
+  claudeHome(t);
+  onPath(t, "codex");
+  newProfile({ harness: "claude" });
+  const before = storeText();
+  calls.length = 0;
+  let lines = await tested(() => key("\x14"));
+  assert.ok(text(lines).includes("Test failed: claude isn't on your PATH. Install Claude Code, or choose another harness"), lines.join("\n"));
+  assert.deepEqual(calls, []);
+  // Codex is there, but fails: the first line it printed says why.
+  ui.settings.form.harness = "codex";
+  tools.codex = () => ({ code: 127, stderr: "\x1b[31mcodex: error while loading shared libraries\x1b[0m\nmore\n" });
+  lines = await tested(() => key("\x14"));
+  assert.ok(text(lines).includes("Test failed: `codex --version` failed: codex: error while loading shared libraries"), lines.join("\n"));
+  // One that doesn't answer in time is stopped.
+  tools.codex = () => ({ error: Object.assign(new Error("timed out"), { killed: true, signal: "SIGTERM", code: null }) });
+  lines = await tested(() => key("\x14"));
+  assert.ok(text(lines).includes("Test failed: `codex --version` failed: no answer in 15s"), lines.join("\n"));
+  // A thinking level Codex can't take: its reason shows under the field, and nothing runs.
+  calls.length = 0;
+  ui.settings.form.thinking = "max";
+  lines = await tested(() => key("\x14"));
+  assert.ok(text(lines).includes("Test failed: see the reason under the field"), lines.join("\n"));
+  assert.ok(text(lines).includes("Thinking: one of low, medium, high, xhigh"), lines.join("\n"));
+  assert.deepEqual(calls, []);
+  // Codex runs: the test passes, and says its model and thinking level are checked only when it starts.
+  Object.assign(ui.settings.form, { model: "gpt-5.5", thinking: "high" });
+  tools.codex = () => ({ code: 0, stdout: "codex-cli 0.167.0\n" });
+  lines = await tested(() => key("\x14"));
+  assert.ok(text(lines).includes("Test passed: codex runs (codex-cli 0.167.0). Nothing was saved. Its model and thinking level are checked only when it starts."), lines.join("\n"));
+  assert.ok(!text(lines).includes("Thinking: one of"), lines.join("\n"));
+  assert.equal(storeText(), before);
+  screen(() => key("\x1b\x1b"));
+});
+
+test("Test of an mcc profile also checks that mcc finds the repo's Claude Code account, and a model being added is added first (#43)", async (t) => {
+  claudeHome(t);
+  mccOnPath(t);
+  newProfile({ harness: "mcc", model: "opus" });
+  const before = storeText();
+  mcc = (args) => args[0] === "--version" ? { code: 0, stdout: "mcc 0.10.0\n" }
+    : args[0] === "env" ? { code: 0, stdout: "export CLAUDE_CONFIG_DIR='/home/u/.mcc/profiles/work'\nunset MCC_PROFILE\n" } : { code: 1, stderr: "unexpected" };
+  calls.length = 0;
+  let lines = await tested(() => key("\x14"));
+  assert.deepEqual(mccCalls(), ["--version", "env -q --shell bash"]);
+  assert.ok(text(lines).includes("Test passed: mcc runs (mcc 0.10.0), and mcc finds the Claude Code account for this repo. Nothing was saved. Its model is checked only when it starts."), lines.join("\n"));
+  mcc = (args) => args[0] === "--version" ? { code: 0, stdout: "mcc 0.10.0\n" } : { code: 0, stdout: "nothing here\n" };
+  lines = await tested(() => key("\x14"));
+  assert.ok(text(lines).includes("Test failed: `mcc env -q --shell bash` didn't name the Claude Code account mcc would use in this repo"), lines.join("\n"));
+  // While a model is typed after +, Test runs nothing and adds no model: it asks for it to be added or taken back first.
+  calls.length = 0;
+  ui.settings.field = ui.settings.form ? 3 : 0;
+  screen(() => key("+"));
+  screen(() => key("my-model"));
+  assert.equal(ui.settings.form.adding, "my-model");
+  lines = await tested(() => key("\x14"));
+  assert.ok(text(lines).includes("Add the model first (enter), or take it back (esc), then test"), lines.join("\n"));
+  assert.deepEqual(calls, []);
+  assert.equal(ui.settings.form.adding, "my-model");
+  assert.equal(storeText(), before);
+  screen(() => key("\x1b\x1b\x1b"));
+});
+
+test("Test runs once at a time, and drops its result when the form closes or its harness changes meanwhile (#43)", async (t) => {
+  claudeHome(t);
+  onPath(t, "pi");
+  t.after(() => { hold = () => false; held.length = 0; });
+  newProfile({ harness: "pi" });
+  hold = (name) => name === "pi";
+  calls.length = 0;
+  let lines = screen(() => key("\x14"));
+  assert.ok(text(lines).includes("Testing Pi…"), lines.join("\n"));
+  // A second press while it runs runs nothing more.
+  screen(() => key("\x14"));
+  assert.equal(calls.length, 1);
+  // The harness changed: the answer is for another profile, so it isn't shown.
+  ui.settings.form.harness = "codex";
+  lines = await tested(() => held.shift().answer({ code: 0, stdout: "1.5.2\n" }));
+  assert.equal(ui.settings.form.testing, false);
+  assert.deepEqual([ui.settings.info, ui.settings.error], [null, null]);
+  assert.ok(!text(lines).includes("Testing") && !text(lines).includes("Test passed"), lines.join("\n"));
+  // The form closed: the answer goes nowhere, and the list says nothing of it.
+  ui.settings.form.harness = "pi";
+  screen(() => key("\x14"));
+  screen(() => key("\x1b"));
+  assert.equal(ui.settings.mode, "list");
+  await quietly(async () => { held.shift().answer({ code: 0, stdout: "1.5.2\n" }); for (let i = 0; i < 5; i++) await tick(); });
+  assert.deepEqual([ui.settings.mode, ui.settings.info, ui.settings.error], ["list", null, null]);
+  screen(() => key("\x1b"));
+});
+
+test("a Test result shown goes once → changes the harness, as it was about another profile; other messages stay (#43)", async (t) => {
+  claudeHome(t);
+  onPath(t, "opencode");
+  tools.opencode = (args) => args[0] === "--version" ? { code: 0, stdout: "opencode v2.3.2\n" }
+    : args[0] === "models" ? { code: 0, stdout: "openai/gpt-5.5\n" } : { code: 1, stderr: "unexpected" };
+  newProfile({ harness: "opencode", model: "openai/gpt-5.5" });
+  ui.settings.field = 2;
+  let lines = await tested(() => key("\x14"));
+  assert.ok(text(lines).includes("Test passed: opencode runs (opencode v2.3.2), and it lists the model openai/gpt-5.5."), lines.join("\n"));
+  // → on Harness: Mistral Vibe, which the pass said nothing of.
+  lines = screen(() => key("\x1b[C"));
+  assert.equal(ui.settings.form.harness, "vibe");
+  assert.equal(ui.settings.info, null);
+  assert.ok(!text(lines).includes("Test passed"), lines.join("\n"));
+  // A fail goes too.
+  Object.assign(ui.settings.form, { harness: "opencode", model: "openai/gpt-5" });
+  lines = await tested(() => key("\x14"));
+  assert.ok(text(lines).includes("Test failed: OpenCode doesn't list the model openai/gpt-5"), lines.join("\n"));
+  lines = screen(() => key("\x1b[C"));
+  assert.equal(ui.settings.form.harness, "vibe");
+  assert.equal(ui.settings.error, null);
+  assert.ok(!text(lines).includes("Test failed"), lines.join("\n"));
+  // A message Test didn't put there, here a model added after the pass, stays.
+  Object.assign(ui.settings.form, { harness: "opencode", model: "openai/gpt-5.5" });
+  await tested(() => key("\x14"));
+  ui.settings.field = 3;
+  screen(() => key("+"));
+  screen(() => key("openai/my-model"));
+  screen(() => key("\r"));
+  assert.equal(ui.settings.info, "Added openai/my-model to OpenCode's models");
+  ui.settings.field = 2;
+  screen(() => key("\x1b[C"));
+  assert.equal(ui.settings.form.harness, "vibe");
+  assert.equal(ui.settings.info, "Added openai/my-model to OpenCode's models");
   screen(() => key("\x1b\x1b"));
 });

@@ -10,6 +10,7 @@
 // once, and store version 4 that holds it (PROMPT_KEYS, PROMPT_TOKENS, the
 // {numbers} token, expandNumbers, and validatePromptTemplate taking the key).
 // Profiles are still assigned to Resolve and Review only (ACTION_KEYS).
+// Ahead of herdr-github too (#43): the profile form's Test (buildCheck, listsModel).
 // Ahead of herdr-github too: an OpenCode profile's model. OpenCode's TUI has
 // no --model flag, so buildLaunch gives a command plan that starts it with
 // OPENCODE_CONFIG_CONTENT and --standalone (see buildLaunch); without a model it is
@@ -228,6 +229,49 @@ function buildLaunch(profile, prompt) {
     return { mode: "command", argv: ["env", config, "opencode", "--standalone", "--prompt", prompt], warnings };
   }
   return { mode: "agent", kind: harness, extraArgs: flags, warnings };
+}
+
+// ── Testing a profile (#43) ─────────────────────────────────────────────────
+// What the profile form's Test runs to check that a profile's agent can start,
+// without starting it: commands that print and exit, none of them given a prompt,
+// so no agent session, no tokens and nothing saved. Only the harness, model and
+// thinking level are checked: the name and id don't change what starts.
+//   { bin, steps: [{ kind, args }], modelChecked }
+// `bin` is the harness's command, found on PATH; each step runs it with `args`:
+//   "version" — `<bin> --version`, for every harness: the command is there and runs;
+//   "account" — `mcc env -q --shell bash`, for mcc: the Claude Code account `mcc
+//     run` would use in the repo, as Resolve and Review read it (parseMccEnv);
+//   "models" — the models Pi (`pi --list-models`) or OpenCode (`opencode models`)
+//     can start, when the profile has a model, which must be among them (listsModel).
+// Claude Code, Codex and Mistral Vibe have no list of the models they can start
+// (Codex's `debug models --bundled` is only the built-in ones), so their model is
+// not checked: `modelChecked` says whether it was, null with no model.
+function buildCheck(profile) {
+  const p = profile && typeof profile === "object" ? profile : {};
+  // Placeholders for the fields that don't change what starts, so only the others' reasons come back.
+  const errors = validateProfile({ id: "test", name: "Test", harness: p.harness, model: p.model, thinking: p.thinking });
+  if (errors.length) throw new Error(errors.join("; "));
+  const { harness } = p, model = p.model || "";
+  const steps = [{ kind: "version", args: ["--version"] }];
+  if (harness === "mcc") steps.push({ kind: "account", args: ["env", "-q", "--shell", "bash"] });
+  const lists = { pi: ["--list-models"], opencode: ["models"] }[harness];
+  if (model && lists) steps.push({ kind: "models", args: lists });
+  return { bin: harness, steps, modelChecked: model ? Boolean(lists) : null };
+}
+
+// Whether a "models" step's output lists `model`. OpenCode prints one
+// provider/model a line; Pi a table whose first two columns are the provider and
+// the model, under a heading line, so its model is either provider/model or the
+// model alone.
+function listsModel(harness, text, model) {
+  if (typeof model !== "string" || !model) return false;
+  for (const line of String(text ?? "").split(/\r?\n/)) {
+    const words = line.trim().split(/\s+/);
+    if (words[0] === "provider" && words[1] === "model") continue;
+    if (harness === "opencode" && words.length === 1 && words[0] === model) return true;
+    if (harness === "pi" && words.length >= 2 && (words[1] === model || `${words[0]}/${words[1]}` === model)) return true;
+  }
+  return false;
 }
 
 // ── The store: one JSON file shared by the terminal panel and the app ───────
@@ -505,4 +549,4 @@ function parseMccEnv(text, home) {
   return null;
 }
 
-module.exports = { HARNESSES, HARNESS_NAMES, THINKING, MODELS, NO_MODEL, ACTION_KEYS, PROMPT_KEYS, DEFAULT_PROFILE, STORE_VERSION, PROMPT_MAX, PROMPT_TOKEN, PROMPT_LIST_TOKEN, PROMPT_TOKENS, PROMPT_LABELS, validateProfile, normalizeProfile, validatePrompt, validatePromptTemplate, expandPrompt, expandNumbers, buildLaunch, storePath, emptyStore, parseStore, serializeStore, upsertProfile, removeProfile, assignProfile, resolveProfile, profileChoices, findChoice, setPrompt, resolvePrompt, modelChoices, addCustomModel, removeCustomModel, shellQuote, shellJoin, parseMccEnv };
+module.exports = { HARNESSES, HARNESS_NAMES, THINKING, MODELS, NO_MODEL, ACTION_KEYS, PROMPT_KEYS, DEFAULT_PROFILE, STORE_VERSION, PROMPT_MAX, PROMPT_TOKEN, PROMPT_LIST_TOKEN, PROMPT_TOKENS, PROMPT_LABELS, validateProfile, normalizeProfile, validatePrompt, validatePromptTemplate, expandPrompt, expandNumbers, buildLaunch, buildCheck, listsModel, storePath, emptyStore, parseStore, serializeStore, upsertProfile, removeProfile, assignProfile, resolveProfile, profileChoices, findChoice, setPrompt, resolvePrompt, modelChoices, addCustomModel, removeCustomModel, shellQuote, shellJoin, parseMccEnv };
