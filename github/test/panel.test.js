@@ -1191,7 +1191,7 @@ test("s opens the profiles; a new profile is typed, saved and assigned, then use
   }));
   assert.equal(exit, null, "a key in the form closed the panel");
   assert.equal(ui.settings.mode, "edit");
-  assert.deepEqual({ ...ui.settings.form, prev: undefined }, { prev: undefined, name: "Quick job", id: "qj", harness: "codex", model: "gpt-6.1-sol", thinking: "low", saved: "", adding: null });
+  assert.deepEqual({ ...ui.settings.form, prev: undefined }, { prev: undefined, name: "Quick job", id: "qj", harness: "codex", model: "gpt-6.1-sol", thinking: "low", args: "", saved: "", adding: null });
   lines = screen(() => onInput(Buffer.from("\r")));
   assert.equal(ui.settings.mode, "list");
   assert.ok(lines.some((l) => l?.includes("Saved Quick job")), lines.join("\n"));
@@ -1288,7 +1288,7 @@ test("a store changed elsewhere since it was read isn't overwritten", (t) => {
 
 test("a corrupt or newer store is shown read only, and actions use the default", async (t) => {
   const dir = home(t, { ".claude/skills/issue-resolver/SKILL.md": "x" });
-  for (const bad of ["{ not json", JSON.stringify({ version: 5, profiles: [], assign: {} })]) {
+  for (const bad of ["{ not json", JSON.stringify({ version: 6, profiles: [], assign: {} })]) {
     const file = useProfiles(dir, []);
     fs.writeFileSync(file, bad);
     setupGitHub("issues");
@@ -1579,11 +1579,11 @@ test("at 28, 30 and 40 cells the profiles show each warning, note and question w
     assert.ok(lines.at(-1).trimEnd().endsWith("esc back"), `${cols}:\n${lines.join("\n")}`);
     at(() => onInput(Buffer.from("\x1b")));
 
-    // A file from another version: 1 to 4 are read (2 since #20's prompts, 3 since #24's models, 4 since #31's Auto-pilot prompt).
-    fs.writeFileSync(useProfiles(dir, []), JSON.stringify({ version: 5, profiles: [], assign: {} }));
+    // A file from another version: 1 to 5 are read (2 since #20's prompts, 3 since #24's models, 4 since #31's Auto-pilot prompt, 5 since #48's args).
+    fs.writeFileSync(useProfiles(dir, []), JSON.stringify({ version: 6, profiles: [], assign: {} }));
     setupGitHub("issues");
     lines = at(() => onInput(Buffer.from("s")));
-    assert.ok(shows(lines, "The profiles file is version 5, not 1, 2, 3 or 4: it is read only here"), `${cols}:\n${lines.join("\n")}`);
+    assert.ok(shows(lines, "The profiles file is version 6, not 1, 2, 3, 4 or 5: it is read only here"), `${cols}:\n${lines.join("\n")}`);
     at(() => onInput(Buffer.from("\x1b")));
 
     // A 40-character name in what a change did, and in the delete question.
@@ -4021,12 +4021,12 @@ test("a model that breaks the MODEL rule, or is already offered, isn't added; - 
 test("a model isn't added to a read-only file, or over a change made elsewhere", (t) => {
   const dir = home(t);
   // Read only: from a newer version, the file kept as it is.
-  const newer = JSON.stringify({ version: 5, profiles: [], assign: {} });
+  const newer = JSON.stringify({ version: 6, profiles: [], assign: {} });
   fs.writeFileSync(useProfiles(dir, []), newer);
   setupGitHub("issues");
   screen(() => onInput(Buffer.from("sn" + TO_MODEL)));
   let lines = screen(() => onInput(Buffer.from("+mine\r")));
-  assert.ok(shows(lines, "Not saved: The profiles file is version 5, not 1, 2, 3 or 4: it is read only here"), lines.join("\n"));
+  assert.ok(shows(lines, "Not saved: The profiles file is version 6, not 1, 2, 3, 4 or 5: it is read only here"), lines.join("\n"));
   assert.equal(fs.readFileSync(storeFile(), "utf8"), newer);
   assert.equal(ui.settings.form.adding, "mine");
   screen(() => onInput(Buffer.from("\x1b\x1b\x1b")));

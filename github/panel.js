@@ -1195,7 +1195,9 @@ function agentOf(proc) {
 // mcc, which runs from its full path: Mistral Vibe's is `vibe <prompt>`, or
 // `env VIBE_ACTIVE_MODEL=M vibe <prompt>` with a model, and OpenCode's with a
 // model `env OPENCODE_CONFIG_CONTENT={"model":"M"} opencode --standalone --prompt <prompt>`,
-// and Devin's `devin [--model M] -- <prompt>`.
+// and Devin's `devin [--model M] -- <prompt>`. A profile's own launch arguments
+// (#48) are in the plan already, after its model and thinking flags: in extraArgs,
+// or in the command before the prompt (before Devin's -- and OpenCode's --prompt).
 function agentArgv(plan, prompt, mcc = "mcc") {
   if (plan.mode === "command") return plan.argv[0] === "mcc" ? [mcc, ...plan.argv.slice(1)] : plan.argv.slice();
   if (plan.kind === "opencode") return ["opencode", ...plan.extraArgs, "--prompt", prompt];
@@ -1752,13 +1754,15 @@ function paint(out, rows) {
 // was read.
 
 // `word` is how the profiles module names the field in its reasons ("Model: …").
-// A field with `max` is text; one without is a choice.
+// A field with `max` is text; one without is a choice. Args (#48) is the profile's
+// own launch arguments as one line, its words split on spaces.
 const FIELDS = [
   { key: "name", label: "Name", word: "Name", max: 40 },
   { key: "id", label: "Id", word: "Id", max: 32, hint: "a-z 0-9 -" },
   { key: "harness", label: "Harness", word: "Harness" },
   { key: "model", label: "Model", word: "Model" },
   { key: "thinking", label: "Thinking", word: "Thinking" },
+  { key: "args", label: "Args", word: "Args", max: 400, hint: "none" },
 ];
 const MODEL_FIELD = FIELDS.findIndex((f) => f.key === "model");
 // How long a model you add can be, as the profiles module's MODEL rule allows.
@@ -1872,7 +1876,7 @@ function editProfile(p) {
   // `saved` is the profile's model when its harness doesn't offer it, so it stays
   // a choice; `adding` is the model being typed after +.
   const saved = p?.model && !P.modelChoices(st.store, p.harness).includes(p.model) ? p.model : "";
-  st.form = { prev: p?.id ?? null, name: p?.name ?? "", id: p?.id ?? "", harness: p?.harness ?? "mcc", model: p?.model ?? "", thinking: p?.thinking ?? "", saved, adding: null };
+  st.form = { prev: p?.id ?? null, name: p?.name ?? "", id: p?.id ?? "", harness: p?.harness ?? "mcc", model: p?.model ?? "", thinking: p?.thinking ?? "", args: (p?.args ?? []).join(" "), saved, adding: null };
   Object.assign(st, { mode: "edit", field: 0, scroll: 0, error: null, fieldErrors: {}, info: null });
   draw();
 }
@@ -1885,7 +1889,9 @@ function saveForm() {
     addModel();
     if (f.adding !== null) return;
   }
-  const profile = { id: f.id, name: f.name.trim(), harness: f.harness, model: f.model, thinking: f.thinking };
+  // Args are split on spaces; with none, the profile has none and starts as before.
+  const args = f.args.split(/\s+/).filter(Boolean);
+  const profile = { id: f.id, name: f.name.trim(), harness: f.harness, model: f.model, thinking: f.thinking, ...(args.length ? { args } : {}) };
   change(() => {
     saveStore(P.upsertProfile(st.store, profile, f.prev));
     Object.assign(st, { mode: "list", form: null, promptSel: null });
@@ -1973,8 +1979,10 @@ async function testForm() {
     const found = [`${check.bin} runs${version ? ` (${version})` : ""}`];
     if (profile.harness === "mcc") found.push("mcc finds the Claude Code account for this repo");
     if (check.modelChecked) found.push(`it lists the model ${profile.model}`);
-    const later = [profile.model && !check.modelChecked && "model", profile.thinking && "thinking level"].filter(Boolean);
-    const unchecked = later.length ? ` Its ${later.join(" and ")} ${later.length > 1 ? "are" : "is"} checked only when it starts.` : "";
+    // Test doesn't run the profile's own launch arguments (#48): the agent reads them as it starts.
+    const later = [profile.model && !check.modelChecked && "model", profile.thinking && "thinking level", form.args.trim() && "args"].filter(Boolean);
+    const named = later.length > 1 ? `${later.slice(0, -1).join(", ")} and ${later.at(-1)}` : later[0];
+    const unchecked = later.length ? ` Its ${named} ${later.length > 1 || named === "args" ? "are" : "is"} checked only when it starts.` : "";
     if (failed) testSays(st, profile, { error: `Test failed: ${failed}` });
     else testSays(st, profile, { info: `Test passed: ${found.join(", and ")}. Nothing was saved.${unchecked}` });
   }

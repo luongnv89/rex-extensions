@@ -19,6 +19,9 @@
 // Ahead of herdr-github too: the Devin harness ("devin", Cognition's Devin CLI). It
 // runs as a command, `devin [--model M] -- <prompt>`, since herdr has no agent kind
 // for it; its Test lists models with `devin models list`.
+// Ahead of herdr-github too (#48): a profile's own launch arguments (args, ARGS_*,
+// validateArgs), which buildLaunch puts after its model and thinking flags, and
+// store version 5 that holds them.
 "use strict";
 
 // Agent profiles for the Resolve and Review actions: which harness starts, with
@@ -92,10 +95,10 @@ const DEFAULT_PROFILE = Object.freeze({ id: "default", name: "Claude Code via mc
 
 // The newest store version this reads and writes. A store is written in the
 // lowest version that holds it: 1 without custom prompts or models, 2 with custom
-// prompts, 3 with custom models, 4 with a custom Auto-pilot prompt. So an older
-// panel keeps using it until then.
-const STORE_VERSION = 4;
-const READS = [1, 2, 3, 4];
+// prompts, 3 with custom models, 4 with a custom Auto-pilot prompt, 5 with a
+// profile's own launch arguments (#48). So an older panel keeps using it until then.
+const STORE_VERSION = 5;
+const READS = [1, 2, 3, 4, 5];
 
 const ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const NAME = /^[^\x00-\x1f\x7f-\x9f\u2028\u2029]{1,40}$/;
@@ -119,6 +122,13 @@ const PROMPT_TOKENS = { resolve: PROMPT_TOKEN, review: PROMPT_TOKEN, autopilot: 
 // A custom prompt's field, as the views name it and its reasons start ("Resolve prompt: …").
 const PROMPT_LABELS = { resolve: "Resolve prompt", review: "Review prompt", autopilot: "Auto-pilot prompt" };
 const ALL_LEVELS = [...new Set(Object.values(THINKING).flat())];
+// A profile's own launch arguments (#48): a list of words, each passed to the
+// harness as it is, after the profile's model and thinking flags. No shell reads
+// them, so quotes and = are just characters. A word can't hold a space (the form
+// splits on them), anything PROMPT_BAD refuses, or be -- on its own: mcc run and
+// Devin take what follows -- as the agent's, or as the prompt.
+const ARGS_MAX_WORDS = 16;
+const ARGS_WORD_MAX = 200;
 
 const blank = (v) => v === undefined || v === null || v === "";
 
@@ -139,14 +149,36 @@ function validateProfile(p) {
       errors.push(allowed.length ? `Thinking: one of ${allowed.join(", ")}` : "Thinking: not available for this harness");
     }
   }
+  if (p.args !== undefined && p.args !== null) errors.push(...validateArgs(p.args));
   return errors;
 }
 
-// The profile's own fields, with an empty model or thinking level left out.
+// Why a profile's launch arguments can't be used, as a list of reasons each
+// starting "Args: "; empty when they can. A word is named by its place, never
+// quoted: one read from the file may hold anything.
+function validateArgs(args) {
+  if (!Array.isArray(args)) return ["Args: must be a list of words"];
+  const errors = [];
+  if (args.length > ARGS_MAX_WORDS) errors.push(`Args: at most ${ARGS_MAX_WORDS} words`);
+  args.forEach((w, i) => {
+    const at = `Args: word ${i + 1}`;
+    if (typeof w !== "string") errors.push(`${at} must be text`);
+    else if (!w) errors.push(`${at} is empty`);
+    else if (PROMPT_BAD.test(w) || /\s/u.test(w)) errors.push(`${at} has a space, a control or invisible character, a line break or a backslash`);
+    else if (w === "--") errors.push(`${at} is --, which would move the prompt: leave it out`);
+    else if ([...w].length > ARGS_WORD_MAX) errors.push(`${at} is longer than ${ARGS_WORD_MAX} characters`);
+  });
+  return errors;
+}
+
+// The profile's own fields, with an empty model, thinking level or list of
+// launch arguments left out. Arguments that aren't a list are kept, so
+// validateProfile refuses them rather than they quietly go.
 function normalizeProfile(p) {
   const out = { id: p.id, name: p.name, harness: p.harness };
   if (!blank(p.model)) out.model = p.model;
   if (!blank(p.thinking)) out.thinking = p.thinking;
+  if (p.args !== undefined && p.args !== null && !(Array.isArray(p.args) && !p.args.length)) out.args = Array.isArray(p.args) ? [...p.args] : p.args;
   return out;
 }
 
@@ -217,12 +249,15 @@ function expandNumbers(template, numbers) {
 //     Its prompt must follow --: Devin reads a word before it as a path to open
 //     in Devin Desktop, and stops when there is none.
 // An empty model or thinking level adds no flag: the harness's own default holds.
+// The profile's own launch arguments (#48) go right after the model and thinking
+// flags, each one word, and before the prompt: before Devin's -- and OpenCode's
+// --prompt, and after vibe and env's variable. With none, nothing changes.
 function buildLaunch(profile, prompt) {
   const errors = validateProfile(profile);
   if (errors.length) throw new Error(`Invalid profile: ${errors.join("; ")}`);
   const bad = validatePrompt(prompt);
   if (bad.length) throw new Error(`Invalid prompt: ${bad.join("; ")}`);
-  const { harness } = profile, model = profile.model || "", thinking = profile.thinking || "";
+  const { harness } = profile, model = profile.model || "", thinking = profile.thinking || "", args = profile.args ?? [];
   const flags = [], warnings = [];
   if (harness === "mcc" || harness === "claude") {
     if (model) flags.push("--model", model);
@@ -239,12 +274,13 @@ function buildLaunch(profile, prompt) {
     // The consequence first: a notice cut short in a narrow pane still says it.
     warnings.push("OpenCode ignores this profile's thinking level: it has no flag for it when it starts");
   }
+  flags.push(...args);
   if (harness === "mcc") return { mode: "command", argv: ["mcc", "run", "--", ...flags, prompt], warnings };
   if (harness === "devin") return { mode: "command", argv: ["devin", ...flags, "--", prompt], warnings };
-  if (harness === "vibe") return { mode: "command", argv: [...(model ? ["env", `VIBE_ACTIVE_MODEL=${model}`] : []), "vibe", prompt], warnings };
+  if (harness === "vibe") return { mode: "command", argv: [...(model ? ["env", `VIBE_ACTIVE_MODEL=${model}`] : []), "vibe", ...flags, prompt], warnings };
   if (harness === "opencode" && model) {
     const config = `OPENCODE_CONFIG_CONTENT=${JSON.stringify({ model })}`;
-    return { mode: "command", argv: ["env", config, "opencode", "--standalone", "--prompt", prompt], warnings };
+    return { mode: "command", argv: ["env", config, "opencode", "--standalone", ...flags, "--prompt", prompt], warnings };
   }
   return { mode: "agent", kind: harness, extraArgs: flags, warnings };
 }
@@ -308,7 +344,9 @@ function listsModel(harness, text, model) {
 //   "customModels": { harness: [model, …], … }
 // With a custom Auto-pilot prompt, it is version 4: as version 3, its prompts also
 // holding "autopilot": template | null (#31).
-// A panel from before version 2 (or 3, or 4) shows such a file read only, so never loses them.
+// With a profile's own launch arguments, it is version 5: as version 4, a profile
+// also holding "args": [word, …] (#48).
+// A panel from before version 2 (or 3, 4 or 5) shows such a file read only, so never loses them.
 
 // Rex's own file, on the machine where the Rex server runs. One fixed path under
 // home, whatever the environment says, so it is always the same file.
@@ -406,7 +444,9 @@ function parseStore(text) {
 // with its prompts. With a custom model, version 3, with its prompts and custom
 // models (each harness that has some, in HARNESSES order). With a custom Auto-pilot
 // prompt, version 4, as version 3 with it among the prompts: no lower version ever
-// holds one, so a panel that can't run it never drops it by saving (#31).
+// holds one, so a panel that can't run it never drops it by saving (#31). With a
+// profile's own launch arguments, version 5, as version 4 with them in their
+// profiles, for the same reason (#48).
 function serializeStore(store) {
   const profiles = (store?.profiles ?? []).map(normalizeProfile);
   const assign = {}, prompts = {}, customModels = {};
@@ -419,7 +459,8 @@ function serializeStore(store) {
     if (names.length) customModels[harness] = names;
   }
   const autopilot = resolvePrompt(store, "autopilot");
-  const data = autopilot !== null ? { version: 4, profiles, assign, prompts: { ...prompts, autopilot }, customModels }
+  const data = profiles.some((p) => p.args) ? { version: 5, profiles, assign, prompts: { ...prompts, autopilot }, customModels }
+    : autopilot !== null ? { version: 4, profiles, assign, prompts: { ...prompts, autopilot }, customModels }
     : Object.keys(customModels).length ? { version: 3, profiles, assign, prompts, customModels }
     : ACTION_KEYS.some((a) => prompts[a] !== null) ? { version: 2, profiles, assign, prompts } : { version: 1, profiles, assign };
   return `${JSON.stringify(data, null, 2)}\n`;
@@ -575,4 +616,4 @@ function parseMccEnv(text, home) {
   return null;
 }
 
-module.exports = { HARNESSES, HARNESS_NAMES, THINKING, MODELS, NO_MODEL, ACTION_KEYS, PROMPT_KEYS, DEFAULT_PROFILE, STORE_VERSION, PROMPT_MAX, PROMPT_TOKEN, PROMPT_LIST_TOKEN, PROMPT_TOKENS, PROMPT_LABELS, validateProfile, normalizeProfile, validatePrompt, validatePromptTemplate, expandPrompt, expandNumbers, buildLaunch, buildCheck, listsModel, storePath, emptyStore, parseStore, serializeStore, upsertProfile, removeProfile, assignProfile, resolveProfile, profileChoices, findChoice, setPrompt, resolvePrompt, modelChoices, addCustomModel, removeCustomModel, shellQuote, shellJoin, parseMccEnv };
+module.exports = { HARNESSES, HARNESS_NAMES, THINKING, MODELS, NO_MODEL, ACTION_KEYS, PROMPT_KEYS, DEFAULT_PROFILE, STORE_VERSION, ARGS_MAX_WORDS, ARGS_WORD_MAX, PROMPT_MAX, PROMPT_TOKEN, PROMPT_LIST_TOKEN, PROMPT_TOKENS, PROMPT_LABELS, validateProfile, validateArgs, normalizeProfile, validatePrompt, validatePromptTemplate, expandPrompt, expandNumbers, buildLaunch, buildCheck, listsModel, storePath, emptyStore, parseStore, serializeStore, upsertProfile, removeProfile, assignProfile, resolveProfile, profileChoices, findChoice, setPrompt, resolvePrompt, modelChoices, addCustomModel, removeCustomModel, shellQuote, shellJoin, parseMccEnv };

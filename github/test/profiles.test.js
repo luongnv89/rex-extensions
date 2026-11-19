@@ -203,11 +203,12 @@ test("parseStore: no file is empty; bad JSON or another version is read only", (
     assert.deepEqual(r.store, P.emptyStore());
     assert.match(r.warnings[0], /isn't valid JSON/);
   }
-  // Version 2 holds custom prompts (#20), version 3 custom models (#24) and
-  // version 4 the Auto-pilot prompt (#31), and all are read; a newer one is read only.
-  const newer = P.parseStore(JSON.stringify({ version: 5, profiles: [ok({ harness: "pi" })], assign: { resolve: "p" } }));
+  // Version 2 holds custom prompts (#20), version 3 custom models (#24), version 4
+  // the Auto-pilot prompt (#31) and version 5 a profile's args (#48), and all are
+  // read; a newer one is read only.
+  const newer = P.parseStore(JSON.stringify({ version: 6, profiles: [ok({ harness: "pi" })], assign: { resolve: "p" } }));
   assert.equal(newer.readOnly, true);
-  assert.equal(newer.warnings[0], "The profiles file is version 5, not 1, 2, 3 or 4: it is read only here");
+  assert.equal(newer.warnings[0], "The profiles file is version 6, not 1, 2, 3, 4 or 5: it is read only here");
   assert.equal(P.resolveProfile(newer.store, "resolve").harness, "pi");
 });
 
@@ -244,9 +245,9 @@ test("parseStore skips bad, duplicate and reserved profiles, drops a missing ass
   const notList = P.parseStore(JSON.stringify({ version: 1, profiles: { a: 1 } }));
   assert.equal(notList.readOnly, true);
   assert.match(notList.warnings[0], /read only here/);
-  // Another version says so first, and only once (version 2 is read since #20, 3 since #24, 4 since #31).
-  const both = P.parseStore(JSON.stringify({ version: 5, profiles: ["x"] }));
-  assert.match(both.warnings[0], /version 5/);
+  // Another version says so first, and only once (version 2 is read since #20, 3 since #24, 4 since #31, 5 since #48).
+  const both = P.parseStore(JSON.stringify({ version: 6, profiles: ["x"] }));
+  assert.match(both.warnings[0], /version 6/);
   assert.ok(!both.warnings.some((w) => /fix or remove them/.test(w)));
   // What it writes, it reads back the same.
   const again = P.parseStore(P.serializeStore(store));
@@ -365,7 +366,7 @@ test("prompts: version 1 without them, version 2 with them, and a bad one makes 
   assert.match(r.warnings[0], /Some profiles in the file can't be used/);
   assert.ok(!r.warnings.some((w) => /A prompt in the file/.test(w)));
   // A newer version is read only, with its prompts still read.
-  r = hand({ resolve: "Go {number}" }, 5);
+  r = hand({ resolve: "Go {number}" }, 6);
   assert.equal(r.readOnly, true);
   assert.equal(r.store.prompts.resolve, "Go {number}");
 });
@@ -631,10 +632,11 @@ test("a hand-edited Auto-pilot prompt it can't use is skipped and makes the file
   assert.equal(r.store.prompts.autopilot, null);
   r = hand({ autopilot: " Go {numbers} " });
   assert.deepEqual(r, { store: { ...P.emptyStore(), prompts: { resolve: null, review: null, autopilot: "Go {numbers}" } }, warnings: [], readOnly: false });
-  // Version 4 is read; 5 is newer, read only.
+  // Version 4 is read, and 5 since #48; 6 is newer, read only.
   assert.equal(hand({}, 4).readOnly, false);
-  assert.equal(hand({}, 5).readOnly, true);
-  assert.equal(P.STORE_VERSION, 4);
+  assert.equal(hand({}, 5).readOnly, false);
+  assert.equal(hand({}, 6).readOnly, true);
+  assert.equal(P.STORE_VERSION, 5);
 });
 
 test("buildCheck names the commands that check a profile can start: --version, mcc's account, and Pi's or OpenCode's models (#43)", () => {
