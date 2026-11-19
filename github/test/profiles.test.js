@@ -86,6 +86,20 @@ test("Mistral Vibe runs as a command, its model in VIBE_ACTIVE_MODEL, with no th
   for (const model of ["a=b", "a b", "-x"]) assert.ok(P.validateProfile(ok({ harness: "vibe", model })).some((e) => e.startsWith("Model")), model);
 });
 
+test("Devin runs as a command, its model after --model and its prompt after --, with no thinking levels", () => {
+  // herdr has no agent kind for Devin, and it reads a word before -- as a path to open in Devin Desktop.
+  assert.deepEqual(P.buildLaunch(ok({ harness: "devin", model: "claude-opus-5.5" }), PROMPT),
+    { mode: "command", argv: ["devin", "--model", "claude-opus-5.5", "--", PROMPT], warnings: [] });
+  assert.deepEqual(P.buildLaunch(ok({ harness: "devin" }), PROMPT), { mode: "command", argv: ["devin", "--", PROMPT], warnings: [] });
+  assert.equal(P.HARNESS_NAMES.devin, "Devin");
+  assert.deepEqual(P.THINKING.devin, []);
+  // Its thinking level is part of the model's name: the profile takes none.
+  for (const thinking of ["high", "off", "max"]) {
+    assert.deepEqual(P.validateProfile(ok({ harness: "devin", thinking })), ["Thinking: not available for this harness"], thinking);
+  }
+  assert.deepEqual(P.validateProfile(ok({ harness: "devin", model: "claude-opus-5-5-high" })), []);
+});
+
 test("buildLaunch checks its own input and throws on a bad profile or prompt", () => {
   for (const bad of ["$(id)", "a;id", "a`id`", "a'b", "a\nb", "a b"]) {
     for (const harness of P.HARNESSES) {
@@ -414,6 +428,10 @@ test("MODELS: a short list of valid model names for each harness, none built in 
   for (const h of ["mcc", "claude"]) for (const m of ["fable", "opus", "sonnet", "haiku", "claude-opus-5-5"]) assert.ok(P.MODELS[h].includes(m), `${h} ${m}`);
   assert.deepEqual(P.MODELS.vibe, ["mistral-large-4-0-3", "mistral-medium-3.5", "glm-5-3", "zai-glm-5-3-flash"]);
   assert.ok(P.MODELS.pi.every((m) => m.includes("/")), "pi takes provider/id");
+  // Devin's family names, not its short aliases, which name older models, nor
+  // `adaptive`, which routes each request to a model Devin picks (#49).
+  for (const m of ["swe-2", "claude-opus-5.5", "claude-fable-5.2"]) assert.ok(P.MODELS.devin.includes(m), `devin ${m}`);
+  for (const m of ["opus", "sonnet", "fable", "gpt", "adaptive"]) assert.ok(!P.MODELS.devin.includes(m), `devin ${m}`);
 });
 
 test("modelChoices: the built-in models, then the ones you added, each once", () => {
@@ -633,6 +651,10 @@ test("buildCheck names the commands that check a profile can start: --version, m
   assert.deepEqual(steps({ harness: "pi", model: "anthropic/claude-opus-5-5" }), ["version --version", "models --list-models"]);
   assert.deepEqual(steps({ harness: "opencode", model: "opencode/big-pickle" }), ["version --version", "models models"]);
   assert.equal(P.buildCheck({ harness: "opencode", model: "opencode/big-pickle" }).modelChecked, true);
+  // Devin lists its models in-process, so the Test starts no background daemon.
+  assert.deepEqual(steps({ harness: "devin" }), ["version --version"]);
+  assert.deepEqual(steps({ harness: "devin", model: "swe-2" }), ["version --version", "models models list --process-model in-process"]);
+  assert.deepEqual([P.buildCheck({ harness: "devin", model: "swe-2" }).bin, P.buildCheck({ harness: "devin", model: "swe-2" }).modelChecked], ["devin", true]);
   // Only the harness, model and thinking level are checked: a profile with no name or id yet can be tested.
   assert.doesNotThrow(() => P.buildCheck({ id: "", name: "", harness: "claude" }));
 });
@@ -666,4 +688,35 @@ test("listsModel finds a model in OpenCode's and Pi's model lists, and nothing e
   assert.equal(P.listsModel("pi", pi, ""), false);
   assert.equal(P.listsModel("opencode", null, "openai/gpt-5.5"), false);
   assert.equal(P.listsModel("codex", "gpt-5.5\n", "gpt-5.5"), false);
+});
+
+test("listsModel finds a Devin family, alias or model's own name in `devin models list`", () => {
+  // As Devin 3000.14 prints it, cut short.
+  const devin = [
+    "Available models (54 families)",
+    "",
+    "Adaptive (adaptive)",
+    "  adaptive                                     Adaptive  [$0.5 / 1M Input · $2 / 1M Output]",
+    "",
+    "SWE-2 (swe-2)",
+    "  aliases: swe",
+    "  swe-2-high                                   SWE-2 High  [262K context, Free]",
+    "",
+    "Claude Opus 5.5 (claude-opus-5.5)",
+    "  claude-opus-5-5-high                         Claude Opus 5.5 High  [1M context, $4 / 1M Input]",
+    "",
+    "Claude Sonnet 5 (claude-sonnet-5)",
+    "  aliases: claude, sonnet",
+    "  claude-sonnet-5-medium                       Claude Sonnet 5 Medium  [1M context, $3 / 1M Input]",
+    "",
+    "Pass a family slug, alias, or model UID to `--model` (e.g. `--model opus`)",
+    "or switch models in a session with `/model <name>`.",
+  ].join("\n");
+  for (const m of ["adaptive", "swe-2", "swe", "swe-2-high", "claude-opus-5.5", "claude-opus-5-5-high", "claude", "sonnet", "claude-sonnet-5-medium"]) {
+    assert.equal(P.listsModel("devin", devin, m), true, m);
+  }
+  // Not a heading's words, a description, or what the closing hint names.
+  for (const m of ["Adaptive", "SWE-2", "aliases:", "Claude", "opus", "claude-opus-5-5", "claude-opus", ""]) {
+    assert.equal(P.listsModel("devin", devin, m), false, m);
+  }
 });

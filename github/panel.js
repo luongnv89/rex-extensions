@@ -1001,10 +1001,12 @@ const claudeStyle = (kind) => kind === "claude" || kind === "mcc";
 // "plugin:name" when Claude has it only from a plugin; null when it isn't found.
 // Folders are checked for every kind, since a wrong "not installed" is the worse mistake.
 // `claudeDir` is the Claude Code config folder to look in: for mcc, the profile's
-// folder that `mcc env` reports; ~/.claude when it isn't given.
+// folder that `mcc env` reports; ~/.claude when it isn't given. Devin keeps its
+// own in ~/.config/devin, ~/.config/cognition and a repo's .devin or .cognition.
 function findSkill(kind, skill, root, claudeDir = null) {
   const home = os.homedir(), claude = claudeDir || path.join(home, ".claude");
-  const folders = [".claude", ".agents", ".codex", `.${kind}`].flatMap((d) => [path.join(home, d, "skills"), ...(root ? [path.join(root, d, "skills")] : [])]);
+  const folders = [".claude", ".agents", ".codex", ".cognition", `.${kind}`].flatMap((d) => [path.join(home, d, "skills"), ...(root ? [path.join(root, d, "skills")] : [])]);
+  folders.push(...["devin", "cognition"].map((d) => path.join(home, ".config", d, "skills")));
   if (claudeStyle(kind)) folders.push(path.join(claude, "skills"));
   if (folders.some((f) => readable(path.join(f, skill, "SKILL.md")))) return skill;
   if (!claudeStyle(kind)) return null;
@@ -1165,7 +1167,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // The agents the panel recognizes in a pane, by the name you run them with: the
 // new pane goes to the right of yours. Which agent starts is the profile's, not this list's.
-const AGENT_NAMES = ["claude", "codex", "gemini", "opencode", "pi", "vibe"];
+const AGENT_NAMES = ["claude", "codex", "gemini", "opencode", "pi", "vibe", "devin"];
 // Agents whose running program has another name than the command: `vibe` is a
 // Python script that runs Mistral Vibe's own binary, vibe-rs.
 const AGENT_ALIASES = { "vibe-rs": "vibe" };
@@ -1192,7 +1194,8 @@ function agentOf(proc) {
 // words as they are: no shell reads them. A command plan runs as it is, but for
 // mcc, which runs from its full path: Mistral Vibe's is `vibe <prompt>`, or
 // `env VIBE_ACTIVE_MODEL=M vibe <prompt>` with a model, and OpenCode's with a
-// model `env OPENCODE_CONFIG_CONTENT={"model":"M"} opencode --standalone --prompt <prompt>`.
+// model `env OPENCODE_CONFIG_CONTENT={"model":"M"} opencode --standalone --prompt <prompt>`,
+// and Devin's `devin [--model M] -- <prompt>`.
 function agentArgv(plan, prompt, mcc = "mcc") {
   if (plan.mode === "command") return plan.argv[0] === "mcc" ? [mcc, ...plan.argv.slice(1)] : plan.argv.slice();
   if (plan.kind === "opencode") return ["opencode", ...plan.extraArgs, "--prompt", prompt];
