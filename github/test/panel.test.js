@@ -5464,6 +5464,32 @@ test("the form's Args are typed, saved, edited and cleared, and their reason sho
   screen(() => key("\x1b\x1b"));
 });
 
+test("Args too long for a narrow pane show their end while typed in, and their start once you leave them (#48)", (t) => {
+  claudeHome(t);
+  setupGitHub("issues");
+  screen(() => key("s"));
+  screen(() => key("je"));
+  const row = (lines, mark) => lines.find((l) => (l ?? "").startsWith(`${mark} Args`));
+  // At 40 cells the value column is 29: the last 27 cells after "…", then the cursor.
+  const typed = "--dangerously-skip-permissions --verbose --model-x";
+  let lines = screenAt(40, 30, () => key(`\x1b[A${typed}`));
+  assert.equal(ui.settings.form.args, typed);
+  for (const l of lines) assert.ok(width(l ?? "") <= 40, l);
+  assert.equal(row(lines, "▌"), `▌ Args     …${typed.slice(-27)} `, lines.join("\n"));
+  // Each key typed or taken away shows at once, wide characters included.
+  lines = screenAt(40, 30, () => key("1"));
+  assert.ok(row(lines, "▌").endsWith("--model-x1 "), lines.join("\n"));
+  lines = screenAt(40, 30, () => key("\x7f\x7f"));
+  assert.ok(row(lines, "▌").endsWith("--model- "), lines.join("\n"));
+  lines = screenAt(40, 30, () => key(" 日本語"));
+  assert.ok(row(lines, "▌").endsWith("--model- 日本語 "), lines.join("\n"));
+  for (const l of lines) assert.ok(width(l ?? "") <= 40, l);
+  // Left, the field shows its start again, cut with "…" and no cursor.
+  lines = screenAt(40, 30, () => key("\x1b[B"));
+  assert.equal(row(lines, " "), `  Args     ${typed.slice(0, 27)}…`, lines.join("\n"));
+  screen(() => key("\x1b\x1b"));
+});
+
 test("a profile's args reach the agent's command line, after its flags and before its prompt (#48)", async (t) => {
   const dir = home(t, { ".agents/skills/issue-resolver/SKILL.md": "x" });
   const use = "Use the issue-resolver skill on issue #12.";

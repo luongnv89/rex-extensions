@@ -72,6 +72,21 @@ function fit(text, max) {
   return out + "…";
 }
 
+// Keep the end, to `max` cells, starting with "…" when something was dropped: the
+// view of a text field you type at the end of.
+function tail(text, max) {
+  if (max <= 0) return "";
+  if (width(text) <= max) return text;
+  const chars = [...text];
+  let out = "", w = 0;
+  for (let i = chars.length - 1; i >= 0; i--) {
+    const cw = cellWidth(chars[i].codePointAt(0));
+    if (w + cw > max - 1) break;
+    out = chars[i] + out; w += cw;
+  }
+  return "…" + out;
+}
+
 // Word-wrap to at most `lines` lines of `max` cells; the last kept line ends in "…".
 function wrap(text, max, lines) {
   max = Math.max(2, max);
@@ -2307,7 +2322,8 @@ function settingsLines(cols, rows) {
       const adding = f.key === "model" ? st.form.adding : null;
       if (adding) shown = fit(adding, valueW - 1) + invert(" ");
       else if (adding !== null) shown = invert(" ") + dim(fit("new model name", valueW - 1));
-      else if (f.max && value) shown = fit(value, valueW - 1) + (on ? invert(" ") : "");
+      // Typing and backspace act at the end, so a field being typed in shows its end.
+      else if (f.max && value) shown = on ? tail(value, valueW - 1) + invert(" ") : fit(value, valueW - 1);
       else if (f.max && on) shown = invert(" ") + (f.key === "id" ? dim(fit(f.hint, valueW - 1)) : "");
       else if (f.max) shown = dim(fit(f.hint ?? "—", valueW));
       else {
