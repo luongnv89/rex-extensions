@@ -204,11 +204,11 @@ test("parseStore: no file is empty; bad JSON or another version is read only", (
     assert.match(r.warnings[0], /isn't valid JSON/);
   }
   // Version 2 holds custom prompts (#20), version 3 custom models (#24), version 4
-  // the Auto-pilot prompt (#31) and version 5 a profile's args (#48), and all are
+  // the Auto-pilot prompt (#31) and version 5 a profile's args (#48), version 6 button labels, and all are
   // read; a newer one is read only.
-  const newer = P.parseStore(JSON.stringify({ version: 6, profiles: [ok({ harness: "pi" })], assign: { resolve: "p" } }));
+  const newer = P.parseStore(JSON.stringify({ version: 7, profiles: [ok({ harness: "pi" })], assign: { resolve: "p" } }));
   assert.equal(newer.readOnly, true);
-  assert.equal(newer.warnings[0], "The profiles file is version 6, not 1, 2, 3, 4 or 5: it is read only here");
+  assert.equal(newer.warnings[0], "The profiles file is version 7, not 1, 2, 3, 4, 5 or 6: it is read only here");
   assert.equal(P.resolveProfile(newer.store, "resolve").harness, "pi");
 });
 
@@ -245,9 +245,9 @@ test("parseStore skips bad, duplicate and reserved profiles, drops a missing ass
   const notList = P.parseStore(JSON.stringify({ version: 1, profiles: { a: 1 } }));
   assert.equal(notList.readOnly, true);
   assert.match(notList.warnings[0], /read only here/);
-  // Another version says so first, and only once (version 2 is read since #20, 3 since #24, 4 since #31, 5 since #48).
-  const both = P.parseStore(JSON.stringify({ version: 6, profiles: ["x"] }));
-  assert.match(both.warnings[0], /version 6/);
+  // Another version says so first, and only once (version 2 is read since #20, 3 since #24, 4 since #31, 5 since #48, 6 since button labels).
+  const both = P.parseStore(JSON.stringify({ version: 7, profiles: ["x"] }));
+  assert.match(both.warnings[0], /version 7/);
   assert.ok(!both.warnings.some((w) => /fix or remove them/.test(w)));
   // What it writes, it reads back the same.
   const again = P.parseStore(P.serializeStore(store));
@@ -366,7 +366,7 @@ test("prompts: version 1 without them, version 2 with them, and a bad one makes 
   assert.match(r.warnings[0], /Some profiles in the file can't be used/);
   assert.ok(!r.warnings.some((w) => /A prompt in the file/.test(w)));
   // A newer version is read only, with its prompts still read.
-  r = hand({ resolve: "Go {number}" }, 6);
+  r = hand({ resolve: "Go {number}" }, 7);
   assert.equal(r.readOnly, true);
   assert.equal(r.store.prompts.resolve, "Go {number}");
 });
@@ -632,11 +632,12 @@ test("a hand-edited Auto-pilot prompt it can't use is skipped and makes the file
   assert.equal(r.store.prompts.autopilot, null);
   r = hand({ autopilot: " Go {numbers} " });
   assert.deepEqual(r, { store: { ...P.emptyStore(), prompts: { resolve: null, review: null, autopilot: "Go {numbers}" } }, warnings: [], readOnly: false });
-  // Version 4 is read, and 5 since #48; 6 is newer, read only.
+  // Version 4 is read, 5 since #48 and 6 since button labels; 7 is newer, read only.
   assert.equal(hand({}, 4).readOnly, false);
   assert.equal(hand({}, 5).readOnly, false);
-  assert.equal(hand({}, 6).readOnly, true);
-  assert.equal(P.STORE_VERSION, 5);
+  assert.equal(hand({}, 6).readOnly, false);
+  assert.equal(hand({}, 7).readOnly, true);
+  assert.equal(P.STORE_VERSION, 6);
 });
 
 test("buildCheck names the commands that check a profile can start: --version, mcc's account, and Pi's or OpenCode's models (#43)", () => {
@@ -875,8 +876,98 @@ test("args it can't use make their profile skipped and the file read only; a new
   assert.deepEqual(hand([]).store.profiles, [{ id: "a", name: "Profile", harness: "claude" }]);
   assert.equal(hand([]).readOnly, false);
   // A newer version is still read only, its args read.
-  const newer = hand(["--x"], 6);
+  const newer = hand(["--x"], 7);
   assert.equal(newer.readOnly, true);
-  assert.match(newer.warnings[0], /version 6, not 1, 2, 3, 4 or 5/);
+  assert.match(newer.warnings[0], /version 7, not 1, 2, 3, 4, 5 or 6/);
   assert.deepEqual(newer.store.profiles[0].args, ["--x"]);
+});
+
+// ── Button labels ───────────────────────────────────────────────────────────
+
+test("validateLabel takes one short printable line, and refuses what can't be drawn as it is", () => {
+  for (const good of ["Fix", "Security review", "Ship it 🚀", "Résoudre", "x".repeat(P.LABEL_MAX)]) assert.deepEqual(P.validateLabel(good), [], good);
+  assert.deepEqual(P.validateLabel(""), ["can't be empty"]);
+  assert.deepEqual(P.validateLabel("   "), ["can't be empty"]);
+  assert.deepEqual(P.validateLabel(" Fix"), ["no spaces at either end"]);
+  assert.deepEqual(P.validateLabel("x".repeat(P.LABEL_MAX + 1)), [`at most ${P.LABEL_MAX} characters`]);
+  for (const bad of ["a\x1b[2Jb", "a\nb", "a\tb", "a\\b", "a‮b", "a​b"]) {
+    assert.deepEqual(P.validateLabel(bad), ["no control, invisible or private-use characters, line breaks or backslashes"], JSON.stringify(bad));
+  }
+  assert.deepEqual(P.validateLabel(12), ["must be text"]);
+});
+
+test("setLabel keeps a label per button, trimmed, and empty goes back to the button's own name", () => {
+  let s = P.emptyStore();
+  for (const a of P.LABEL_KEYS) assert.equal(P.buttonLabel(s, a), P.DEFAULT_LABELS[a]);
+  s = P.setLabel(s, "resolve", "  Fix  ");
+  s = P.setLabel(s, "autopilot", "Fix all");
+  assert.deepEqual(s.labels, { resolve: "Fix", review: null, autopilot: "Fix all" });
+  assert.equal(P.buttonLabel(s, "resolve"), "Fix");
+  assert.equal(P.buttonLabel(s, "review"), "Review");
+  assert.equal(P.resolveLabel(s, "review"), null);
+  // The prompts and profiles are left as they are.
+  assert.deepEqual(s.prompts, P.emptyStore().prompts);
+  s = P.setLabel(s, "resolve", "");
+  assert.equal(P.resolveLabel(s, "resolve"), null);
+  s = P.setLabel(s, "autopilot", null);
+  assert.deepEqual(s.labels, { resolve: null, review: null, autopilot: null });
+  // Each reason starts with the field's name, for the editor to show under it.
+  assert.throws(() => P.setLabel(s, "review", "a\\b"), { message: "Review label: no control, invisible or private-use characters, line breaks or backslashes" });
+  assert.throws(() => P.setLabel(s, "autopilot", "x".repeat(30)), { message: `Auto-pilot label: at most ${P.LABEL_MAX} characters` });
+  assert.throws(() => P.setLabel(s, "merge", "x"), /No action merge/);
+  // A store from before labels has none: every button shows its name.
+  assert.equal(P.buttonLabel({ version: 1, profiles: [], assign: {} }, "resolve"), "Resolve");
+});
+
+test("serializeStore writes version 6 only with a label, a superset of version 5, and goes back down without", () => {
+  const base = P.upsertProfile(P.emptyStore(), { id: "a", name: "A", harness: "claude" });
+  const v1 = P.serializeStore(base);
+  // A label: version 6, holding everything, the labels last.
+  const labelled = P.setLabel(base, "review", "Security review");
+  const text = P.serializeStore(labelled);
+  assert.deepEqual(JSON.parse(text), {
+    version: 6, profiles: [{ id: "a", name: "A", harness: "claude" }], assign: { resolve: null, review: null },
+    prompts: { resolve: null, review: null, autopilot: null }, customModels: {}, labels: { resolve: null, review: "Security review", autopilot: null },
+  });
+  assert.deepEqual(Object.keys(JSON.parse(text)).at(-1), "labels");
+  // Read back as it was, and not read only.
+  const back = P.parseStore(text);
+  assert.equal(back.readOnly, false);
+  assert.deepEqual(back.warnings, []);
+  assert.deepEqual(back.store.labels, labelled.labels);
+  assert.equal(P.serializeStore(back.store), text);
+  // With args, prompts and models too: still version 6, holding them all.
+  let all = P.upsertProfile(labelled, { id: "a", name: "A", harness: "claude", args: ["--x"] }, "a");
+  all = P.setPrompt(P.setPrompt(all, "resolve", "Fix {number}"), "autopilot", "Go {numbers}");
+  all = P.addCustomModel(all, "claude", "my-model");
+  const full = JSON.parse(P.serializeStore(all));
+  assert.equal(full.version, 6);
+  assert.deepEqual(full.profiles[0].args, ["--x"]);
+  assert.deepEqual(full.prompts, { resolve: "Fix {number}", review: null, autopilot: "Go {numbers}" });
+  assert.deepEqual(full.customModels, { claude: ["my-model"] });
+  assert.deepEqual(full.labels, { resolve: null, review: "Security review", autopilot: null });
+  // Cleared, the file goes back to the version it was, byte for byte.
+  assert.equal(P.serializeStore(P.setLabel(labelled, "review", "")), v1);
+});
+
+test("a hand-edited label it can't use is skipped and makes the file read only; good ones are read", () => {
+  const hand = (labels, version = 6) => P.parseStore(JSON.stringify({ version, profiles: [], assign: {}, labels }));
+  for (const [labels, warning] of [
+    [{ resolve: "a\x1b[2Jb" }, "Skipped the Resolve label: no control, invisible or private-use characters, line breaks or backslashes"],
+    [{ review: 7 }, "Skipped the Review label: must be text"],
+    [{ autopilot: "x".repeat(40) }, `Skipped the Auto-pilot label: at most ${P.LABEL_MAX} characters`],
+  ]) {
+    const r = hand(labels);
+    assert.equal(r.readOnly, true, JSON.stringify(labels));
+    assert.deepEqual(r.store.labels, { resolve: null, review: null, autopilot: null });
+    assert.equal(r.warnings[0], "A button label in the file can't be used (see below), so it is read only here: fix or remove it to save");
+    assert.equal(r.warnings[1], warning);
+    assert.ok(!r.warnings.some((w) => w.includes("\x1b")), "a label from the file never reaches the screen");
+  }
+  const notObject = hand(["Fix"]);
+  assert.equal(notObject.readOnly, true);
+  assert.ok(notObject.warnings.includes("The profiles file's labels aren't an object"));
+  // Good ones are read trimmed; empty and null ones are no label.
+  const r = hand({ resolve: " Fix ", review: "", autopilot: null });
+  assert.deepEqual(r, { store: { ...P.emptyStore(), labels: { resolve: "Fix", review: null, autopilot: null } }, warnings: [], readOnly: false });
 });
