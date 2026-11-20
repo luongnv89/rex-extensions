@@ -1599,13 +1599,18 @@ function headerTools(cols, rows, autopilot) {
   tools.push({ icon: "⚙", label: "Settings", action: () => openSettings() });
   tools.push({ icon: "↻", label: "Refresh", action: () => refresh() });
   if (ui.repo?.url) tools.push({ icon: "↗", label: ui.forge?.name ?? "Open", action: () => openUrl(ui.repo.url) });
-  const bare = (t) => ` ${t.icon} `, labelled = (t) => ` ${t.icon} ${t.label} `;
+  const bare = (t) => ` ${t.icon} `;
+  // A label too long for the cells left beside the other buttons' bare icons is
+  // cut to them rather than dropped: its button still names itself, "☑ a very
+  // long na…", and one long label can't push every label off the line (#52).
+  const cut = tools.map((t, i) => fit(t.label, cols - tools.reduce((w, o, j) => w + (i === j ? 0 : width(bare(o))), 0) - width(` ${t.icon} `) - 1));
+  const labelled = (t, i) => ` ${t.icon} ${cut[i]} `;
   // How many lead with their label: the first one's padding lines its icon up with the repo's name.
   let n = rows >= TOOLS_MIN_ROWS ? tools.length : 0;
-  const used = () => tools.reduce((w, t, i) => w + width(i < n ? labelled(t) : bare(t)), 0);
-  while (n > 0 && used() > cols) n--;
+  const used = () => tools.reduce((w, t, i) => w + width(i < n ? labelled(t, i) : bare(t)), 0);
+  while (n > 0 && (used() > cols || !cut[n - 1])) n--;
   const out = tools.map((t, i) => {
-    const text = i < n ? labelled(t) : bare(t);
+    const text = i < n ? labelled(t, i) : bare(t);
     return { text, shown: t.on ? invert(accent(text)) : dim(text), action: t.action };
   });
   out.row = n > 0;

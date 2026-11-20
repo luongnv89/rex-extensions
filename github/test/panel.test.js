@@ -667,13 +667,14 @@ test("the header's buttons are labelled on a line of their own while they fit, b
     assert.equal(lines[TOOLS].trimEnd(), tools, `${cols}`);
     assert.ok(lines[TOOLS + 1].startsWith("─"), `${cols}`);
   }
-  // No room for even one label, or a pane too short to spare its list a line:
-  // the bare icons end line 0, and the rule follows it, as before labels.
-  for (const [cols, rows] of [[22, 24], [60, 11]]) {
-    const lines = header(cols, rows);
-    assert.match(lines[0], /☑ {2}⚙ {2}↻ {2}↗ $/, `${cols}x${rows}`);
-    assert.ok(lines[1].startsWith("─"), `${cols}x${rows}`);
-  }
+  // A label too long for the room beside the others' bare icons is cut to it
+  // before it drops: at 22 cells the ☑ still names itself (#52).
+  assert.equal(header(22, 24)[TOOLS].trimEnd(), " ☑ Auto-pil…  ⚙  ↻  ↗");
+  // A pane too short to spare its list a line: the bare icons end line 0, and
+  // the rule follows it, as before labels.
+  const short = header(60, 11);
+  assert.match(short[0], /☑ {2}⚙ {2}↻ {2}↗ $/);
+  assert.ok(short[1].startsWith("─"));
   assert.ok(!header(60, 12)[0].includes("⚙"), "12 lines are enough for the labelled line");
   // GitLab's ↗ names GitLab; no ☑ there.
   ui.forge = FORGES.gitlab;
@@ -5710,4 +5711,30 @@ test("a relabelled button is pressed where it's drawn: Resolve's opens its menu,
   assert.ok(cy > 0, lines.join("\n"));
   assert.ok(cx <= mx + 1 && cx + "Confirm merge #12".length >= mx + 1, `the second press misses Confirm merge:\n${lines.join("\n")}`);
   screen(() => key("\x1b"));
+});
+
+test("an Auto-pilot label at its longest stays on the header's ☑, cut to the room the other buttons' bare icons leave (#52)", (t) => {
+  const dir = home(t);
+  const label = "x".repeat(P.LABEL_MAX);
+  fs.writeFileSync(useProfiles(dir, [CC, CX]), JSON.stringify({
+    version: 6, profiles: [CC, CX], assign: {}, prompts: { resolve: null, review: null, autopilot: null }, customModels: {},
+    labels: { resolve: null, review: null, autopilot: label },
+  }));
+  setupGitHub("issues");
+  readStore();
+  // At the default 36 cells the 24-cell label can't sit beside three more
+  // buttons whole: it is cut to what their bare icons leave, not dropped, and
+  // the buttons keep their own line, so the repo's name keeps line 0.
+  const lines = screenAt(36, 24, draw);
+  for (const l of lines) assert.ok(width(l ?? "") <= 36, l);
+  assert.equal(lines[0].trimEnd(), " o/p", lines.join("\n"));
+  assert.equal(lines[TOOLS].trimEnd(), ` ☑ ${"x".repeat(22)}…  ⚙  ↻  ↗`, lines.join("\n"));
+  // A press on the label as it's cut still toggles the mode.
+  screenAt(36, 24, () => click(lines[TOOLS].indexOf("x") + 3, TOOLS));
+  assert.equal(ui.autopilot.on, true);
+  // Wide enough for Settings's label beside it, it comes back too.
+  const wider = screenAt(46, 24, draw);
+  assert.equal(wider[TOOLS].trimEnd(), ` ☑ ${label}  ⚙ Settings  ↻  ↗`, wider.join("\n"));
+  screenAt(46, 24, () => click(wider[TOOLS].indexOf("☑"), TOOLS));
+  assert.equal(ui.autopilot.on, false);
 });
