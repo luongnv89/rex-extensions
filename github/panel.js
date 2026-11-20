@@ -314,6 +314,10 @@ const ui = {
   // Between a paste's start and end marks, which can come in different chunks;
   // pasteCR when the last part ended in \r, so a \n starting the next is its \r\n.
   pasting: false, pasteCR: false,
+  // Your labels for the Resolve, Review and Auto-pilot buttons, as the profiles file
+  // held them when it was last read: { resolve, review, autopilot }, null for one
+  // that shows its own name. Kept here so a draw doesn't read the file.
+  labels: {},
 };
 // `--target BLOCK --cwd DIR`, as rex-github.lua passes them.
 function flags(argv) {
@@ -369,6 +373,8 @@ async function locate() {
 
 async function refresh() {
   if (ui.loading) return;
+  // The buttons' labels too, which Settings, or the app, may have changed.
+  try { readStore(); } catch {}
   // Numbered for the merge guard: a pull request merged after this began stays out of its answer (#13);
   // and for the close guard, the same for an issue closed (#27).
   const began = merges.begin(), closeBegan = closes.begin();
@@ -480,11 +486,14 @@ const ACTIONS = {
 };
 const isNumber = (n) => Number.isSafeInteger(n) && n > 0;
 
+// The text on an action's (or Auto-pilot's) button: your label, else its name.
+const labelOf = (key) => ui.labels[key] ?? P.DEFAULT_LABELS[key];
+
 // Both skills drive `gh`, so the action is offered on GitHub only.
 function actionFor(view, index = ui.sel[view]) {
   if (ui.forge !== FORGES.github) return null;
   const item = ui[view]?.[index];
-  return item && isNumber(item.number) ? { ...ACTIONS[view], number: item.number } : null;
+  return item && isNumber(item.number) ? { ...ACTIONS[view], label: labelOf(ACTIONS[view].key), number: item.number } : null;
 }
 
 // ── Auto-pilot (#31) ────────────────────────────────────────────────────────
@@ -508,7 +517,7 @@ function leaveAutopilot() {
 function dropAutopilot() {
   const n = ui.autopilot.on ? ui.autopilot.checked.size : 0;
   leaveAutopilot();
-  if (n) ui.notice = { tone: "info", text: `Left Auto-pilot: ${n} checked issue${n === 1 ? "" : "s"} unchecked.`, url: null };
+  if (n) ui.notice = { tone: "info", text: `Left ${labelOf(AUTOPILOT.key)}: ${n} checked issue${n === 1 ? "" : "s"} unchecked.`, url: null };
 }
 
 // Whether the mode is on. Every look at it keeps it true to the list: off where it
@@ -549,7 +558,7 @@ function toggleCheck(index) {
   draw();
 }
 
-const autopilotAction = (numbers) => ({ ...AUTOPILOT, numbers });
+const autopilotAction = (numbers) => ({ ...AUTOPILOT, label: labelOf(AUTOPILOT.key), profiles: labelOf("resolve"), numbers });
 
 // Start, or enter in the mode: nothing while no issue is checked. With only the
 // default profile it starts at once; with more, the profile menu opens at the
@@ -1083,7 +1092,13 @@ function readStore() {
   try { text = fs.readFileSync(file, "utf8"); } catch (e) { if (e.code !== "ENOENT") failed = e.message; }
   const parsed = P.parseStore(text);
   if (failed) { parsed.warnings.unshift(`Can't read ${file}: ${failed}`); parsed.readOnly = true; }
+  keepLabels(parsed.store);
   return { file, text, ...parsed };
+}
+
+// The buttons' labels from a store just read or saved, for the next draws.
+function keepLabels(store) {
+  ui.labels = Object.fromEntries(P.LABEL_KEYS.map((a) => [a, P.resolveLabel(store, a)]));
 }
 
 // A row's Resolve or Review button, and the a key, for the selected row. With only
@@ -1323,7 +1338,9 @@ function rowLines(item, selected, cols, icon, meta, trailing, action = null, mer
   const pad = " ".repeat(Math.max(0, room() - width(left)));
   lines.push(`${bar}   ${dim(left)}${pad}${parts.map((p) => " " + p.s).join("")}`);
   if (action) {
-    const label = ` ${fit(`${action.label} #${action.number}`, cols - 6)} `;
+    // A too-long label gives before the row's own #N does; the #N alone when nothing else fits.
+    const ref = ` #${action.number}`, room = cols - 6 - width(ref);
+    const label = ` ${room > 0 ? fit(action.label, room) + ref : fit(ref, cols - 6)} `;
     lines.hit = { line: lines.length, from: 4, to: 4 + width(label) };
     lines.push(`${bar}   ${invert(label)}`);
   }
@@ -1417,7 +1434,9 @@ function noticeLines(notice, cols, room) {
 // Each profile is its name, and what it starts when that fits beside it; the chosen
 // one is marked ▸. At most `cols` cells wide. Returns { width, lines: [{ text, entry }] }.
 function menuLines(m, cols, shown) {
-  const title = m.autopilot ? `Auto-pilot ${m.count} issue${m.count === 1 ? "" : "s"} with` : `${ACTIONS[m.view].label} #${m.number} with`;
+  const key = m.autopilot ? AUTOPILOT.key : ACTIONS[m.view].key;
+  const ref = m.autopilot ? `${m.count} issue${m.count === 1 ? "" : "s"} with` : `#${m.number} with`;
+  const title = `${labelOf(key)} ${ref}`;
   const hint = (p) => {
     const h = p.id === P.DEFAULT_PROFILE.id ? "default" : describe(p);
     return h && h !== p.name ? h : "";
@@ -1425,7 +1444,9 @@ function menuLines(m, cols, shown) {
   const full = (p) => width(p.name) + (hint(p) ? 3 + width(hint(p)) : 0), most = cols - 6;
   // As wide as the widest line it shows: a name without its hint when both don't fit.
   const tw = Math.max(1, Math.min(most, Math.max(width(title), ...m.entries.map((p) => full(p) <= most ? full(p) : width(p.name))))), w = tw + 6;
-  const head = fit(title, w - 5);
+  // A too-long label gives before the title's own ref does.
+  const cut = fit(labelOf(key), Math.max(0, w - 6 - width(ref)));
+  const head = cut ? `${cut} ${ref}` : fit(ref, w - 5);
   const lines = [{ text: dim(`┌ ${head} ${"─".repeat(Math.max(0, w - 5 - width(head)))}${m.top > 0 ? "↑" : "─"}┐`), entry: null }];
   for (let i = m.top; i < Math.min(m.entries.length, m.top + shown); i++) {
     const p = m.entries[i], on = i === m.sel, h = hint(p);
@@ -1489,7 +1510,7 @@ const KEYMAP = {
     binding("q esc", "close the menu"),
   ],
   settings: [
-    binding("↑ ↓ j k", "select a profile, a prompt or the merge mode"),
+    binding("↑ ↓ j k", "select a profile, a prompt, a button label or the merge mode"),
     binding("n", "+ New"),
     binding("e ⏎", "Edit, or Change the merge mode"),
     binding("d", "Delete: it asks first"),
@@ -1580,17 +1601,22 @@ function autopilotBar(cols, count) {
 const TOOLS_MIN_ROWS = 12;
 function headerTools(cols, rows, autopilot) {
   const tools = [];
-  if (autopilotOffered()) tools.push({ icon: "☑", label: "Auto-pilot", on: autopilot, action: () => toggleAutopilot() });
+  if (autopilotOffered()) tools.push({ icon: "☑", label: labelOf(AUTOPILOT.key), on: autopilot, action: () => toggleAutopilot() });
   tools.push({ icon: "⚙", label: "Settings", action: () => openSettings() });
   tools.push({ icon: "↻", label: "Refresh", action: () => refresh() });
   if (ui.repo?.url) tools.push({ icon: "↗", label: ui.forge?.name ?? "Open", action: () => openUrl(ui.repo.url) });
-  const bare = (t) => ` ${t.icon} `, labelled = (t) => ` ${t.icon} ${t.label} `;
+  const bare = (t) => ` ${t.icon} `;
+  // A label too long for the cells left beside the other buttons' bare icons is
+  // cut to them rather than dropped: its button still names itself, "☑ a very
+  // long na…", and one long label can't push every label off the line (#52).
+  const cut = tools.map((t, i) => fit(t.label, cols - tools.reduce((w, o, j) => w + (i === j ? 0 : width(bare(o))), 0) - width(` ${t.icon} `) - 1));
+  const labelled = (t, i) => ` ${t.icon} ${cut[i]} `;
   // How many lead with their label: the first one's padding lines its icon up with the repo's name.
   let n = rows >= TOOLS_MIN_ROWS ? tools.length : 0;
-  const used = () => tools.reduce((w, t, i) => w + width(i < n ? labelled(t) : bare(t)), 0);
-  while (n > 0 && used() > cols) n--;
+  const used = () => tools.reduce((w, t, i) => w + width(i < n ? labelled(t, i) : bare(t)), 0);
+  while (n > 0 && (used() > cols || !cut[n - 1])) n--;
   const out = tools.map((t, i) => {
-    const text = i < n ? labelled(t) : bare(t);
+    const text = i < n ? labelled(t, i) : bare(t);
     return { text, shown: t.on ? invert(accent(text)) : dim(text), action: t.action };
   });
   out.row = n > 0;
@@ -1800,21 +1826,32 @@ const choices = (form, key, store = ui.settings.store) => {
 const OPENCODE_NOTE = P.buildLaunch({ id: "x", name: "x", harness: "opencode", thinking: "high" }, "x").warnings[0];
 const entries = () => [P.DEFAULT_PROFILE, ...ui.settings.store.profiles];
 const describe = (p) => [P.HARNESS_NAMES[p.harness], p.model, p.thinking && `thinking ${p.thinking}`].filter(Boolean).join(" · ");
-const ACTION_LABELS = { resolve: "Resolve", review: "Review", autopilot: AUTOPILOT.label };
+// An action's (or Auto-pilot's) name in Settings: its button's label, yours or its own.
+const actionName = (a, store = ui.settings.store) => P.buttonLabel(store, a);
 // What an action, or Auto-pilot (#31), sends with no custom prompt, as Claude Code takes it.
 const DEFAULT_PROMPTS = {
   ...Object.fromEntries(Object.values(ACTIONS).map((a) => [a.key, `/${a.skill} ${P.PROMPT_TOKEN}`])),
   autopilot: `/${AUTOPILOT.skill} --issues ${P.PROMPT_LIST_TOKEN}`,
 };
-// A prompt's reasons start with its field's name ("Resolve prompt: …").
-const PROMPT_FIELDS = P.PROMPT_KEYS.map((a) => ({ key: "prompt", word: P.PROMPT_LABELS[a] }));
-// The merge mode's row (#39), under the prompt rows: ↑↓ and the wheel go through
-// BELOW_ROWS in this order after the last profile.
+// A prompt's reasons start with its field's name ("Resolve prompt: …"), a label's
+// with its own ("Resolve label: …").
+const PROMPT_FIELDS = [
+  ...P.PROMPT_KEYS.map((a) => ({ key: "prompt", word: P.PROMPT_LABELS[a] })),
+  ...P.LABEL_KEYS.map((a) => ({ key: "label", word: P.LABEL_FIELDS[a] })),
+];
+// The button label rows, under the prompt rows, and the merge mode's (#39), under
+// them: ↑↓ and the wheel go through BELOW_ROWS in this order after the last profile.
+// A label row is named by its action: label:resolve.
+const LABEL_ROWS = P.LABEL_KEYS.map((a) => `label:${a}`);
+const labelRow = (row) => (LABEL_ROWS.includes(row) ? row.slice("label:".length) : null);
 const MERGE_ROW = "merge";
-const BELOW_ROWS = [...P.PROMPT_KEYS, MERGE_ROW];
+const BELOW_ROWS = [...P.PROMPT_KEYS, ...LABEL_ROWS, MERGE_ROW];
+// Each section's first row, which has its heading over it and no blank line before it.
+const FIRST_ROWS = [BELOW_ROWS[0], LABEL_ROWS[0], MERGE_ROW];
 
-// `promptSel` is the row selected under the profiles: an action's prompt, or
-// MERGE_ROW, the merge mode's (#39); null while a profile is. `prompt` is the prompt being edited: { action, text }.
+// `promptSel` is the row selected under the profiles: an action's prompt, its button
+// label's, or MERGE_ROW, the merge mode's (#39); null while a profile is. `prompt` is
+// the prompt or the label being edited: { action, kind, text }, kind "prompt" or "label".
 // `scroll` is how far the wheel moved the form or the prompt from where it shows.
 function openSettings() {
   ui.settings = { mode: "list", sel: 0, promptSel: null, form: null, prompt: null, field: 0, scroll: 0, error: null, fieldErrors: {}, info: null, ...readStore() };
@@ -1858,6 +1895,7 @@ function saveStore(next) {
   const tmp = `${st.file}.${process.pid}.tmp`;
   try { fs.writeFileSync(tmp, text); fs.renameSync(tmp, st.file); } catch (e) { fs.rmSync(tmp, { force: true }); throw e; }
   Object.assign(st, { store: next, text });
+  keepLabels(next);
 }
 
 // A reason from the profiles module, split by field: in the form, each field's
@@ -2046,27 +2084,48 @@ function removeModel() {
 // A prompt row's Edit, e or enter: its text, to change; empty sends the default.
 function editPrompt(action) {
   const st = ui.settings;
-  Object.assign(st, { mode: "prompt", promptSel: action, prompt: { action, text: P.resolvePrompt(st.store, action) ?? "" }, scroll: 0, error: null, fieldErrors: {}, info: null });
+  Object.assign(st, { mode: "prompt", promptSel: action, prompt: { action, kind: "prompt", text: P.resolvePrompt(st.store, action) ?? "" }, scroll: 0, error: null, fieldErrors: {}, info: null });
   draw();
 }
 
-// The prompt's Use default, or ctrl-r (#37): shown, and done, only while a custom
-// prompt is saved.
-const hasCustom = (st) => P.resolvePrompt(st.store, st.prompt.action) !== null;
+// A button label row's Edit, e or enter: the label in the same editor as a prompt,
+// one line long; empty shows the button's own name.
+function editLabel(action) {
+  const st = ui.settings;
+  Object.assign(st, { mode: "prompt", promptSel: `label:${action}`, prompt: { action, kind: "label", text: P.resolveLabel(st.store, action) ?? "" }, scroll: 0, error: null, fieldErrors: {}, info: null });
+  draw();
+}
+
+// What the editor edits: its field's key in fieldErrors, how long it can be, its
+// heading, and what it is with nothing typed.
+const editTarget = (pr) => pr.kind === "label"
+  ? { key: "label", max: P.LABEL_MAX, title: P.LABEL_FIELDS[pr.action], empty: P.DEFAULT_LABELS[pr.action] }
+  : { key: "prompt", max: P.PROMPT_MAX, title: P.PROMPT_LABELS[pr.action], empty: DEFAULT_PROMPTS[pr.action] };
+
+// The prompt's or label's Use default, or ctrl-r (#37): shown, and done, only while
+// a custom one is saved.
+const hasCustom = (st) => (st.prompt.kind === "label" ? P.resolveLabel : P.resolvePrompt)(st.store, st.prompt.action) !== null;
 const useDefault = () => savePrompt("");
 
 function savePrompt(text = ui.settings.prompt.text) {
-  const st = ui.settings, { action } = st.prompt, t = text.trim();
+  const st = ui.settings, { action, kind } = st.prompt, t = text.trim();
+  if (kind === "label") {
+    const name = P.DEFAULT_LABELS[action];
+    return change(() => {
+      saveStore(P.setLabel(st.store, action, t));
+      Object.assign(st, { mode: "list", prompt: null });
+    }, t ? `The ${name} button now reads ${t}` : `The ${name} button reads ${name} again`);
+  }
   change(() => {
     saveStore(P.setPrompt(st.store, action, t));
     Object.assign(st, { mode: "list", prompt: null });
-  }, t ? `${ACTION_LABELS[action]} now sends: ${t}` : `${ACTION_LABELS[action]} now sends the default: ${DEFAULT_PROMPTS[action]}`);
+  }, t ? `${actionName(action)} now sends: ${t}` : `${actionName(action)} now sends the default: ${DEFAULT_PROMPTS[action]}`);
 }
 
 // The selected profile's actions, from a key or its buttons.
 function assignTo(action) {
   const st = ui.settings, p = selectedEntry(st);
-  change(() => saveStore(P.assignProfile(st.store, action, p.id)), `${ACTION_LABELS[action]} now starts ${p.name}`);
+  change(() => saveStore(P.assignProfile(st.store, action, p.id)), `${actionName(action)} now starts ${p.name}`);
 }
 
 // The merge mode row's Change, e or enter (#39): the other mode, saved at once in
@@ -2119,13 +2178,15 @@ function settingsKey(m) {
   if (st.mode === "prompt") return promptKey(st, k);
   selectedEntry(st);
   if (k === "\x1b" || k === "q" || k === "s") return closeSettings();
-  const at = P.PROMPT_KEYS.indexOf(st.promptSel), merge = st.promptSel === MERGE_ROW;
+  const at = P.PROMPT_KEYS.indexOf(st.promptSel), merge = st.promptSel === MERGE_ROW, label = labelRow(st.promptSel);
   if (UP.includes(k) || k === "k") step(st, -1);
   else if (DOWN.includes(k) || k === "j") step(st, 1);
   else if (k === "n") return editProfile(null);
-  else if (k === "e" || k === "\r" || k === "\n") return merge ? toggleMergeMode() : at >= 0 ? editPrompt(st.promptSel) : editSelected();
+  else if (k === "e" || k === "\r" || k === "\n") return merge ? toggleMergeMode() : label ? editLabel(label) : at >= 0 ? editPrompt(st.promptSel) : editSelected();
   else if (merge && (k === "d" || k === "R" || k === "V")) {
     Object.assign(st, { error: "The merge mode isn't a profile: e or enter changes it", info: null });
+  } else if (label && (k === "d" || k === "R" || k === "V")) {
+    Object.assign(st, { error: `The ${P.LABEL_FIELDS[label]} isn't a profile: e or enter edits it`, info: null });
   } else if (at >= 0 && (k === "d" || k === "R" || k === "V")) {
     Object.assign(st, { error: `The ${P.PROMPT_LABELS[st.promptSel]} isn't a profile: e or enter edits it`, info: null });
   } else if (k === "d") return askDelete();
@@ -2136,7 +2197,7 @@ function settingsKey(m) {
 }
 
 // ↑ and ↓ in the list, and the wheel: from the last profile on to the prompt rows,
-// then the merge mode's (#39), and back.
+// the button label rows, then the merge mode's (#39), and back.
 function step(st, by) {
   const at = BELOW_ROWS.indexOf(st.promptSel);
   if (by < 0) {
@@ -2159,17 +2220,17 @@ function wheel(st, by) {
   draw();
 }
 
-// Keys while a prompt is edited: text, as in the form; enter saves, esc goes back,
-// ctrl-r is Use default (#37), and does nothing while there's no custom prompt.
+// Keys while a prompt or a label is edited: text, as in the form; enter saves, esc
+// goes back, ctrl-r is Use default (#37), and does nothing while there's no custom one.
 function promptKey(st, k) {
-  const pr = st.prompt;
+  const pr = st.prompt, field = editTarget(pr);
   if (k === "\x1b") return settingsBack();
   if (k === "\r" || k === "\n") return savePrompt();
   if (k === "\x12") return hasCustom(st) ? useDefault() : undefined;
   if (k === "\x7f" || k === "\b") pr.text = [...pr.text].slice(0, -1).join("");
-  else if (!k.startsWith("\x1b") && !/[\x00-\x1f\x7f-\x9f]/.test(k) && pr.text.length < P.PROMPT_MAX) pr.text += k;
+  else if (!k.startsWith("\x1b") && !/[\x00-\x1f\x7f-\x9f]/.test(k) && [...pr.text].length < field.max) pr.text += k;
   else return;
-  delete st.fieldErrors.prompt;
+  delete st.fieldErrors[field.key];
   draw();
 }
 
@@ -2224,7 +2285,7 @@ function formKey(st, k) {
     return draw();
   }
   if (k === "\x7f" || k === "\b") form[field.key] = [...form[field.key]].slice(0, -1).join("");
-  else if (!k.startsWith("\x1b") && !/[\x00-\x1f\x7f-\x9f]/.test(k) && form[field.key].length < field.max) form[field.key] += k;
+  else if (!k.startsWith("\x1b") && !/[\x00-\x1f\x7f-\x9f]/.test(k) && [...form[field.key]].length < field.max) form[field.key] += k;
   else return;
   delete st.fieldErrors[field.key];
   draw();
@@ -2270,7 +2331,7 @@ function settingsLines(cols, rows) {
   tools.push([" ✕ ", () => settingsBack()]);
   const right = tools.reduce((w, [t]) => w + width(t), 0);
   const heading = fit(st.mode === "edit" ? (st.form.prev ? `Edit profile ${st.form.prev}` : "New profile")
-    : st.mode === "prompt" ? P.PROMPT_LABELS[st.prompt.action] : "⚙ Settings", cols - right - 2);
+    : st.mode === "prompt" ? editTarget(st.prompt).title : "⚙ Settings", cols - right - 2);
   out.push(` ${bold(heading)}${" ".repeat(Math.max(0, cols - 1 - width(heading) - right))}${dim(tools.map(([t]) => t).join(""))}`);
   let x = cols - right;
   for (const [t, action] of tools) { ui.buttons.push({ row: 0, from: x, to: x + width(t), action }); x += width(t); }
@@ -2346,34 +2407,40 @@ function settingsLines(cols, rows) {
   } else if (st.mode === "prompt") {
     // The text, broken into lines of the pane's width, the cursor after it; empty,
     // what the action sends instead. Then its reason, what to know, and the buttons.
-    const { action, text } = st.prompt, valueW = cols - 3, lines = [""];
+    const { action, kind, text } = st.prompt, field = editTarget(st.prompt), valueW = cols - 3, lines = [""];
     for (const ch of text) {
       if (width(lines[lines.length - 1] + ch) > valueW) lines.push("");
       lines[lines.length - 1] += ch;
     }
-    if (!text) lines[0] = invert(" ") + dim(fit(`default: ${DEFAULT_PROMPTS[action]}`, valueW - 1));
+    if (!text) lines[0] = invert(" ") + dim(fit(`default: ${field.empty}`, valueW - 1));
     else if (width(lines[lines.length - 1]) < valueW) lines[lines.length - 1] += invert(" ");
     else lines.push(invert(" "));
     selStart = body.length;
     for (const l of lines) { body.push(`${accent("▌")} ${l}`); owner.push(null); }
     // Its reason under it: whole while the pane has room for it and the line you
     // type on, cut there otherwise, ending in "…".
-    const why = st.fieldErrors.prompt;
+    const why = st.fieldErrors[field.key];
     if (why) for (const l of wrap(why, cols - 4, Math.max(1, height - 1))) { body.push("    " + red(l)); owner.push(null); }
     selEnd = body.length;
     body.push(""); owner.push(null);
     const noun = Object.values(ACTIONS).find((a) => a.key === action)?.noun;
-    for (const note of [
+    const notes = kind === "label" ? [
+      action === AUTOPILOT.key
+        ? `The text of the header's ☑ ${field.empty} button, and of its profile menu.`
+        : `The text of each ${noun}'s ${field.empty} #N button, and of its profile menu.`,
+      `Name it after what your prompt does. Its prompt and profile stay the same. At most ${P.LABEL_MAX} characters; empty shows ${field.empty}.`,
+    ] : [
       action === AUTOPILOT.key
         ? `${P.PROMPT_LIST_TOKEN} becomes the checked issues' numbers, as 12,15; nothing else from them goes in. It starts the Resolve profile.`
         : `${P.PROMPT_TOKEN} becomes the ${noun}'s number; nothing else from it goes in.`,
       "Sent as written to every harness, instead of the IDD skill. Empty sends the default.",
-    ]) for (const l of wrap(note, cols - 4, Infinity)) { body.push("  " + dim(l)); owner.push(null); }
+    ];
+    for (const note of notes) for (const l of wrap(note, cols - 4, Infinity)) { body.push("  " + dim(l)); owner.push(null); }
     body.push(""); owner.push(null);
     addButtons([["Save", () => savePrompt()], ...(hasCustom(st) ? [["Use default", useDefault]] : []), ["Cancel", () => settingsBack()]], "  ", 2, null);
   } else {
-    // Three sections, each under a heading ruled to the right edge: the profiles,
-    // the prompt each action sends, and what a merge does. A blank line before each
+    // Four sections, each under a heading ruled to the right edge: the profiles,
+    // the prompt each action sends, its button's label, and what a merge does. A blank line before each
     // heading but the first sets them apart; ↑↓ still walks every row in turn.
     // A section's first row, when selected, keeps its heading in view if they fit.
     let headAt = 0;
@@ -2395,7 +2462,7 @@ function settingsLines(cols, rows) {
       // the second line when they would squeeze it, and a long id is cut. The id is
       // dim and the actions it runs in the accent, so who does what reads at a glance;
       // an id that only repeats the name isn't shown again.
-      const idTag = q.id === P.DEFAULT_PROFILE.id ? "default" : q.id === q.name ? "" : q.id, tags = using(q.id).map((a) => ACTION_LABELS[a]).join(" · ");
+      const idTag = q.id === P.DEFAULT_PROFILE.id ? "default" : q.id === q.name ? "" : q.id, tags = using(q.id).map((a) => actionName(a)).join(" · ");
       const keep = Math.min(12, width(q.name)), together = [idTag, tags].filter(Boolean).join(" · ");
       const down = tags && cols - 5 - width(together) < keep;
       const tag = fit(down ? idTag : together, Math.max(1, cols - 5 - keep)), below = down ? fit(tags, cols - 4) : "";
@@ -2416,7 +2483,7 @@ function settingsLines(cols, rows) {
         const buttons = st.mode === "confirm"
           ? [["Delete", () => confirmDelete(true)], ["Keep", () => confirmDelete(false)]]
           : [
-            ...P.ACTION_KEYS.map((a) => used.includes(a) ? [`${ACTION_LABELS[a]} ✓`, () => {}] : [`Use for ${ACTION_LABELS[a]}`, () => assignTo(a)]),
+            ...P.ACTION_KEYS.map((a) => used.includes(a) ? [`${actionName(a)} ✓`, () => {}] : [`Use for ${actionName(a)}`, () => assignTo(a)]),
             ...(fixed ? [] : [["Edit", () => editSelected()], ["Delete", () => askDelete()]]),
           ];
         addButtons(buttons, `${bar}   `, 4, select);
@@ -2433,7 +2500,7 @@ function settingsLines(cols, rows) {
     // prompt is in use still shows; a pane too narrow for the whole name, the state
     // and the button drops the state. A click on the row only selects it.
     const belowRow = (key, title, value, state, button, press) => {
-      if (key !== BELOW_ROWS[0] && key !== MERGE_ROW) { body.push(""); owner.push(null); }
+      if (!FIRST_ROWS.includes(key)) { body.push(""); owner.push(null); }
       const on = st.promptSel === key && st.mode === "list", bar = on ? accent("▌") : " ", b = ` ${button} `;
       const select = () => { Object.assign(st, { promptSel: key, error: null, mode: "list" }); draw(); };
       const tag = state && (!on || 2 + width(title) + 1 + width(state[1]) + 1 + width(b) <= cols - 1) ? state : null;
@@ -2443,7 +2510,7 @@ function settingsLines(cols, rows) {
       const gap = " ".repeat(Math.max(1, cols - 2 - width(label) - right));
       if (on) {
         selStart = body.length;
-        if (key === BELOW_ROWS[0] || key === MERGE_ROW) selHead = headAt;
+        if (FIRST_ROWS.includes(key)) selHead = headAt;
         const x = cols - 1 - width(b);
         hits[body.length] = [{ from: x, to: x + width(b), action: press }];
         body.push(`${bar} ${bold(label)}${gap}${tag ? tagged + " " : ""}${invert(b)}`);
@@ -2455,8 +2522,17 @@ function settingsLines(cols, rows) {
     section("PROMPTS");
     for (const a of P.PROMPT_KEYS) {
       const custom = P.resolvePrompt(st.store, a);
-      belowRow(a, ACTION_LABELS[a], custom ? fit(custom, cols - 4) : dim(fit(DEFAULT_PROMPTS[a], cols - 4)),
+      belowRow(a, actionName(a), custom ? fit(custom, cols - 4) : dim(fit(DEFAULT_PROMPTS[a], cols - 4)),
         custom ? [accent, "custom"] : [dim, "default"], "Edit", () => editPrompt(a));
+    }
+    // Each button's label: under the action's own name, the button as it reads,
+    // Resolve #N or ☑ Auto-pilot, with your label or its name.
+    section("BUTTON LABELS");
+    for (const a of P.LABEL_KEYS) {
+      const custom = P.resolveLabel(st.store, a), name = P.buttonLabel(st.store, a);
+      const reads = fit(a === AUTOPILOT.key ? `☑ ${name}` : `${name} #N`, cols - 4);
+      belowRow(`label:${a}`, P.DEFAULT_LABELS[a], custom ? reads : dim(reads),
+        custom ? [accent, "custom"] : [dim, "default"], "Edit", () => editLabel(a));
     }
     section("MERGING");
     belowRow(MERGE_ROW, "After a merge", fit(MERGE_MODES[mergeMode()], cols - 4), null, "Change", () => toggleMergeMode());
@@ -2563,11 +2639,11 @@ function pasteText(text) {
   if (text) ui.pasteCR = text.endsWith("\r");
   if (!text || (st?.mode !== "prompt" && st?.mode !== "edit")) return;
   const adding = st.mode === "edit" && st.form.adding !== null;
-  const field = st.mode === "prompt" ? { key: "prompt", max: P.PROMPT_MAX } : adding ? { key: "model", max: MODEL_MAX } : FIELDS[st.field];
+  const field = st.mode === "prompt" ? editTarget(st.prompt) : adding ? { key: "model", max: MODEL_MAX } : FIELDS[st.field];
   if (!field.max) return;
   const box = st.mode === "prompt" ? st.prompt : st.form, key = st.mode === "prompt" ? "text" : adding ? "adding" : field.key;
   for (const c of text.replace(/\r\n|[\r\n\t]/g, " ")) {
-    if (box[key].length >= field.max) break;
+    if ([...box[key]].length >= field.max) break;
     if (!/[\x00-\x1f\x7f-\x9f]/.test(c)) box[key] += c;
   }
   delete st.fieldErrors[field.key];
@@ -2853,6 +2929,7 @@ function main() {
     if (ui.visible && (cwd !== ui.context || Date.now() - ui.fetchedAt > STALE)) refresh();
   }, POLL);
 
+  try { readStore(); } catch {}
   draw();
   locate().then(refresh);
   fitWidth();

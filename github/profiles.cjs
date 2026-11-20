@@ -96,9 +96,10 @@ const DEFAULT_PROFILE = Object.freeze({ id: "default", name: "Claude Code via mc
 // The newest store version this reads and writes. A store is written in the
 // lowest version that holds it: 1 without custom prompts or models, 2 with custom
 // prompts, 3 with custom models, 4 with a custom Auto-pilot prompt, 5 with a
-// profile's own launch arguments (#48). So an older panel keeps using it until then.
-const STORE_VERSION = 5;
-const READS = [1, 2, 3, 4, 5];
+// profile's own launch arguments (#48), 6 with a button label of your own.
+// So an older panel keeps using it until then.
+const STORE_VERSION = 6;
+const READS = [1, 2, 3, 4, 5, 6];
 
 const ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const NAME = /^[^\x00-\x1f\x7f-\x9f\u2028\u2029]{1,40}$/;
@@ -121,6 +122,14 @@ const PROMPT_LIST_TOKEN = "{numbers}";
 const PROMPT_TOKENS = { resolve: PROMPT_TOKEN, review: PROMPT_TOKEN, autopilot: PROMPT_LIST_TOKEN };
 // A custom prompt's field, as the views name it and its reasons start ("Resolve prompt: …").
 const PROMPT_LABELS = { resolve: "Resolve prompt", review: "Review prompt", autopilot: "Auto-pilot prompt" };
+// The buttons whose text you can change, so it says what your prompt does:
+// each action's row button, and Auto-pilot's header button. Their text by default.
+const LABEL_KEYS = PROMPT_KEYS;
+const DEFAULT_LABELS = { resolve: "Resolve", review: "Review", autopilot: "Auto-pilot" };
+// A custom label's field, as the views name it and its reasons start ("Resolve label: …").
+const LABEL_FIELDS = { resolve: "Resolve label", review: "Review label", autopilot: "Auto-pilot label" };
+// How long a button's label can be: it shares a row with "#12345" or other buttons.
+const LABEL_MAX = 24;
 const ALL_LEVELS = [...new Set(Object.values(THINKING).flat())];
 // A profile's own launch arguments (#48): a list of words, each passed to the
 // harness as it is, after the profile's model and thinking flags. No shell reads
@@ -230,6 +239,24 @@ function expandNumbers(template, numbers) {
   if (typeof template !== "string") throw new Error("No prompt");
   if (!Array.isArray(numbers) || !numbers.length || !numbers.every((n) => Number.isSafeInteger(n) && n > 0)) throw new Error("not a list of numbers");
   return template.replaceAll(PROMPT_LIST_TOKEN, numbers.join(","));
+}
+
+// ── Button labels ─────────────────────────────────────────────────────
+// Resolve, Review and Auto-pilot can each show a label of your own on their button,
+// so it says what your prompt does ("Fix", "Security review"). Only the text shown
+// changes: the action, its prompt, profile and pane stay the same.
+
+// Why `text` can't be a button's label, as a list of reasons; empty when it can. It
+// is drawn in the terminal as it is, so it holds no control, invisible or escape
+// character, and it is one short line.
+function validateLabel(text) {
+  if (typeof text !== "string") return ["must be text"];
+  const t = text.trim(), errors = [];
+  if (!t) return ["can't be empty"];
+  if (PROMPT_BAD.test(text)) errors.push("no control, invisible or private-use characters, line breaks or backslashes");
+  else if (t !== text) errors.push("no spaces at either end");
+  if ([...t].length > LABEL_MAX) errors.push(`at most ${LABEL_MAX} characters`);
+  return errors;
 }
 
 // How to start a profile's agent with `prompt`. Checks its input again, so an
@@ -346,7 +373,9 @@ function listsModel(harness, text, model) {
 // holding "autopilot": template | null (#31).
 // With a profile's own launch arguments, it is version 5: as version 4, a profile
 // also holding "args": [word, …] (#48).
-// A panel from before version 2 (or 3, 4 or 5) shows such a file read only, so never loses them.
+// With a button label of your own, it is version 6: as version 5, also holding
+//   "labels": { "resolve": label | null, "review": label | null, "autopilot": label | null }
+// A panel from before version 2 (or 3, 4, 5 or 6) shows such a file read only, so never loses them.
 
 // Rex's own file, on the machine where the Rex server runs. One fixed path under
 // home, whatever the environment says, so it is always the same file.
@@ -356,7 +385,7 @@ function storePath(home) {
 }
 
 function emptyStore() {
-  return { version: STORE_VERSION, profiles: [], assign: { resolve: null, review: null }, prompts: { resolve: null, review: null, autopilot: null }, customModels: {} };
+  return { version: STORE_VERSION, profiles: [], assign: { resolve: null, review: null }, prompts: { resolve: null, review: null, autopilot: null }, customModels: {}, labels: { resolve: null, review: null, autopilot: null } };
 }
 
 // The store in a file's text, read leniently: a bad profile, prompt or custom
@@ -407,6 +436,16 @@ function parseStore(text) {
     if (!why.length) store.prompts[action] = raw.trim();
     else { badPrompt = true; warnings.push(`Skipped the ${PROMPT_LABELS[action]}: ${why[0]}`); }
   }
+  // A label that can't be shown is skipped: its button shows its own name.
+  let badLabel = data.labels !== undefined && data.labels !== null && (typeof data.labels !== "object" || Array.isArray(data.labels));
+  if (badLabel) warnings.push("The profiles file's labels aren't an object");
+  else for (const action of LABEL_KEYS) {
+    const raw = data.labels?.[action];
+    if (raw === null || raw === undefined || (typeof raw === "string" && !raw.trim())) continue;
+    const why = typeof raw === "string" ? validateLabel(raw.trim()) : ["must be text"];
+    if (!why.length) store.labels[action] = raw.trim();
+    else { badLabel = true; warnings.push(`Skipped the ${LABEL_FIELDS[action]}: ${why[0]}`); }
+  }
   // A custom model that can't be offered is skipped. One the built-in list already
   // has is kept: a newer list may take it in, or an older one drop it.
   const rawModels = data.customModels;
@@ -429,12 +468,14 @@ function parseStore(text) {
   }
   // Saving would drop what was skipped, and the actions assigned to it: first say why
   // nothing is saved, as "Not saved: …" shows this first warning.
-  if ((skipped || badPrompt || badModel) && !readOnly) {
+  if ((skipped || badPrompt || badModel || badLabel) && !readOnly) {
     warnings.unshift(skipped
       ? "Some profiles in the file can't be used (see below), so it is read only here: fix or remove them to save"
       : badPrompt
         ? "A prompt in the file can't be used (see below), so it is read only here: fix or remove it to save"
-        : "A custom model in the file can't be used (see below), so it is read only here: fix or remove it to save");
+        : badModel
+          ? "A custom model in the file can't be used (see below), so it is read only here: fix or remove it to save"
+          : "A button label in the file can't be used (see below), so it is read only here: fix or remove it to save");
     readOnly = true;
   }
   return { store, warnings, readOnly };
@@ -446,7 +487,8 @@ function parseStore(text) {
 // prompt, version 4, as version 3 with it among the prompts: no lower version ever
 // holds one, so a panel that can't run it never drops it by saving (#31). With a
 // profile's own launch arguments, version 5, as version 4 with them in their
-// profiles, for the same reason (#48).
+// profiles, for the same reason (#48). With a button label of your own, version 6,
+// as version 5 with its labels last.
 function serializeStore(store) {
   const profiles = (store?.profiles ?? []).map(normalizeProfile);
   const assign = {}, prompts = {}, customModels = {};
@@ -459,7 +501,9 @@ function serializeStore(store) {
     if (names.length) customModels[harness] = names;
   }
   const autopilot = resolvePrompt(store, "autopilot");
-  const data = profiles.some((p) => p.args) ? { version: 5, profiles, assign, prompts: { ...prompts, autopilot }, customModels }
+  const labels = Object.fromEntries(LABEL_KEYS.map((a) => [a, resolveLabel(store, a)]));
+  const data = Object.values(labels).some((l) => l !== null) ? { version: 6, profiles, assign, prompts: { ...prompts, autopilot }, customModels, labels }
+    : profiles.some((p) => p.args) ? { version: 5, profiles, assign, prompts: { ...prompts, autopilot }, customModels }
     : autopilot !== null ? { version: 4, profiles, assign, prompts: { ...prompts, autopilot }, customModels }
     : Object.keys(customModels).length ? { version: 3, profiles, assign, prompts, customModels }
     : ACTION_KEYS.some((a) => prompts[a] !== null) ? { version: 2, profiles, assign, prompts } : { version: 1, profiles, assign };
@@ -543,6 +587,30 @@ function resolvePrompt(store, action) {
   return typeof v === "string" && v ? v : null;
 }
 
+// Sets the label of "resolve", "review" or "autopilot"'s button, trimmed; empty text
+// or null goes back to its own name. Returns a new store; throws, with the field's
+// name first ("Resolve label: …"), when the label can't be shown.
+function setLabel(store, action, text) {
+  if (!LABEL_KEYS.includes(action)) throw new Error(`No action ${action}`);
+  const t = typeof text === "string" ? text.trim() : text;
+  let value = null;
+  if (t !== null && t !== undefined && t !== "") {
+    const errors = validateLabel(t);
+    if (errors.length) throw new Error(errors.map((e) => `${LABEL_FIELDS[action]}: ${e}`).join("; "));
+    value = t;
+  }
+  return { ...store, labels: { resolve: null, review: null, autopilot: null, ...store.labels, [action]: value } };
+}
+
+// An action's (or Auto-pilot's) own label, or null when its button shows its name.
+function resolveLabel(store, action) {
+  const v = store?.labels?.[action];
+  return typeof v === "string" && v && !validateLabel(v).length ? v : null;
+}
+
+// The text on an action's (or Auto-pilot's) button: your label, else its name.
+const buttonLabel = (store, action) => resolveLabel(store, action) ?? DEFAULT_LABELS[action];
+
 // ── Models ──────────────────────────────────────────────────────────────────
 // The form offers each harness's built-in models (MODELS), then the ones you added
 // for it, kept in the store's customModels.
@@ -616,4 +684,4 @@ function parseMccEnv(text, home) {
   return null;
 }
 
-module.exports = { HARNESSES, HARNESS_NAMES, THINKING, MODELS, NO_MODEL, ACTION_KEYS, PROMPT_KEYS, DEFAULT_PROFILE, STORE_VERSION, ARGS_MAX_WORDS, ARGS_WORD_MAX, PROMPT_MAX, PROMPT_TOKEN, PROMPT_LIST_TOKEN, PROMPT_TOKENS, PROMPT_LABELS, validateProfile, validateArgs, normalizeProfile, validatePrompt, validatePromptTemplate, expandPrompt, expandNumbers, buildLaunch, buildCheck, listsModel, storePath, emptyStore, parseStore, serializeStore, upsertProfile, removeProfile, assignProfile, resolveProfile, profileChoices, findChoice, setPrompt, resolvePrompt, modelChoices, addCustomModel, removeCustomModel, shellQuote, shellJoin, parseMccEnv };
+module.exports = { HARNESSES, HARNESS_NAMES, THINKING, MODELS, NO_MODEL, ACTION_KEYS, PROMPT_KEYS, DEFAULT_PROFILE, STORE_VERSION, ARGS_MAX_WORDS, ARGS_WORD_MAX, PROMPT_MAX, PROMPT_TOKEN, PROMPT_LIST_TOKEN, PROMPT_TOKENS, PROMPT_LABELS, LABEL_KEYS, DEFAULT_LABELS, LABEL_FIELDS, LABEL_MAX, validateProfile, validateArgs, normalizeProfile, validatePrompt, validatePromptTemplate, validateLabel, expandPrompt, expandNumbers, buildLaunch, buildCheck, listsModel, storePath, emptyStore, parseStore, serializeStore, upsertProfile, removeProfile, assignProfile, resolveProfile, profileChoices, findChoice, setPrompt, resolvePrompt, setLabel, resolveLabel, buttonLabel, modelChoices, addCustomModel, removeCustomModel, shellQuote, shellJoin, parseMccEnv };

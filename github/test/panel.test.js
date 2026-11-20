@@ -261,7 +261,7 @@ function setup(view) {
   Object.assign(ui, {
     view, prs: items("pull"), issues: items("issues"), errors: {}, error: null, repo: { name: "o/p", url: "https://x/o/p" },
     loading: false, fetched: true, follow: false, sel: { prs: 0, issues: 0 }, top: { prs: 0, issues: 0 }, notice: null,
-    forge: null, root: null, settings: null, acting: null, menu: null, confirm: null, merging: null, closing: null, pasting: false, pasteCR: false, help: null,
+    forge: null, root: null, settings: null, acting: null, menu: null, confirm: null, merging: null, closing: null, pasting: false, pasteCR: false, help: null, labels: {},
   });
   follow("block:agent");
   opened.length = 0;
@@ -667,13 +667,14 @@ test("the header's buttons are labelled on a line of their own while they fit, b
     assert.equal(lines[TOOLS].trimEnd(), tools, `${cols}`);
     assert.ok(lines[TOOLS + 1].startsWith("─"), `${cols}`);
   }
-  // No room for even one label, or a pane too short to spare its list a line:
-  // the bare icons end line 0, and the rule follows it, as before labels.
-  for (const [cols, rows] of [[22, 24], [60, 11]]) {
-    const lines = header(cols, rows);
-    assert.match(lines[0], /☑ {2}⚙ {2}↻ {2}↗ $/, `${cols}x${rows}`);
-    assert.ok(lines[1].startsWith("─"), `${cols}x${rows}`);
-  }
+  // A label too long for the room beside the others' bare icons is cut to it
+  // before it drops: at 22 cells the ☑ still names itself (#52).
+  assert.equal(header(22, 24)[TOOLS].trimEnd(), " ☑ Auto-pil…  ⚙  ↻  ↗");
+  // A pane too short to spare its list a line: the bare icons end line 0, and
+  // the rule follows it, as before labels.
+  const short = header(60, 11);
+  assert.match(short[0], /☑ {2}⚙ {2}↻ {2}↗ $/);
+  assert.ok(short[1].startsWith("─"));
   assert.ok(!header(60, 12)[0].includes("⚙"), "12 lines are enough for the labelled line");
   // GitLab's ↗ names GitLab; no ☑ there.
   ui.forge = FORGES.gitlab;
@@ -1288,7 +1289,7 @@ test("a store changed elsewhere since it was read isn't overwritten", (t) => {
 
 test("a corrupt or newer store is shown read only, and actions use the default", async (t) => {
   const dir = home(t, { ".claude/skills/issue-resolver/SKILL.md": "x" });
-  for (const bad of ["{ not json", JSON.stringify({ version: 6, profiles: [], assign: {} })]) {
+  for (const bad of ["{ not json", JSON.stringify({ version: 7, profiles: [], assign: {} })]) {
     const file = useProfiles(dir, []);
     fs.writeFileSync(file, bad);
     setupGitHub("issues");
@@ -1579,11 +1580,11 @@ test("at 28, 30 and 40 cells the profiles show each warning, note and question w
     assert.ok(lines.at(-1).trimEnd().endsWith("esc back"), `${cols}:\n${lines.join("\n")}`);
     at(() => onInput(Buffer.from("\x1b")));
 
-    // A file from another version: 1 to 5 are read (2 since #20's prompts, 3 since #24's models, 4 since #31's Auto-pilot prompt, 5 since #48's args).
-    fs.writeFileSync(useProfiles(dir, []), JSON.stringify({ version: 6, profiles: [], assign: {} }));
+    // A file from another version: 1 to 6 are read (2 since #20's prompts, 3 since #24's models, 4 since #31's Auto-pilot prompt, 5 since #48's args, 6 since button labels).
+    fs.writeFileSync(useProfiles(dir, []), JSON.stringify({ version: 7, profiles: [], assign: {} }));
     setupGitHub("issues");
     lines = at(() => onInput(Buffer.from("s")));
-    assert.ok(shows(lines, "The profiles file is version 6, not 1, 2, 3, 4 or 5: it is read only here"), `${cols}:\n${lines.join("\n")}`);
+    assert.ok(shows(lines, "The profiles file is version 7, not 1, 2, 3, 4, 5 or 6: it is read only here"), `${cols}:\n${lines.join("\n")}`);
     at(() => onInput(Buffer.from("\x1b")));
 
     // A 40-character name in what a change did, and in the delete question.
@@ -2018,13 +2019,18 @@ test("the wheel reaches the prompt rows and the prompt's buttons in a short pane
     assert.equal(ui.settings.promptSel, "autopilot", where(lines));
     assert.ok(lines.some((l) => /^▌ Auto-pilot +default  Edit $/.test(l ?? "")), where(lines));
     fitsWithHints(lines, cols, rows, "↑↓ select", "esc back");
+    // On to the button labels' rows, Auto-pilot's last.
+    lines = at(wheel(true) + wheel(true) + wheel(true));
+    assert.equal(ui.settings.promptSel, "label:autopilot", where(lines));
+    assert.ok(lines.some((l) => /^▌ Auto-pilot +default  Edit $/.test(l ?? "")), where(lines));
+    fitsWithHints(lines, cols, rows, "↑↓ select", "esc back");
     // On to the last, the merge mode's (#39), where the wheel stops.
     lines = at(wheel(true) + wheel(true));
     assert.equal(ui.settings.promptSel, "merge", where(lines));
     assert.ok(lines.some((l) => /^▌ After a merge +Change $/.test(l ?? "")), where(lines));
     fitsWithHints(lines, cols, rows, "↑↓ select", "esc back");
     // And back up to the profiles.
-    for (let i = 0; i < 4; i++) lines = at(wheel(false));
+    for (let i = 0; i < 7; i++) lines = at(wheel(false));
     assert.equal(ui.settings.promptSel, null, where(lines));
     assert.equal(ui.settings.sel, n, where(lines));
     lines = at(wheel(true));
@@ -2084,8 +2090,10 @@ test("the settings' section headings stay over a selected first row while both f
   useProfiles(dir, []);
   for (const rows of [6, 9, 24]) {
     setupGitHub("issues");
-    // j selects the Resolve row, PROMPTS' first; four more reach MERGING's only row.
-    for (const [keys, heading, row] of [["sj", "PROMPTS", /^▌ Resolve +default  Edit $/], ["sjjjj", "MERGING", /^▌ After a merge +Change $/]]) {
+    // j selects the Resolve row, PROMPTS' first; three more reach BUTTON LABELS' first,
+    // and three more MERGING's only row.
+    for (const [keys, heading, row] of [["sj", "PROMPTS", /^▌ Resolve +default  Edit $/], ["sjjjj", "BUTTON LABELS", /^▌ Resolve +default  Edit $/],
+      ["sjjjjjjj", "MERGING", /^▌ After a merge +Change $/]]) {
       const lines = screenAt(28, rows, () => { ui.settings = null; onInput(Buffer.from(keys)); });
       const where = `28x${rows} ${keys}:\n${lines.join("\n")}`;
       const at = lines.findIndex((l) => row.test(l ?? ""));
@@ -3791,7 +3799,7 @@ test("the profiles view's Merge mode row shows the mode, and e, enter or Change 
   const stored = fs.readFileSync(storeFile(), "utf8");
   setupGitHub("issues");
   let lines = screen(() => key("s"));
-  // Under the prompt rows, after Auto-pilot's; the default, with nothing saved.
+  // Under the prompt and button label rows, after Auto-pilot's; the default, with nothing saved.
   const at = (label) => lines.findIndex((l) => l?.replace(/^[▌ ] /, "").startsWith(label));
   for (let i = 0; i < 10 && ui.settings.promptSel !== "merge"; i++) lines = screen(() => key("j"));
   assert.equal(ui.settings.promptSel, "merge");
@@ -3828,9 +3836,9 @@ test("the profiles view's Merge mode row shows the mode, and e, enter or Change 
   fs.writeFileSync(MERGE_FILE, "delete");
   lines = screen(draw);
   assert.equal(lines[at("After a merge") + 1].replace(/^▌/, "").trim(), "Delete the branch");
-  // ↑ goes back to the Auto-pilot prompt.
+  // ↑ goes back to the Auto-pilot button's label, the row above it.
   screen(() => key("k"));
-  assert.equal(ui.settings.promptSel, "autopilot");
+  assert.equal(ui.settings.promptSel, "label:autopilot");
   screen(() => key("\x1b"));
 });
 
@@ -4021,12 +4029,12 @@ test("a model that breaks the MODEL rule, or is already offered, isn't added; - 
 test("a model isn't added to a read-only file, or over a change made elsewhere", (t) => {
   const dir = home(t);
   // Read only: from a newer version, the file kept as it is.
-  const newer = JSON.stringify({ version: 6, profiles: [], assign: {} });
+  const newer = JSON.stringify({ version: 7, profiles: [], assign: {} });
   fs.writeFileSync(useProfiles(dir, []), newer);
   setupGitHub("issues");
   screen(() => onInput(Buffer.from("sn" + TO_MODEL)));
   let lines = screen(() => onInput(Buffer.from("+mine\r")));
-  assert.ok(shows(lines, "Not saved: The profiles file is version 6, not 1, 2, 3, 4 or 5: it is read only here"), lines.join("\n"));
+  assert.ok(shows(lines, "Not saved: The profiles file is version 7, not 1, 2, 3, 4, 5 or 6: it is read only here"), lines.join("\n"));
   assert.equal(fs.readFileSync(storeFile(), "utf8"), newer);
   assert.equal(ui.settings.form.adding, "mine");
   screen(() => onInput(Buffer.from("\x1b\x1b\x1b")));
@@ -5549,4 +5557,214 @@ test("Test doesn't run a profile's args, and says they are checked only when it 
   lines = await tested(() => key("\x14"));
   assert.ok(text(lines).includes("Its model, thinking level and args are checked only when it starts."), lines.join("\n"));
   screen(() => key("\x1b\x1b"));
+});
+
+// ── Button labels ───────────────────────────────────────────────────────────
+
+test("a button label set in Settings goes on the row's button and its menu, with its prompt, profile and pane unchanged", async (t) => {
+  claudeHome(t);
+  setupGitHub("issues");
+  const stored = () => JSON.parse(fs.readFileSync(storeFile(), "utf8"));
+  let lines = screen(() => key("s"));
+  // Under the prompts, a BUTTON LABELS section: one row per button, showing it as it reads.
+  for (let i = 0; i < 10 && ui.settings.promptSel !== "label:resolve"; i++) lines = screen(() => key("j"));
+  assert.equal(ui.settings.promptSel, "label:resolve");
+  const at = lines.findIndex((l) => /^▌ Resolve +default  Edit $/.test(l ?? ""));
+  assert.ok(at > 0, lines.join("\n"));
+  assert.match(lines[at - 1], /^ BUTTON LABELS ─+$/);
+  assert.equal(lines[at + 1].replace(/^▌/, "").trim(), "Resolve #N");
+  // R, V and d act on profiles only.
+  lines = screen(() => key("R"));
+  assert.ok(shows(lines, "The Resolve label isn't a profile: e or enter edits it"), lines.join("\n"));
+  // e edits it in the prompt's editor, one line, with what it shows when empty.
+  lines = screen(() => key("e"));
+  assert.equal(ui.settings.mode, "prompt");
+  assert.match(lines[0], /^ Resolve label +✕ $/);
+  assert.ok(shows(lines, "default: Resolve"), lines.join("\n"));
+  assert.ok(shows(lines, "The text of each issue's Resolve #N button, and of its profile menu."), lines.join("\n"));
+  assert.equal(lines.at(-1).trim(), "type to edit · ⏎ save · esc back");
+  lines = screen(() => key("  Fix with tests  \r"));
+  assert.equal(ui.settings.mode, "list");
+  assert.deepEqual(stored().labels, { resolve: "Fix with tests", review: null, autopilot: null });
+  assert.equal(stored().version, 6);
+  assert.ok(shows(lines, "The Resolve button now reads Fix with tests"), lines.join("\n"));
+  assert.ok(lines.some((l) => /^▌ Resolve +custom  Edit $/.test(l ?? "")), lines.join("\n"));
+  assert.ok(lines.some((l) => l?.replace(/^▌/, "").trim() === "Fix with tests #N"), lines.join("\n"));
+  // The prompt it goes with, set above it; Settings names the action by its label.
+  lines = screen(() => key("kkk\rFix #{number}, tests first\r"));
+  assert.ok(shows(lines, "Fix with tests now sends: Fix #{number}, tests first"), lines.join("\n"));
+  assert.ok(lines.some((l) => /^▌ Fix with tests +custom  Edit $/.test(l ?? "")), lines.join("\n"));
+  assert.ok(shows(lines, "cc · Fix with tests · Review"), lines.join("\n"));
+  // Back on the rows: the button reads the label, and so does its menu.
+  lines = screen(() => key("\x1b"));
+  assert.equal(ui.settings, null);
+  assert.ok(lines.some((l) => l?.replace(/^▌/, "").trim() === "Fix with tests #12   Close #12"), lines.join("\n"));
+  lines = screen(() => key("a"));
+  assert.ok(lines.some((l) => /┌ Fix with tests #12 with/.test(l ?? "")), lines.join("\n"));
+  // It starts what it did: the same profile and pane, with the prompt saved for it.
+  fakeRex(agentHere());
+  await screenAsync(() => key("\r"));
+  assert.equal(splitArgs(), SPLIT("block:agent", "resolve-12"));
+  assert.deepEqual(splitCommand(), ["claude", "Fix #12, tests first"]);
+  // ctrl-r takes it back to the button's own name.
+  setupGitHub("issues");
+  lines = screen(() => key("s"));
+  for (let i = 0; i < 10 && ui.settings.promptSel !== "label:resolve"; i++) lines = screen(() => key("j"));
+  lines = screen(() => key("e"));
+  assert.ok(shows(lines, "^R default"), lines.join("\n"));
+  lines = screen(() => key("\x12"));
+  assert.equal(ui.settings.mode, "list");
+  assert.ok(shows(lines, "The Resolve button reads Resolve again"), lines.join("\n"));
+  assert.equal(stored().version, 2);
+  assert.equal(stored().labels, undefined);
+  lines = screen(() => key("\x1b"));
+  assert.ok(lines.some((l) => l?.replace(/^▌/, "").trim() === "Resolve #12   Close #12"), lines.join("\n"));
+});
+
+test("the Review and Auto-pilot labels go on the Review button and the header's ☑, its menu and its notice", (t) => {
+  const dir = home(t);
+  fs.writeFileSync(useProfiles(dir, [CC, CX]), JSON.stringify({
+    version: 6, profiles: [CC, CX], assign: {}, prompts: { resolve: null, review: null, autopilot: null }, customModels: {},
+    labels: { resolve: null, review: "Security review", autopilot: "Fix all" },
+  }));
+  let lines = setupGitHub("prs");
+  // The rows don't read the file at each draw: a refresh, or opening the panel, does.
+  assert.ok(lines.some((l) => l?.includes("Review #12")), lines.join("\n"));
+  readStore();
+  lines = screen(draw);
+  assert.ok(lines.some((l) => l?.includes("Security review #12")), lines.join("\n"));
+  lines = screen(() => key("2"));
+  assert.ok(lines[TOOLS].includes("☑ Fix all  ⚙ Settings"), lines.join("\n"));
+  // In the mode, Start's menu names it too; leaving with issues checked says so.
+  lines = screen(() => key("px"));
+  assert.ok(ui.autopilot.on);
+  lines = screen(() => key("\r"));
+  assert.ok(lines.some((l) => /┌ Fix all 1 issue with/.test(l ?? "")), lines.join("\n"));
+  screen(() => key("\x1b"));
+  lines = screen(() => key("1"));
+  assert.ok(shows(lines, "Left Fix all: 1 checked issue unchecked."), lines.join("\n"));
+  // Settings shows each as it reads.
+  lines = screen(() => key("s"));
+  for (let i = 0; i < 10 && ui.settings.promptSel !== "label:autopilot"; i++) lines = screen(() => key("j"));
+  assert.ok(lines.some((l) => l?.trim() === "Security review #N"), lines.join("\n"));
+  assert.ok(lines.some((l) => l?.replace(/^▌/, "").trim() === "☑ Fix all"), lines.join("\n"));
+  screen(() => key("\x1b"));
+});
+
+test("a label is one short line: typing and pasting stop at its length, and what can't be drawn isn't saved", (t) => {
+  claudeHome(t);
+  setupGitHub("issues");
+  const before = fs.readFileSync(storeFile(), "utf8");
+  screen(() => key("s"));
+  for (let i = 0; i < 10 && ui.settings.promptSel !== "label:review"; i++) screen(() => key("j"));
+  screen(() => key("e"));
+  screen(() => key("x".repeat(40)));
+  assert.equal(ui.settings.prompt.text, "x".repeat(P.LABEL_MAX));
+  ui.settings.prompt.text = "";
+  screen(() => key(`\x1b[200~Deep\nreview ${"y".repeat(40)}\x1b[201~`));
+  assert.equal(ui.settings.prompt.text, `Deep review ${"y".repeat(P.LABEL_MAX - 12)}`);
+  // A backslash, typed: its reason under the line, and nothing saved.
+  ui.settings.prompt.text = "a\\b";
+  let lines = screen(() => key("\r"));
+  assert.equal(ui.settings.mode, "prompt");
+  assert.ok(shows(lines, "Review label: no control, invisible or private-use characters, line breaks or backslashes"), lines.join("\n"));
+  assert.equal(fs.readFileSync(storeFile(), "utf8"), before);
+  // A label in the file that can't be drawn is skipped: the button reads its name.
+  const dir = path.dirname(path.dirname(path.dirname(storeFile())));
+  fs.writeFileSync(useProfiles(dir, []), JSON.stringify({ version: 6, profiles: [], assign: {}, labels: { resolve: "Boom\x1b[2J" } }));
+  setupGitHub("issues");
+  readStore();
+  lines = rawScreen(draw);
+  assert.ok(!lines.some((l) => l?.includes("\x1b[2J")), "a label from the file reached the screen");
+  assert.ok(screen(draw).some((l) => l?.replace(/^▌/, "").trim() === "Resolve #12   Close #12"));
+});
+
+test("a relabelled button is pressed where it's drawn: Resolve's opens its menu, and Merge beside a long Review label still confirms", (t) => {
+  const dir = home(t);
+  const label = "R".repeat(P.LABEL_MAX);
+  fs.writeFileSync(useProfiles(dir, [CC, CX]), JSON.stringify({
+    version: 6, profiles: [CC, CX], assign: {}, prompts: { resolve: null, review: null, autopilot: null }, customModels: {},
+    labels: { resolve: "Fix with tests", review: label, autopilot: null },
+  }));
+  setupGitHub("issues");
+  readStore();
+  let lines = screen(draw);
+  const [x, y] = find(lines, "Fix with tests #12");
+  assert.ok(y > 0, lines.join("\n"));
+  lines = screen(() => click(x + 1, y));
+  assert.ok(ui.menu, lines.join("\n"));
+  assert.ok(lines.some((l) => /┌ Fix with tests #12 with/.test(l ?? "")), lines.join("\n"));
+  screen(() => key("\x1b"));
+  // A pull request: the Review label at its longest, Merge where it fits.
+  setupGitHub("prs");
+  ui.prs.forEach((p) => Object.assign(p, { head: "a".repeat(40) }));
+  ui.repo = { ...ui.repo, merges: { squash: true, merge: true, rebase: true } };
+  readStore();
+  lines = screen(draw);
+  assert.ok(lines.some((l) => l?.includes(`${label} #12`)), lines.join("\n"));
+  for (const l of lines) assert.ok(width(l ?? "") <= 60, l);
+  const [mx, my] = find(lines, "Merge #12");
+  assert.ok(my > 0, lines.join("\n"));
+  lines = screen(() => onInput(Buffer.from(`\x1b[<0;${mx + 2};${my + 1}M`)));
+  assert.equal(ui.confirm?.number, 12, lines.join("\n"));
+  const [cx, cy] = find(lines, "Confirm merge #12");
+  assert.ok(cy > 0, lines.join("\n"));
+  assert.ok(cx <= mx + 1 && cx + "Confirm merge #12".length >= mx + 1, `the second press misses Confirm merge:\n${lines.join("\n")}`);
+  screen(() => key("\x1b"));
+});
+
+test("an Auto-pilot label at its longest stays on the header's ☑, cut to the room the other buttons' bare icons leave (#52)", (t) => {
+  const dir = home(t);
+  const label = "x".repeat(P.LABEL_MAX);
+  fs.writeFileSync(useProfiles(dir, [CC, CX]), JSON.stringify({
+    version: 6, profiles: [CC, CX], assign: {}, prompts: { resolve: null, review: null, autopilot: null }, customModels: {},
+    labels: { resolve: null, review: null, autopilot: label },
+  }));
+  setupGitHub("issues");
+  readStore();
+  // At the default 36 cells the 24-cell label can't sit beside three more
+  // buttons whole: it is cut to what their bare icons leave, not dropped, and
+  // the buttons keep their own line, so the repo's name keeps line 0.
+  const lines = screenAt(36, 24, draw);
+  for (const l of lines) assert.ok(width(l ?? "") <= 36, l);
+  assert.equal(lines[0].trimEnd(), " o/p", lines.join("\n"));
+  assert.equal(lines[TOOLS].trimEnd(), ` ☑ ${"x".repeat(22)}…  ⚙  ↻  ↗`, lines.join("\n"));
+  // A press on the label as it's cut still toggles the mode.
+  screenAt(36, 24, () => click(lines[TOOLS].indexOf("x") + 3, TOOLS));
+  assert.equal(ui.autopilot.on, true);
+  // Wide enough for Settings's label beside it, it comes back too.
+  const wider = screenAt(46, 24, draw);
+  assert.equal(wider[TOOLS].trimEnd(), ` ☑ ${label}  ⚙ Settings  ↻  ↗`, wider.join("\n"));
+  screenAt(46, 24, () => click(wider[TOOLS].indexOf("☑"), TOOLS));
+  assert.equal(ui.autopilot.on, false);
+});
+
+test("a button label at its longest gives before the row's #N and the menu title's ref do (#52)", (t) => {
+  const dir = home(t, { ".claude/skills/auto-pilot/SKILL.md": "x" });
+  const label = "x".repeat(P.LABEL_MAX);
+  fs.writeFileSync(useProfiles(dir, [CC, CX]), JSON.stringify({
+    version: 6, profiles: [CC, CX], assign: {}, prompts: { resolve: null, review: null, autopilot: null }, customModels: {},
+    labels: { resolve: label, review: null, autopilot: label },
+  }));
+  setupGitHub("issues");
+  fakeRex(agentHere());
+  readStore();
+  // A 24-cell label plus a six-digit ref is wider than the row's budget: the
+  // label is cut to the room the ref leaves, the whole #123456 stays.
+  ui.issues[2].number = 123456;
+  const lines = screenAt(36, 24, draw);
+  assert.ok(lines.some((l) => l?.includes(` ${"x".repeat(21)}… #123456 `)), lines.join("\n"));
+  assert.ok(!lines.some((l) => /#\d+…/.test(l ?? "")), `the ref itself was cut:\n${lines.join("\n")}`);
+  // The row's menu title keeps its #N the same way, and a press still lands.
+  const [bx, by] = find(lines, "… #123456");
+  const menu = screenAt(36, 24, () => click(bx, by));
+  assert.ok(menu.some((l) => /┌ x{17}… #123456 with/.test(l ?? "")), menu.join("\n"));
+  screenAt(36, 24, () => key("\x1b"));
+  // In Auto-pilot the menu title's "N issues with" keeps its count likewise.
+  ui.autopilot.on = true;
+  ui.autopilot.checked.add(123456);
+  const start = screenAt(36, 24, draw);
+  const [sx, sy] = find(start, "▶ Start");
+  const ap = screenAt(36, 24, () => click(sx + 1, sy));
+  assert.ok(ap.some((l) => /┌ x{17}… 1 issue with/.test(l ?? "")), ap.join("\n"));
 });
