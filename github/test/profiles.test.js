@@ -203,11 +203,12 @@ test("parseStore: no file is empty; bad JSON or another version is read only", (
     assert.deepEqual(r.store, P.emptyStore());
     assert.match(r.warnings[0], /isn't valid JSON/);
   }
-  // Version 2 holds custom prompts (#20), version 3 custom models (#24) and
-  // version 4 the Auto-pilot prompt (#31), and all are read; a newer one is read only.
-  const newer = P.parseStore(JSON.stringify({ version: 5, profiles: [ok({ harness: "pi" })], assign: { resolve: "p" } }));
+  // Version 2 holds custom prompts (#20), version 3 custom models (#24), version 4
+  // the Auto-pilot prompt (#31) and version 5 a profile's args (#48), and all are
+  // read; a newer one is read only.
+  const newer = P.parseStore(JSON.stringify({ version: 6, profiles: [ok({ harness: "pi" })], assign: { resolve: "p" } }));
   assert.equal(newer.readOnly, true);
-  assert.equal(newer.warnings[0], "The profiles file is version 5, not 1, 2, 3 or 4: it is read only here");
+  assert.equal(newer.warnings[0], "The profiles file is version 6, not 1, 2, 3, 4 or 5: it is read only here");
   assert.equal(P.resolveProfile(newer.store, "resolve").harness, "pi");
 });
 
@@ -244,9 +245,9 @@ test("parseStore skips bad, duplicate and reserved profiles, drops a missing ass
   const notList = P.parseStore(JSON.stringify({ version: 1, profiles: { a: 1 } }));
   assert.equal(notList.readOnly, true);
   assert.match(notList.warnings[0], /read only here/);
-  // Another version says so first, and only once (version 2 is read since #20, 3 since #24, 4 since #31).
-  const both = P.parseStore(JSON.stringify({ version: 5, profiles: ["x"] }));
-  assert.match(both.warnings[0], /version 5/);
+  // Another version says so first, and only once (version 2 is read since #20, 3 since #24, 4 since #31, 5 since #48).
+  const both = P.parseStore(JSON.stringify({ version: 6, profiles: ["x"] }));
+  assert.match(both.warnings[0], /version 6/);
   assert.ok(!both.warnings.some((w) => /fix or remove them/.test(w)));
   // What it writes, it reads back the same.
   const again = P.parseStore(P.serializeStore(store));
@@ -365,7 +366,7 @@ test("prompts: version 1 without them, version 2 with them, and a bad one makes 
   assert.match(r.warnings[0], /Some profiles in the file can't be used/);
   assert.ok(!r.warnings.some((w) => /A prompt in the file/.test(w)));
   // A newer version is read only, with its prompts still read.
-  r = hand({ resolve: "Go {number}" }, 5);
+  r = hand({ resolve: "Go {number}" }, 6);
   assert.equal(r.readOnly, true);
   assert.equal(r.store.prompts.resolve, "Go {number}");
 });
@@ -631,10 +632,11 @@ test("a hand-edited Auto-pilot prompt it can't use is skipped and makes the file
   assert.equal(r.store.prompts.autopilot, null);
   r = hand({ autopilot: " Go {numbers} " });
   assert.deepEqual(r, { store: { ...P.emptyStore(), prompts: { resolve: null, review: null, autopilot: "Go {numbers}" } }, warnings: [], readOnly: false });
-  // Version 4 is read; 5 is newer, read only.
+  // Version 4 is read, and 5 since #48; 6 is newer, read only.
   assert.equal(hand({}, 4).readOnly, false);
-  assert.equal(hand({}, 5).readOnly, true);
-  assert.equal(P.STORE_VERSION, 4);
+  assert.equal(hand({}, 5).readOnly, false);
+  assert.equal(hand({}, 6).readOnly, true);
+  assert.equal(P.STORE_VERSION, 5);
 });
 
 test("buildCheck names the commands that check a profile can start: --version, mcc's account, and Pi's or OpenCode's models (#43)", () => {
@@ -719,4 +721,162 @@ test("listsModel finds a Devin family, alias or model's own name in `devin model
   for (const m of ["Adaptive", "SWE-2", "aliases:", "Claude", "opus", "claude-opus-5-5", "claude-opus", ""]) {
     assert.equal(P.listsModel("devin", devin, m), false, m);
   }
+});
+
+// ── A profile's own launch arguments (#48) ──────────────────────────────────
+
+test("a profile's args go after its model and thinking flags, and before the prompt, for every harness (#48)", () => {
+  const launch = (p) => P.buildLaunch(ok({ ...p, args: ["--a", "b=1"] }), PROMPT);
+  assert.deepEqual(launch({ harness: "mcc", model: "opus", thinking: "max" }),
+    { mode: "command", argv: ["mcc", "run", "--", "--model", "opus", "--effort", "max", "--a", "b=1", PROMPT], warnings: [] });
+  assert.deepEqual(launch({ harness: "claude", model: "sonnet", thinking: "high" }),
+    { mode: "agent", kind: "claude", extraArgs: ["--model", "sonnet", "--effort", "high", "--a", "b=1"], warnings: [] });
+  assert.deepEqual(launch({ harness: "codex", model: "gpt-5", thinking: "low" }).extraArgs, ["-m", "gpt-5", "-c", 'model_reasoning_effort="low"', "--a", "b=1"]);
+  assert.deepEqual(launch({ harness: "pi", model: "m", thinking: "off" }).extraArgs, ["--model", "m", "--thinking", "off", "--a", "b=1"]);
+  // Devin's prompt must follow --, so the args come before it.
+  assert.deepEqual(launch({ harness: "devin", model: "swe-2" }).argv, ["devin", "--model", "swe-2", "--a", "b=1", "--", PROMPT]);
+  assert.deepEqual(launch({ harness: "devin" }).argv, ["devin", "--a", "b=1", "--", PROMPT]);
+  // OpenCode without a model is an agent: its args are its extraArgs (the panel adds --prompt after them).
+  assert.deepEqual(launch({ harness: "opencode" }), { mode: "agent", kind: "opencode", extraArgs: ["--a", "b=1"], warnings: [] });
+  // With a model, after --standalone and before --prompt, never before env or the command.
+  assert.deepEqual(launch({ harness: "opencode", model: "a/b" }).argv,
+    ["env", 'OPENCODE_CONFIG_CONTENT={"model":"a/b"}', "opencode", "--standalone", "--a", "b=1", "--prompt", PROMPT]);
+  // Mistral Vibe: after vibe, with or without env's variable before it.
+  assert.deepEqual(launch({ harness: "vibe" }).argv, ["vibe", "--a", "b=1", PROMPT]);
+  assert.deepEqual(launch({ harness: "vibe", model: "glm-5-3" }).argv, ["env", "VIBE_ACTIVE_MODEL=glm-5-3", "vibe", "--a", "b=1", PROMPT]);
+  // With no model or thinking, the args alone; each word stays one word, in its order.
+  assert.deepEqual(launch({ harness: "claude" }).extraArgs, ["--a", "b=1"]);
+  assert.deepEqual(P.buildLaunch(ok({ harness: "claude", args: ["--permission-mode", "bypassPermissions"] }), PROMPT).extraArgs, ["--permission-mode", "bypassPermissions"]);
+  assert.deepEqual(P.buildLaunch(ok({ harness: "mcc", args: ["--dangerously-skip-permissions"] }), PROMPT).argv, ["mcc", "run", "--", "--dangerously-skip-permissions", PROMPT]);
+});
+
+test("a profile without args, or with an empty list, starts exactly as before (#48)", () => {
+  // What each harness started before #48, for a profile with a model and thinking level and one without.
+  const before = [
+    [{ harness: "mcc", model: "opus", thinking: "max" }, { mode: "command", argv: ["mcc", "run", "--", "--model", "opus", "--effort", "max", PROMPT], warnings: [] }],
+    [{ harness: "mcc" }, { mode: "command", argv: ["mcc", "run", "--", PROMPT], warnings: [] }],
+    [{ harness: "claude", model: "sonnet", thinking: "high" }, { mode: "agent", kind: "claude", extraArgs: ["--model", "sonnet", "--effort", "high"], warnings: [] }],
+    [{ harness: "claude" }, { mode: "agent", kind: "claude", extraArgs: [], warnings: [] }],
+    [{ harness: "codex", model: "gpt-5", thinking: "low" }, { mode: "agent", kind: "codex", extraArgs: ["-m", "gpt-5", "-c", 'model_reasoning_effort="low"'], warnings: [] }],
+    [{ harness: "pi", model: "m", thinking: "off" }, { mode: "agent", kind: "pi", extraArgs: ["--model", "m", "--thinking", "off"], warnings: [] }],
+    [{ harness: "opencode" }, { mode: "agent", kind: "opencode", extraArgs: [], warnings: [] }],
+    [{ harness: "opencode", model: "a/b" }, { mode: "command", argv: ["env", 'OPENCODE_CONFIG_CONTENT={"model":"a/b"}', "opencode", "--standalone", "--prompt", PROMPT], warnings: [] }],
+    [{ harness: "vibe" }, { mode: "command", argv: ["vibe", PROMPT], warnings: [] }],
+    [{ harness: "vibe", model: "glm-5-3" }, { mode: "command", argv: ["env", "VIBE_ACTIVE_MODEL=glm-5-3", "vibe", PROMPT], warnings: [] }],
+    [{ harness: "devin", model: "swe-2" }, { mode: "command", argv: ["devin", "--model", "swe-2", "--", PROMPT], warnings: [] }],
+    [{ harness: "devin" }, { mode: "command", argv: ["devin", "--", PROMPT], warnings: [] }],
+  ];
+  for (const [p, plan] of before) {
+    for (const args of [undefined, null, []]) {
+      assert.deepEqual(P.buildLaunch(ok({ ...p, ...(args === undefined ? {} : { args }) }), PROMPT), plan, `${JSON.stringify(p)} args ${JSON.stringify(args)}`);
+    }
+  }
+  assert.deepEqual(P.buildLaunch(P.DEFAULT_PROFILE, PROMPT).argv, ["mcc", "run", "--", PROMPT]);
+});
+
+test("validateArgs takes flags, values, quotes and =, and refuses what would break the command line (#48)", () => {
+  for (const args of [["--dangerously-skip-permissions"], ["--permission-mode", "bypassPermissions"], ["-c", "model_reasoning_effort=high"],
+    ["-c", 'model_reasoning_effort="high"'], ["--name", "it's"], ["-x"], ["é日本"], Array(P.ARGS_MAX_WORDS).fill("-v"), ["x".repeat(P.ARGS_WORD_MAX)], []]) {
+    assert.deepEqual(P.validateArgs(args), [], JSON.stringify(args));
+    assert.deepEqual(P.validateProfile(ok({ harness: "claude", args })), [], JSON.stringify(args));
+  }
+  const refused = [
+    [["--"], /word 1 is --/],
+    [["-v", ""], /word 2 is empty/],
+    [["a b"], /word 1 has a space/],
+    [["a\tb"], /word 1 has a space/],
+    [["a\x1b[2Jb"], /word 1 has a space, a control/],
+    [["a\nb"], /control/],
+    [["a b"], /control/],
+    [["a b"], /control/],
+    [["a​b"], /control/],
+    [["a\\b"], /backslash/],
+    [Array(P.ARGS_MAX_WORDS + 1).fill("-v"), new RegExp(`at most ${P.ARGS_MAX_WORDS} words`)],
+    [["x".repeat(P.ARGS_WORD_MAX + 1)], new RegExp(`longer than ${P.ARGS_WORD_MAX} characters`)],
+    [["-v", 3], /word 2 must be text/],
+    ["--verbose", /must be a list of words/],
+    [{ 0: "-v" }, /must be a list of words/],
+  ];
+  for (const [args, why] of refused) {
+    const errors = P.validateProfile(ok({ harness: "claude", args }));
+    assert.ok(errors.length && errors.every((e) => e.startsWith("Args: ")), `${JSON.stringify(args)}: ${errors}`);
+    assert.ok(errors.some((e) => why.test(e)), `${JSON.stringify(args)}: ${errors}`);
+    // One reason a part: the form splits them on "; ", and none quotes the word.
+    for (const e of errors) assert.ok(!e.includes("; ") && !/[\x00-\x1f]/.test(e), e);
+    assert.throws(() => P.buildLaunch(ok({ harness: "claude", args }), PROMPT), /^Error: Invalid profile: Args: /);
+  }
+  // Absent or null is no args.
+  assert.deepEqual(P.validateProfile(ok({ harness: "claude", args: null })), []);
+});
+
+test("normalizeProfile keeps a non-empty list of args, a copy, and drops an empty one (#48)", () => {
+  const args = ["--a", "b"];
+  const kept = P.normalizeProfile(ok({ harness: "pi", args }));
+  assert.deepEqual(kept, { id: "p", name: "Profile", harness: "pi", args: ["--a", "b"] });
+  assert.notEqual(kept.args, args);
+  for (const none of [[], null, undefined]) assert.deepEqual(P.normalizeProfile(ok({ harness: "pi", args: none })), { id: "p", name: "Profile", harness: "pi" });
+  // Args that aren't a list are kept, so they are refused rather than dropped.
+  assert.equal(P.normalizeProfile(ok({ harness: "pi", args: "--a" })).args, "--a");
+  assert.deepEqual(P.upsertProfile(P.emptyStore(), ok({ harness: "pi", args: [] })).profiles, [{ id: "p", name: "Profile", harness: "pi" }]);
+  assert.throws(() => P.upsertProfile(P.emptyStore(), ok({ harness: "pi", args: ["--"] })), /^Error: Args: word 1 is --/);
+});
+
+test("serializeStore writes version 5 only with a profile's args, reads them back, and goes back down without (#48)", () => {
+  const base = P.upsertProfile(P.emptyStore(), ok({ id: "a", harness: "pi" }));
+  // Without args, the bytes and version of before #48.
+  const v1 = P.serializeStore(base);
+  assert.equal(v1, '{\n  "version": 1,\n  "profiles": [\n    {\n      "id": "a",\n      "name": "Profile",\n      "harness": "pi"\n    }\n  ],\n  "assign": {\n    "resolve": null,\n    "review": null\n  }\n}\n');
+  assert.equal(P.serializeStore(P.upsertProfile(base, ok({ id: "a", harness: "pi", args: [] }), "a")), v1);
+  const withAp = P.setPrompt(base, "autopilot", "Go {numbers}");
+  assert.equal(JSON.parse(P.serializeStore(withAp)).version, 4);
+  // With args: version 5, a superset of version 4, the args last in their profile.
+  const withArgs = P.upsertProfile(base, ok({ id: "a", harness: "pi", thinking: "high", args: ["--x", "y=1"] }), "a");
+  const v5 = P.serializeStore(withArgs);
+  assert.deepEqual(JSON.parse(v5), {
+    version: 5,
+    profiles: [{ id: "a", name: "Profile", harness: "pi", thinking: "high", args: ["--x", "y=1"] }],
+    assign: { resolve: null, review: null },
+    prompts: { resolve: null, review: null, autopilot: null },
+    customModels: {},
+  });
+  assert.deepEqual(Object.keys(JSON.parse(v5).profiles[0]), ["id", "name", "harness", "thinking", "args"]);
+  // Read back the same, after a restart: the store is the file.
+  assert.deepEqual(P.parseStore(v5), { store: withArgs, warnings: [], readOnly: false });
+  assert.equal(P.serializeStore(P.parseStore(v5).store), v5);
+  // With everything else too, still version 5, holding all of it.
+  const all = P.addCustomModel(P.setPrompt(P.setPrompt(withArgs, "autopilot", "Go {numbers}"), "resolve", "Fix {number}"), "pi", "x/y");
+  const parsed = JSON.parse(P.serializeStore(all));
+  assert.equal(parsed.version, 5);
+  assert.deepEqual(parsed.prompts, { resolve: "Fix {number}", review: null, autopilot: "Go {numbers}" });
+  assert.deepEqual(parsed.customModels, { pi: ["x/y"] });
+  assert.deepEqual(P.parseStore(P.serializeStore(all)).store, all);
+  // The args removed: back to the lowest version that holds the rest, byte for byte.
+  const cleared = P.upsertProfile(withArgs, ok({ id: "a", harness: "pi", thinking: "high" }), "a");
+  assert.equal(JSON.parse(P.serializeStore(cleared)).version, 1);
+  assert.ok(!P.serializeStore(cleared).includes("args"));
+  assert.equal(P.serializeStore(P.removeProfile(withArgs, "a")), P.serializeStore(P.removeProfile(base, "a")));
+});
+
+test("args it can't use make their profile skipped and the file read only; a newer version stays read only (#48)", () => {
+  const hand = (args, version = 5) => P.parseStore(JSON.stringify({ version, profiles: [ok({ id: "a", harness: "claude", args })], assign: { resolve: "a" } }));
+  for (const args of ["--verbose", ["--"], ["a\\b"], [""], [1], ["a\x1b[2Jb"], Array(P.ARGS_MAX_WORDS + 1).fill("-v")]) {
+    const r = hand(args);
+    assert.equal(r.readOnly, true, JSON.stringify(args));
+    assert.deepEqual(r.store.profiles, [], JSON.stringify(args));
+    assert.equal(r.warnings[0], "Some profiles in the file can't be used (see below), so it is read only here: fix or remove them to save");
+    assert.match(r.warnings[1], /^Skipped profile "a": Args: /);
+    assert.ok(!r.warnings.some((w) => w.includes("\x1b")), "a word from the file never reaches the screen");
+  }
+  // Good args are read, from version 5 and, written by hand, from an older version too.
+  for (const version of [5, 1]) {
+    assert.deepEqual(hand(["--x"], version), { store: { ...P.emptyStore(), profiles: [{ id: "a", name: "Profile", harness: "claude", args: ["--x"] }], assign: { resolve: "a", review: null } }, warnings: [], readOnly: false });
+  }
+  // An empty list is no args, and doesn't make the file read only.
+  assert.deepEqual(hand([]).store.profiles, [{ id: "a", name: "Profile", harness: "claude" }]);
+  assert.equal(hand([]).readOnly, false);
+  // A newer version is still read only, its args read.
+  const newer = hand(["--x"], 6);
+  assert.equal(newer.readOnly, true);
+  assert.match(newer.warnings[0], /version 6, not 1, 2, 3, 4 or 5/);
+  assert.deepEqual(newer.store.profiles[0].args, ["--x"]);
 });
