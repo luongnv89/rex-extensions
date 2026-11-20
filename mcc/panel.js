@@ -3,7 +3,7 @@
 // `mcc usage --json-v2`, in a strip along the bottom of a Rex tab. Refresh looks
 // every account up live (`mcc usage --all`); collapse shrinks the strip so the
 // panes above get the room back. A line under the title shows this machine's CPU,
-// memory and network, sampled every 5 seconds.
+// memory, disk and network, sampled every 5 seconds.
 //
 // rex-mcc.lua starts it as `node panel.js`. When panel.js is under $HOME, the path
 // is resolved under the $HOME of the machine the pane runs on, through `sh -c`.
@@ -142,8 +142,9 @@ const loginCommand = (p) => `mcc login ${p.isDefault ? "default" : p.name}`;
 
 // ── Machine ─────────────────────────────────────────────────────────────────
 // Ported from mcc-herdr-plugin (herdr-app/mcc-usage/system.js and its panel.js);
-// keep them the same. A metric is a value, `undefined` before there is one (a rate
-// needs two samples), or `null` when it can't be read.
+// keep them the same, except for the disk, which only this panel shows (#53). A
+// metric is a value, `undefined` before there is one (a rate needs two samples), or
+// `null` when it can't be read.
 
 // Interfaces that carry no traffic of their own (containers, VPNs, bridges), so
 // counting them would count the same bytes twice. Used when Linux can't say.
@@ -281,6 +282,33 @@ function formatPair(used, total) {
 }
 
 const memPercent = (m) => (m && m.total > 0 ? (100 * m.used) / m.total : null);
+// The same for the disk: { used, total } in bytes, so the percent agrees with the pair shown.
+const diskPercent = memPercent;
+
+// fs.statfs → bytes used and in all. Blocks count in the fragment size, which older
+// Node doesn't report, so the block size stands in for it then.
+function parseStatfs(s) {
+  const size = Number(s?.frsize) > 0 ? Number(s.frsize) : Number(s?.bsize);
+  const blocks = Number(s?.blocks), free = Number(s?.bfree);
+  if (!(size > 0) || !(blocks > 0) || !(free >= 0) || free > blocks) return null;
+  return { used: (blocks - free) * size, total: blocks * size };
+}
+
+// The disk the system runs from, or null when it can't be read: no fs.statfs (it
+// came in Node 18.15), a call that throws or fails, or no answer within `timeout`.
+// On macOS statfs("/") counts the whole APFS container, as Finder does; `df /`
+// counts only the sealed system volume, a sliver of it.
+async function readDisk(statfs = fs.promises.statfs, timeout = STATS_TIMEOUT) {
+  let timer;
+  try {
+    const late = new Promise((resolve) => { timer = setTimeout(resolve, timeout, null); });
+    return parseStatfs(await Promise.race([statfs("/"), late]));
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 // A run() result → what `parse` makes of its output, or null when the program
 // failed: it couldn't start or timed out (error: run() reports a kill as code 0),
@@ -316,11 +344,11 @@ const readText = (file) => fs.promises.readFile(file, "utf8").catch(() => null);
 async function readStats() {
   const at = Date.now(), cpu = cpuTimes();
   if (process.platform === "darwin") {
-    const [vm, ns] = await Promise.all([run("/usr/bin/vm_stat", [], STATS_TIMEOUT), run("/usr/sbin/netstat", ["-ibn"], STATS_TIMEOUT)]);
-    return { cpu, mem: readout(vm, (t) => parseVmStat(t, os.totalmem())), net: readout(ns, parseNetstat), at };
+    const [vm, ns, disk] = await Promise.all([run("/usr/bin/vm_stat", [], STATS_TIMEOUT), run("/usr/sbin/netstat", ["-ibn"], STATS_TIMEOUT), readDisk()]);
+    return { cpu, mem: readout(vm, (t) => parseVmStat(t, os.totalmem())), disk, net: readout(ns, parseNetstat), at };
   }
-  const [mem, dev] = await Promise.all([readText("/proc/meminfo"), readText("/proc/net/dev")]);
-  return { cpu, mem: mem ? parseMeminfo(mem) : null, net: dev ? parseNetDev(dev, linuxVirtual) : null, at };
+  const [mem, dev, disk] = await Promise.all([readText("/proc/meminfo"), readText("/proc/net/dev"), readDisk()]);
+  return { cpu, mem: mem ? parseMeminfo(mem) : null, disk, net: dev ? parseNetDev(dev, linuxVirtual) : null, at };
 }
 
 // Turn a reading into what the stats line shows, keeping it as the base for the next.
@@ -329,7 +357,7 @@ function applyStats(r) {
   const net = step(ui.netBase, r.net ? { ...r.net, at: r.at } : null, rate);
   ui.cpuBase = cpu.base;
   ui.netBase = net.base;
-  ui.stats = { cpu: cpu.value, mem: r.mem, net: net.value };
+  ui.stats = { cpu: cpu.value, mem: r.mem, disk: r.disk, net: net.value };
 }
 
 // Start the stats over: the next sample sets new bases, so the first CPU percent and
@@ -344,7 +372,7 @@ function resetStats() {
 async function sampleStats() {
   if (ui.sampling) return;
   ui.sampling = true;
-  try { applyStats(await readStats()); } catch { applyStats({ cpu: null, mem: null, net: null, at: Date.now() }); }
+  try { applyStats(await readStats()); } catch { applyStats({ cpu: null, mem: null, disk: null, net: null, at: Date.now() }); }
   ui.sampling = false;
   draw();
 }
@@ -441,8 +469,9 @@ function row(p, layout, issue, now = Date.now()) {
 // The highest percent of one window across accounts, for the collapsed header.
 const peak = (profiles, key) => profiles.reduce((m, p) => (p[key] ? Math.max(m ?? 0, Math.round(p[key].percent)) : m), null);
 
-// The machine's line: " cpu 12% · mem 28.0/32.0 GB · net ↓1.2 MB/s ↑40 KB/s". When
-// that doesn't fit it drops the network, then the memory totals, then cuts.
+// The machine's line: " cpu 12% · mem 28.0/32.0 GB · disk 822.0/926.4 GB 89% · net
+// ↓1.2 MB/s ↑40 KB/s". When that doesn't fit it drops the network, then the disk
+// totals, then the memory totals, then the disk, then cuts.
 function statsRow(cols, s = ui.stats) {
   const pct = (v) => label(v, (x) => `${Math.round(x)}%`);
   const color = (p) => (p == null ? dim : tone(Math.round(p)));
@@ -450,8 +479,11 @@ function statsRow(cols, s = ui.stats) {
   const cpu = ["cpu ", pct(s.cpu), color(s.cpu)];
   const memFull = ["mem ", label(s.mem, (m) => formatPair(m.used, m.total)), color(mp)];
   const memShort = ["mem ", pct(s.mem && mp), color(mp)];
+  const dp = diskPercent(s.disk);
+  const diskFull = ["disk ", label(s.disk, (d) => `${formatPair(d.used, d.total)} ${Math.round(dp)}%`), color(dp)];
+  const diskShort = ["disk ", pct(s.disk && dp), color(dp)];
   const net = ["net ", label(s.net, (n) => `↓${formatRate(n.rx)} ↑${formatRate(n.tx)}`), s.net ? (x) => x : dim];
-  const choices = [[cpu, memFull, net], [cpu, memFull], [cpu, memShort]];
+  const choices = [[cpu, memFull, diskFull, net], [cpu, memFull, diskFull], [cpu, memFull, diskShort], [cpu, memShort, diskShort], [cpu, memShort]];
   const parts = choices.find((c) => width(" " + c.map(([k, v]) => k + v).join(" · ")) <= cols) ?? choices.at(-1);
   return clip(" " + parts.map(([k, v, c]) => dim(k) + c(v)).join(dim(" · ")), cols);
 }
@@ -844,6 +876,6 @@ function main() {
 if (require.main === module) main();
 else module.exports = {
   width, fit, clip, until, ago, flag, parse, firstError, columns, row, cell, cellWidthFor, peak, splitAbove, firstLeaf, ratioFor, reasonText, findMcc, noticeLines, wantedRows, ui,
-  parseProcStat, cpuPercent, parseMeminfo, parseVmStat, parseNetDev, parseNetstat, rate, step, formatBytes, formatRate, shortBytes, formatPair, memPercent, readout, label,
+  parseProcStat, cpuPercent, parseMeminfo, parseVmStat, parseNetDev, parseNetstat, rate, step, formatBytes, formatRate, shortBytes, formatPair, memPercent, diskPercent, parseStatfs, readDisk, readout, label,
   cpuTimes, readStats, applyStats, resetStats, statsRow, header, refreshButton, footerButtons,
 };
