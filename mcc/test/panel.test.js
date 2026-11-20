@@ -187,12 +187,17 @@ function withUi(t, values) {
 }
 
 const MEM = { used: (764905 - 8234 + 203523 + 716032) * 16384, total: F.MEMSIZE };
+// fs.statfs("/") on a Mac with a 1 TB disk: the whole APFS container, 89% used.
+const STATFS = { type: 26, bsize: 4096, frsize: 4096, blocks: 242837545, bfree: 27333343, bavail: 27333343 };
+const DISK = { used: (242837545 - 27333343) * 4096, total: 242837545 * 4096 };
 const STATES = {
-  read: { cpu: 16.7, mem: MEM, net: { rx: 1.2 * 1024 ** 2, tx: 40 * 1024 } },
-  busy: { cpu: 97, mem: { used: 31 * 1024 ** 3, total: 32 * 1024 ** 3 }, net: { rx: 999 * 1024 ** 3, tx: 999 * 1024 ** 3 } },
+  read: { cpu: 16.7, mem: MEM, disk: DISK, net: { rx: 1.2 * 1024 ** 2, tx: 40 * 1024 }, online: true },
+  busy: { cpu: 97, mem: { used: 31 * 1024 ** 3, total: 32 * 1024 ** 3 }, disk: { used: 3.9 * 1024 ** 4, total: 4 * 1024 ** 4 }, net: { rx: 999 * 1024 ** 3, tx: 999 * 1024 ** 3 }, online: true },
   pending: {},
-  unavailable: { cpu: null, mem: null, net: null },
-  mixed: { cpu: 3, mem: null, net: undefined },
+  unavailable: { cpu: null, mem: null, disk: null, net: null, online: null },
+  mixed: { cpu: 3, mem: null, disk: DISK, net: undefined, online: false },
+  noDisk: { cpu: 16.7, mem: MEM, disk: null, net: { rx: 1.2 * 1024 ** 2, tx: 40 * 1024 }, online: true },
+  offline: { cpu: 16.7, mem: MEM, disk: DISK, net: { rx: 0, tx: 0 }, online: false },
 };
 
 test("CPU: /proc/stat samples and os.cpus() times", () => {
@@ -230,6 +235,28 @@ test("network: physical interfaces only, from /proc/net/dev and netstat", () => 
     assert.equal(p.parseNetDev(bad), null);
     assert.equal(p.parseNetstat(bad), null);
   }
+});
+
+test("disk: fs.statfs blocks in bytes, null when it can't say", () => {
+  assert.deepEqual(p.parseStatfs(STATFS), DISK);
+  assert.equal(Math.round(p.diskPercent(DISK)), 89);
+  // Blocks count in the fragment size when Node reports one, else the block size.
+  assert.deepEqual(p.parseStatfs({ frsize: 512, bsize: 4096, blocks: 100, bfree: 25 }), { used: 75 * 512, total: 100 * 512 });
+  assert.deepEqual(p.parseStatfs({ bsize: 4096, blocks: 100, bfree: 25 }), { used: 75 * 4096, total: 100 * 4096 }, "older Node: no frsize");
+  for (const bad of [null, undefined, {}, { ...STATFS, bsize: 0, frsize: 0 }, { ...STATFS, blocks: 0 }, { ...STATFS, bfree: STATFS.blocks + 1 }, { ...STATFS, bfree: NaN }, { ...STATFS, blocks: "x" }]) {
+    assert.equal(p.parseStatfs(bad), null, JSON.stringify(bad));
+  }
+});
+
+test("readDisk asks statfs about / and never fails", async () => {
+  const asked = [];
+  assert.deepEqual(await p.readDisk(async (dir) => { asked.push(dir); return STATFS; }), DISK);
+  assert.deepEqual(asked, ["/"]);
+  assert.equal(await p.readDisk(() => { throw new Error("ENOSYS"); }), null, "it throws");
+  assert.equal(await p.readDisk(async () => { throw new Error("EACCES"); }), null, "it rejects");
+  assert.equal(await p.readDisk(null), null, "Node has no fs.statfs");
+  assert.equal(await p.readDisk(async () => ({ ...STATFS, blocks: 0 })), null, "nothing it can read");
+  assert.equal(await p.readDisk(() => new Promise(() => {}), 10), null, "no answer in time");
 });
 
 test("rate: bytes per second over the time measured, never negative", () => {
@@ -276,43 +303,105 @@ test("the stats row never exceeds the pane width, read or not", () => {
   }
 });
 
-test("the stats row shows CPU, memory and network, dropping the network, then the totals, when narrow", () => {
+test("the stats row shows everything when it fits, else percents and an online dot, then drops the dot, then the disk", () => {
   const s = STATES.read;
-  assert.equal(strip(p.statsRow(80, s)), " cpu 17% · mem 25.6/32.0 GB · net ↓1.2 MB/s ↑40 KB/s");
-  assert.equal(strip(p.statsRow(40, s)), " cpu 17% · mem 25.6/32.0 GB");
-  assert.equal(strip(p.statsRow(24, s)), " cpu 17% · mem 80%");
-  assert.equal(strip(p.statsRow(80, STATES.pending)), " cpu — · mem — · net —");
+  assert.equal(strip(p.statsRow(80, s)), " cpu 17% · mem 25.6/32.0 GB · disk 822.1/926.4 GB 89% · net ↓1.2 MB/s ↑40 KB/s");
+  assert.equal(strip(p.statsRow(78, s)), " cpu 17% · mem 25.6/32.0 GB · disk 822.1/926.4 GB 89% · net ↓1.2 MB/s ↑40 KB/s", "exactly fits");
+  assert.equal(strip(p.statsRow(77, s)), " cpu 17% · mem 80% · disk 89% · net ●", "one cell short of everything: the compact form");
+  assert.equal(strip(p.statsRow(60, s)), " cpu 17% · mem 80% · disk 89% · net ●");
+  assert.equal(strip(p.statsRow(37, s)), " cpu 17% · mem 80% · disk 89% · net ●");
+  assert.equal(strip(p.statsRow(36, s)), " cpu 17% · mem 80% · disk 89%");
+  assert.equal(strip(p.statsRow(29, s)), " cpu 17% · mem 80% · disk 89%");
+  assert.equal(strip(p.statsRow(28, s)), " cpu 17% · mem 80%");
+  assert.equal(strip(p.statsRow(80, STATES.pending)), " cpu — · mem — · disk — · net —");
+  assert.equal(strip(p.statsRow(40, STATES.pending)), " cpu — · mem — · disk — · net —");
+});
+
+test("the online dot: green and blinking online, red ○ offline", () => {
+  const net = (line) => line.slice(line.lastIndexOf("net "));
+  assert.equal(net(p.statsRow(40, STATES.read, false)), "net \x1b[0m\x1b[32m●\x1b[0m", "on: green");
+  assert.equal(net(p.statsRow(40, STATES.read, true)), "net \x1b[0m\x1b[90m●\x1b[0m", "off half of the blink: dim");
+  assert.equal(net(p.statsRow(40, STATES.offline, false)), "net \x1b[0m\x1b[31m○\x1b[0m", "offline: red, and a different shape");
+  assert.equal(net(p.statsRow(40, STATES.offline, true)), "net \x1b[0m\x1b[31m○\x1b[0m", "offline doesn't blink");
+  assert.equal(strip(p.statsRow(50, STATES.mixed)), " cpu 3% · mem unavailable · disk 89% · net ○");
+  const wide = strip(p.statsRow(100, STATES.offline));
+  assert.match(wide, / · net ↓\S+ \S+ ↑\S+ \S+$/, "wide: the rates");
+  assert.ok(!/[●○]/.test(wide), "wide: no dot");
+});
+
+test("the dot blinks only while it's shown: online, expanded, on the compact line", (t) => {
+  withUi(t, { collapsed: false });
+  assert.equal(p.dotBlinks(40, STATES.read), true);
+  assert.equal(p.dotBlinks(80, STATES.read), false, "the wide line shows the rates instead");
+  assert.equal(p.dotBlinks(30, STATES.read), false, "too narrow for the dot");
+  assert.equal(p.dotBlinks(40, STATES.offline), false, "offline doesn't blink");
+  assert.equal(p.dotBlinks(40, STATES.pending), false);
+  p.ui.collapsed = true;
+  assert.equal(p.dotBlinks(40, STATES.read), false, "collapsed: no stats line");
+});
+
+test("online: any address but loopback or link-local", () => {
+  const a = (address, family = "IPv4", internal = false) => ({ address, family, internal });
+  assert.equal(p.isOnline({ lo0: [a("127.0.0.1", "IPv4", true), a("::1", "IPv6", true)] }), false, "loopback only");
+  assert.equal(p.isOnline({ en0: [a("169.254.12.3"), a("fe80::1c2:3ff:fe4a:5b6c", "IPv6")] }), false, "link-local only: no network");
+  assert.equal(p.isOnline({ en0: [a("fe80::1", "IPv6"), a("192.168.1.20")] }), true);
+  assert.equal(p.isOnline({ en0: [a("2a01:e0a:1::5", "IPv6")] }), true, "IPv6 only");
+  assert.equal(p.isOnline({ en0: [a("10.0.0.5", 4)] }), true, "the numeric family of old Node");
+  assert.equal(p.isOnline({}), false);
+  assert.equal(p.isOnline(null), null);
+  assert.equal(p.readOnline(() => { throw new Error("uv_interface_addresses"); }), null, "can't be read: unavailable");
+  assert.equal(typeof p.readOnline(), "boolean", "this machine");
+});
+
+test("the disk is green, yellow from 80% and red from 95%, like CPU and memory", () => {
+  const GB = 1024 ** 3;
+  // Memory stays green, so only the disk's own percent can turn its colour.
+  const at = (pct) => ({ cpu: 10, mem: { used: 10 * GB, total: 100 * GB }, disk: { used: pct * GB, total: 100 * GB }, net: undefined });
+  const disk = (code) => `\x1b[90mdisk \x1b[0m\x1b[${code}m`;
+  for (const [pct, code] of [[79, 32], [80, 33], [94, 33], [95, 31], [100, 31]]) {
+    for (const cols of [80, 32]) {
+      const line = p.statsRow(cols, at(pct));
+      assert.ok(line.includes(disk(code)), `${pct}% at ${cols} cols: ${JSON.stringify(line)}`);
+      assert.ok(line.includes(`\x1b[90mmem \x1b[0m\x1b[32m`), `${pct}% at ${cols} cols: memory stays green`);
+    }
+  }
+  assert.equal(strip(p.statsRow(80, at(80))), " cpu 10% · mem 10.0/100.0 GB · disk 80.0/100.0 GB 80% · net —");
 });
 
 test("a metric that can't be read says so, and the rest still show", () => {
-  assert.equal(strip(p.statsRow(80, STATES.mixed)), " cpu 3% · mem unavailable · net —");
-  assert.equal(strip(p.statsRow(80, STATES.unavailable)), " cpu unavailable · mem unavailable · net unavailable");
+  assert.equal(strip(p.statsRow(80, STATES.mixed)), " cpu 3% · mem unavailable · disk 822.1/926.4 GB 89% · net —");
+  assert.equal(strip(p.statsRow(80, STATES.unavailable)), " cpu unavailable · mem unavailable · disk unavailable · net unavailable");
+  assert.equal(strip(p.statsRow(80, STATES.noDisk)), " cpu 17% · mem 25.6/32.0 GB · disk unavailable · net ↓1.2 MB/s ↑40 KB/s");
+  assert.equal(strip(p.statsRow(40, STATES.noDisk)), " cpu 17% · mem 80% · disk unavailable");
 });
 
 test("each sample updates the stats: CPU and network from the second one on", (t) => {
   withUi(t, { stats: {}, cpuBase: null, netBase: null });
-  p.applyStats({ cpu: { total: 1000, idle: 850 }, mem: MEM, net: { rx: 0, tx: 0 }, at: 0 });
-  assert.deepEqual(p.ui.stats, { cpu: undefined, mem: MEM, net: undefined });
-  p.applyStats({ cpu: { total: 1900, idle: 1600 }, mem: MEM, net: { rx: 10240, tx: 5120 }, at: 5000 });
+  p.applyStats({ cpu: { total: 1000, idle: 850 }, mem: MEM, disk: DISK, net: { rx: 0, tx: 0 }, at: 0 });
+  assert.deepEqual(p.ui.stats, { cpu: undefined, mem: MEM, disk: DISK, net: undefined, online: undefined }, "the disk, like memory, from the first sample");
+  p.applyStats({ cpu: { total: 1900, idle: 1600 }, mem: MEM, disk: DISK, net: { rx: 10240, tx: 5120 }, at: 5000 });
   assert.equal(Math.round(p.ui.stats.cpu), 17);
   assert.deepEqual(p.ui.stats.net, { rx: 2048, tx: 1024 });
-  p.applyStats({ cpu: null, mem: MEM, net: { rx: 20480, tx: 5120 }, at: 10000 });
+  p.applyStats({ cpu: null, mem: MEM, disk: DISK, net: { rx: 20480, tx: 5120 }, at: 10000 });
   assert.equal(p.ui.stats.cpu, null, "CPU failed this time");
   assert.deepEqual(p.ui.stats.net, { rx: 2048, tx: 0 }, "the network still updates");
-  p.applyStats({ cpu: { total: 2900, idle: 1700 }, mem: MEM, net: null, at: 15000 });
-  assert.equal(strip(p.statsRow(80)), " cpu — · mem 25.6/32.0 GB · net unavailable");
+  p.applyStats({ cpu: { total: 2900, idle: 1700 }, mem: MEM, disk: DISK, net: null, at: 15000 });
+  assert.equal(strip(p.statsRow(80)), " cpu — · mem 25.6/32.0 GB · disk 822.1/926.4 GB 89% · net unavailable");
+  p.applyStats({ cpu: { total: 3900, idle: 2550 }, mem: MEM, disk: null, net: { rx: 30720, tx: 5120 }, at: 20000 });
+  assert.equal(p.ui.stats.disk, null, "the disk failed this time");
+  assert.equal(strip(p.statsRow(80)), " cpu 15% · mem 25.6/32.0 GB · disk unavailable · net —");
 });
 
 test("collapse and expand start the CPU and network over from a new base", (t) => {
   withUi(t, { stats: {}, cpuBase: null, netBase: null });
-  p.applyStats({ cpu: { total: 1000, idle: 850 }, mem: MEM, net: { rx: 0, tx: 0 }, at: 0 });
-  p.applyStats({ cpu: { total: 1900, idle: 1600 }, mem: MEM, net: { rx: 10240, tx: 0 }, at: 5000 });
+  p.applyStats({ cpu: { total: 1000, idle: 850 }, mem: MEM, disk: DISK, net: { rx: 0, tx: 0 }, at: 0 });
+  p.applyStats({ cpu: { total: 1900, idle: 1600 }, mem: MEM, disk: DISK, net: { rx: 10240, tx: 0 }, at: 5000 });
   assert.equal(Math.round(p.ui.stats.cpu), 17);
   p.resetStats();
   assert.deepEqual(p.ui.stats, {}, "— until the next sample");
   // The first sample after the reset only sets the bases again.
-  p.applyStats({ cpu: { total: 2900, idle: 1700 }, mem: MEM, net: { rx: 20480, tx: 0 }, at: 60000 });
-  assert.deepEqual(p.ui.stats, { cpu: undefined, mem: MEM, net: undefined });
+  p.applyStats({ cpu: { total: 2900, idle: 1700 }, mem: MEM, disk: DISK, net: { rx: 20480, tx: 0 }, at: 60000 });
+  assert.deepEqual(p.ui.stats, { cpu: undefined, mem: MEM, disk: DISK, net: undefined, online: undefined });
 });
 
 test("collapsed, the title line adds CPU and memory, and the network when there's room", (t) => {
@@ -353,6 +442,19 @@ test("readStats reads this machine without failing", async () => {
   assert.ok(r.cpu === null || r.cpu.total > 0);
   assert.ok(r.mem === null || (r.mem.total > 0 && r.mem.used >= 0 && r.mem.used <= r.mem.total));
   assert.ok(r.net === null || (r.net.rx >= 0 && r.net.tx >= 0));
+  assert.ok(r.disk === null || (r.disk.total > 0 && r.disk.used >= 0 && r.disk.used <= r.disk.total));
+  assert.ok(r.online === null || typeof r.online === "boolean");
+});
+
+test("readStats reads the rest when the disk can't be read", async (t) => {
+  const fsp = require("node:fs").promises, statfs = fsp.statfs;
+  t.after(() => { fsp.statfs = statfs; });
+  fsp.statfs = undefined;
+  const r = await p.readStats();
+  assert.equal(r.disk, null);
+  assert.ok(r.cpu === null || r.cpu.total > 0);
+  assert.ok(r.mem === null || r.mem.total > 0);
+  assert.ok("net" in r);
 });
 
 test("the refresh button is a wide target: the right of the title line, not just its label", (t) => {
