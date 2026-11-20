@@ -5738,3 +5738,33 @@ test("an Auto-pilot label at its longest stays on the header's ☑, cut to the r
   screenAt(46, 24, () => click(wider[TOOLS].indexOf("☑"), TOOLS));
   assert.equal(ui.autopilot.on, false);
 });
+
+test("a button label at its longest gives before the row's #N and the menu title's ref do (#52)", (t) => {
+  const dir = home(t, { ".claude/skills/auto-pilot/SKILL.md": "x" });
+  const label = "x".repeat(P.LABEL_MAX);
+  fs.writeFileSync(useProfiles(dir, [CC, CX]), JSON.stringify({
+    version: 6, profiles: [CC, CX], assign: {}, prompts: { resolve: null, review: null, autopilot: null }, customModels: {},
+    labels: { resolve: label, review: null, autopilot: label },
+  }));
+  setupGitHub("issues");
+  fakeRex(agentHere());
+  readStore();
+  // A 24-cell label plus a six-digit ref is wider than the row's budget: the
+  // label is cut to the room the ref leaves, the whole #123456 stays.
+  ui.issues[2].number = 123456;
+  const lines = screenAt(36, 24, draw);
+  assert.ok(lines.some((l) => l?.includes(` ${"x".repeat(21)}… #123456 `)), lines.join("\n"));
+  assert.ok(!lines.some((l) => /#\d+…/.test(l ?? "")), `the ref itself was cut:\n${lines.join("\n")}`);
+  // The row's menu title keeps its #N the same way, and a press still lands.
+  const [bx, by] = find(lines, "… #123456");
+  const menu = screenAt(36, 24, () => click(bx, by));
+  assert.ok(menu.some((l) => /┌ x{17}… #123456 with/.test(l ?? "")), menu.join("\n"));
+  screenAt(36, 24, () => key("\x1b"));
+  // In Auto-pilot the menu title's "N issues with" keeps its count likewise.
+  ui.autopilot.on = true;
+  ui.autopilot.checked.add(123456);
+  const start = screenAt(36, 24, draw);
+  const [sx, sy] = find(start, "▶ Start");
+  const ap = screenAt(36, 24, () => click(sx + 1, sy));
+  assert.ok(ap.some((l) => /┌ x{17}… 1 issue with/.test(l ?? "")), ap.join("\n"));
+});

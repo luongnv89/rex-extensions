@@ -1338,7 +1338,9 @@ function rowLines(item, selected, cols, icon, meta, trailing, action = null, mer
   const pad = " ".repeat(Math.max(0, room() - width(left)));
   lines.push(`${bar}   ${dim(left)}${pad}${parts.map((p) => " " + p.s).join("")}`);
   if (action) {
-    const label = ` ${fit(`${action.label} #${action.number}`, cols - 6)} `;
+    // A too-long label gives before the row's own #N does; the #N alone when nothing else fits.
+    const ref = ` #${action.number}`, room = cols - 6 - width(ref);
+    const label = ` ${room > 0 ? fit(action.label, room) + ref : fit(ref, cols - 6)} `;
     lines.hit = { line: lines.length, from: 4, to: 4 + width(label) };
     lines.push(`${bar}   ${invert(label)}`);
   }
@@ -1432,7 +1434,9 @@ function noticeLines(notice, cols, room) {
 // Each profile is its name, and what it starts when that fits beside it; the chosen
 // one is marked ▸. At most `cols` cells wide. Returns { width, lines: [{ text, entry }] }.
 function menuLines(m, cols, shown) {
-  const title = m.autopilot ? `${labelOf(AUTOPILOT.key)} ${m.count} issue${m.count === 1 ? "" : "s"} with` : `${labelOf(ACTIONS[m.view].key)} #${m.number} with`;
+  const key = m.autopilot ? AUTOPILOT.key : ACTIONS[m.view].key;
+  const ref = m.autopilot ? `${m.count} issue${m.count === 1 ? "" : "s"} with` : `#${m.number} with`;
+  const title = `${labelOf(key)} ${ref}`;
   const hint = (p) => {
     const h = p.id === P.DEFAULT_PROFILE.id ? "default" : describe(p);
     return h && h !== p.name ? h : "";
@@ -1440,7 +1444,9 @@ function menuLines(m, cols, shown) {
   const full = (p) => width(p.name) + (hint(p) ? 3 + width(hint(p)) : 0), most = cols - 6;
   // As wide as the widest line it shows: a name without its hint when both don't fit.
   const tw = Math.max(1, Math.min(most, Math.max(width(title), ...m.entries.map((p) => full(p) <= most ? full(p) : width(p.name))))), w = tw + 6;
-  const head = fit(title, w - 5);
+  // A too-long label gives before the title's own ref does.
+  const cut = fit(labelOf(key), Math.max(0, w - 6 - width(ref)));
+  const head = cut ? `${cut} ${ref}` : fit(ref, w - 5);
   const lines = [{ text: dim(`┌ ${head} ${"─".repeat(Math.max(0, w - 5 - width(head)))}${m.top > 0 ? "↑" : "─"}┐`), entry: null }];
   for (let i = m.top; i < Math.min(m.entries.length, m.top + shown); i++) {
     const p = m.entries[i], on = i === m.sel, h = hint(p);
@@ -2222,7 +2228,7 @@ function promptKey(st, k) {
   if (k === "\r" || k === "\n") return savePrompt();
   if (k === "\x12") return hasCustom(st) ? useDefault() : undefined;
   if (k === "\x7f" || k === "\b") pr.text = [...pr.text].slice(0, -1).join("");
-  else if (!k.startsWith("\x1b") && !/[\x00-\x1f\x7f-\x9f]/.test(k) && pr.text.length < field.max) pr.text += k;
+  else if (!k.startsWith("\x1b") && !/[\x00-\x1f\x7f-\x9f]/.test(k) && [...pr.text].length < field.max) pr.text += k;
   else return;
   delete st.fieldErrors[field.key];
   draw();
@@ -2279,7 +2285,7 @@ function formKey(st, k) {
     return draw();
   }
   if (k === "\x7f" || k === "\b") form[field.key] = [...form[field.key]].slice(0, -1).join("");
-  else if (!k.startsWith("\x1b") && !/[\x00-\x1f\x7f-\x9f]/.test(k) && form[field.key].length < field.max) form[field.key] += k;
+  else if (!k.startsWith("\x1b") && !/[\x00-\x1f\x7f-\x9f]/.test(k) && [...form[field.key]].length < field.max) form[field.key] += k;
   else return;
   delete st.fieldErrors[field.key];
   draw();
@@ -2637,7 +2643,7 @@ function pasteText(text) {
   if (!field.max) return;
   const box = st.mode === "prompt" ? st.prompt : st.form, key = st.mode === "prompt" ? "text" : adding ? "adding" : field.key;
   for (const c of text.replace(/\r\n|[\r\n\t]/g, " ")) {
-    if (box[key].length >= field.max) break;
+    if ([...box[key]].length >= field.max) break;
     if (!/[\x00-\x1f\x7f-\x9f]/.test(c)) box[key] += c;
   }
   delete st.fieldErrors[field.key];
