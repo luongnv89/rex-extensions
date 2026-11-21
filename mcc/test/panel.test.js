@@ -163,6 +163,20 @@ test("wantedRows fits the accounts and notices, or only the header when collapse
   p.ui.collapsed = false;
 });
 
+test("needsFit: only a panel shorter than its content, and not where the last fit left it (#55)", () => {
+  assert.equal(p.needsFit(6, 9, null), true, "a drag shorter than the accounts need");
+  assert.equal(p.needsFit(9, 9, null), false, "just tall enough");
+  assert.equal(p.needsFit(20, 9, null), false, "a drag taller stays");
+  assert.equal(p.needsFit(6, 9, 6), false, "a fit that couldn't do better, at 60% of the split");
+  assert.equal(p.needsFit(null, 9, null), false, "rows unknown");
+  assert.equal(p.needsFit(0, 9, null), false);
+  // Collapsed, the panel wants only its header, so no height is too short.
+  p.ui.profiles = p.parse(DOC);
+  p.ui.collapsed = true;
+  assert.equal(p.needsFit(3, p.wantedRows(), null), false);
+  p.ui.collapsed = false;
+});
+
 test("a very narrow pane gets compact rows", () => {
   const rows = p.parse(DOC);
   const layout = p.columns(24, 7);
