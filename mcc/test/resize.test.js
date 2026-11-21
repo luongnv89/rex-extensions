@@ -124,6 +124,50 @@ test("accounts the split can't hold: the snap back takes nearly all of it, then 
   assert.deepEqual(tab.resized, []);
 });
 
+test("past 60% after a snap, new content refits to every account, not back to 60% (#55)", async (t) => {
+  accounts(15);
+  const tab = fakeTab(t, 30);
+  await p.resize();
+  tab.ratio = 0.8;
+  await p.settleResize();
+  assert.equal(tab.panel(), p.wantedRows());
+  // One more account: the panel grows to show it too.
+  accounts(16);
+  await p.refit();
+  assert.equal(tab.panel(), p.wantedRows(), "every account shows");
+  tab.resized.length = 0;
+  assert.equal(await p.settleResize(), false);
+  assert.deepEqual(tab.resized, []);
+  // Two fewer: the panel shrinks to fit them, still past 60%.
+  accounts(14);
+  await p.refit();
+  assert.equal(tab.panel(), p.wantedRows(), "shrinks to fit, not to 60%");
+  assert.ok(tab.ratio < 0.4);
+});
+
+test("accounts the split can't hold: after the snap, a drag shorter keeps its place until the accounts change (#55)", async (t) => {
+  accounts(15);
+  const tab = fakeTab(t, 20);
+  await p.resize();
+  tab.ratio = 0.8;
+  assert.equal(await p.settleResize(), true);
+  assert.ok(Math.abs(tab.ratio - 0.01) < 1e-9);
+  // The user takes the pane above back: it stays.
+  tab.resized.length = 0;
+  tab.ratio = 0.7;
+  assert.equal(await p.settleResize(), false);
+  assert.deepEqual(tab.resized, [], "no snap back to the sliver");
+  assert.equal(tab.ratio, 0.7);
+  // One account fewer, still too many for the split: the content fit stops at 60%,
+  // and a short drag snaps back again.
+  accounts(14);
+  await p.refit();
+  assert.equal(tab.ratio, 0.4);
+  tab.ratio = 0.8;
+  assert.equal(await p.settleResize(), true);
+  assert.ok(Math.abs(tab.ratio - 0.01) < 1e-9, "snapping works again");
+});
+
 test("accounts that need more than 60% of the split: a drag taller than 60% stays (#55)", async (t) => {
   accounts(15);
   const tab = fakeTab(t, 30);
