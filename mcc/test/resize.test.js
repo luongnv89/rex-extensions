@@ -88,9 +88,10 @@ test("the smallest height follows the accounts: one more and a short drag snaps 
   assert.equal(p.wantedRows(), 12);
 });
 
-test("accounts that need more than 60% of the split: the panel snaps to 60% and stops there (#55)", async (t) => {
+test("accounts that need more than 60% of the split: a fit stops at 60%, a short drag snaps back past it to fit them all (#55)", async (t) => {
   accounts(15);
-  const tab = fakeTab(t, 20);
+  const tab = fakeTab(t, 30);
+  // The first fit, like one for new content, stops at 60%: the rows scroll.
   await p.resize();
   assert.equal(tab.ratio, 0.4);
   assert.ok(tab.panel() < p.wantedRows(), "the rows scroll");
@@ -98,26 +99,42 @@ test("accounts that need more than 60% of the split: the panel snaps to 60% and 
   tab.resized.length = 0;
   assert.equal(await p.settleResize(), false);
   assert.deepEqual(tab.resized, []);
-  // A drag shorter still goes back to 60%, once.
+  // A drag shorter snaps back past 60%, to every account, once.
   tab.ratio = 0.8;
   assert.equal(await p.settleResize(), true);
-  assert.equal(tab.ratio, 0.4);
+  assert.ok(tab.ratio < 0.4, "past 60% of the split");
+  assert.equal(tab.panel(), p.wantedRows(), "every account shows");
   tab.resized.length = 0;
-  await p.settleResize();
+  assert.equal(await p.settleResize(), false);
+  assert.deepEqual(tab.resized, []);
+});
+
+test("accounts the split can't hold: the snap back takes nearly all of it, then stops (#55)", async (t) => {
+  accounts(15);
+  const tab = fakeTab(t, 20);
+  await p.resize();
+  assert.equal(tab.ratio, 0.4);
+  tab.ratio = 0.8;
+  assert.equal(await p.settleResize(), true);
+  assert.ok(Math.abs(tab.ratio - 0.01) < 1e-9, "the pane above keeps a sliver");
+  assert.ok(tab.panel() < p.wantedRows(), "past that, the rows scroll");
+  // The snap's own move settles: no endless snapping.
+  tab.resized.length = 0;
+  assert.equal(await p.settleResize(), false);
   assert.deepEqual(tab.resized, []);
 });
 
 test("accounts that need more than 60% of the split: a drag taller than 60% stays (#55)", async (t) => {
   accounts(15);
-  const tab = fakeTab(t, 20);
+  const tab = fakeTab(t, 30);
   await p.resize();
   assert.equal(tab.ratio, 0.4);
-  // The user drags the panel taller, past 60%, though still short of its accounts.
+  // The user drags the panel taller, past 60% and past what its accounts need.
   tab.resized.length = 0;
-  tab.ratio = 0.3;
-  await p.settleResize();
+  tab.ratio = 0.2;
+  assert.equal(await p.settleResize(), false);
   assert.deepEqual(tab.resized, [], "nothing pulls the border back to 60%");
-  assert.equal(tab.panel(), 12);
+  assert.equal(tab.panel(), 22);
 });
 
 test("a fit that ends short of its rows isn't set off again by its own move (#55)", async (t) => {

@@ -23,8 +23,11 @@ const STATE = path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), ".
 const POLL = 30000;
 const CACHE_TIMEOUT = 15000;
 const LIVE_TIMEOUT = 120000;
-// The expanded strip never takes more than this share of the split it lives in.
+// A fit never gives the expanded strip more than this share of the split it lives in.
 const MAX_SHARE = 0.6;
+// Except the snap back after a drag, which may take nearly all of it to show every
+// account (#55): the pane above keeps a sliver.
+const GROW_SHARE = 0.99;
 // Rows a Rex pane spends on its own title and border, as a first guess.
 const CHROME = 2;
 // A row whose numbers are older than this says how old they are.
@@ -628,12 +631,12 @@ function splitAbove(node, block) {
 // The split ratio that gives the panel `want` rows in a split `height` of the tab high.
 // `rows` and `share` measure one pane: its rows and its height as a share of the tab.
 // A tall pane measures best: Rex keeps a pane a few rows high however small its share.
-// Each pane spends CHROME rows on its frame.
-function ratioFor({ rows, share, height }, want) {
+// Each pane spends CHROME rows on its frame. The panel gets at most `cap` of the split.
+function ratioFor({ rows, share, height }, want, cap = MAX_SHARE) {
   if (!rows || !share || !height) return null;
   const perRow = share / (rows + CHROME);
-  const part = Math.min(MAX_SHARE, ((want + CHROME) * perRow) / height);
-  return Math.max(1 - MAX_SHARE, Math.min(0.99, 1 - part));
+  const part = Math.min(cap, ((want + CHROME) * perRow) / height);
+  return Math.max(1 - cap, Math.min(0.99, 1 - part));
 }
 
 // A terminal block's rows as Rex's client sized it, or null.
@@ -674,7 +677,7 @@ const panesOf = (window) => (window?.layers ?? []).flatMap((l) => (l.blocks ?? [
 let panes = null;
 
 // The rows the last fit left the panel at. A fit can end short of its content: at
-// MAX_SHARE of the split, or a row off where the rows round. Its own move must not
+// MAX_SHARE of the split (GROW_SHARE after a drag), or a row off where the rows round. Its own move must not
 // read as a drag that wants another fit.
 let fitted = null;
 
@@ -683,8 +686,9 @@ let fitted = null;
 // it. A collapsed panel wants one row, so it never is.
 const needsFit = (rows, want, last) => rows > 0 && rows < want && rows !== last;
 
-// `grow` only ever moves the border up: after a drag, the panel may be taller than
-// MAX_SHARE allows a fit, and a drag that left it so keeps its height.
+// `grow` only ever moves the border up, and may take up to GROW_SHARE of the split
+// rather than MAX_SHARE: after a drag, every account should show (#55), and a drag
+// that left the panel taller than that keeps its height.
 let fitting = false;
 async function resize({ grow = false } = {}) {
   ui.sized = wantedRows();
@@ -705,7 +709,7 @@ async function resize({ grow = false } = {}) {
       fitted = rows;
       if (!rows || rows === want) return;
       const measure = aboveRows > rows ? { rows: aboveRows, share: found.aboveHeight } : { rows, share: found.mine };
-      const ratio = ratioFor({ ...measure, height: found.height }, want + aim);
+      const ratio = ratioFor({ ...measure, height: found.height }, want + aim, grow ? GROW_SHARE : MAX_SHARE);
       if (ratio == null || Math.abs(ratio - found.ratio) < 0.002 || (grow && ratio > found.ratio)) return;
       if (!(await rexApi("session.resize_pane", { direction: "vertical", before_block_id: found.above, after_block_id: SELF, ratio }))) return;
       // Stop when the pane didn't change: Rex keeps a pane a few rows high.
@@ -720,7 +724,7 @@ async function resize({ grow = false } = {}) {
 // A pane added to or closed in the tab makes Rex even out its splits, which leaves
 // the panel half the tab high: fit it again then. A border you drag keeps its place,
 // unless that leaves the panel too short for its accounts: then it snaps back to fit
-// them, up to MAX_SHARE of the split (#55). Rex can't stop a drag midway, so the
+// them, up to GROW_SHARE of the split (#55). Rex can't stop a drag midway, so the
 // panel moves the border back once the drag settles. True when it fit the panel.
 async function settleResize() {
   if (fitting || !SELF || !SESSION) return false;
