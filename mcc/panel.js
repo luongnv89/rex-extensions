@@ -673,8 +673,20 @@ const myWindow = (view) => view?.windows?.find((w) => (w.layers ?? []).some((l) 
 const panesOf = (window) => (window?.layers ?? []).flatMap((l) => (l.blocks ?? []).map((b) => b.block_id)).sort().join(" ");
 let panes = null;
 
+// The rows the last fit left the panel at. A fit can end short of its content: at
+// MAX_SHARE of the split, or a row off where the rows round. Its own move must not
+// read as a drag that wants another fit.
+let fitted = null;
+
+// Whether a panel `rows` high should be fit again after a drag: only when it's
+// shorter than the `want` rows its content needs, and not where the last fit left
+// it. A collapsed panel wants one row, so it never is.
+const needsFit = (rows, want, last) => rows > 0 && rows < want && rows !== last;
+
+// `grow` only ever moves the border up: after a drag, the panel may be taller than
+// MAX_SHARE allows a fit, and a drag that left it so keeps its height.
 let fitting = false;
-async function resize() {
+async function resize({ grow = false } = {}) {
   ui.sized = wantedRows();
   if (!SELF || !SESSION || fitting) return;
   fitting = true;
@@ -690,13 +702,15 @@ async function resize() {
       if (!found) return;
       const want = wantedRows();
       const [rows, aboveRows] = await Promise.all([settledRows(SELF), settledRows(found.above)]);
+      fitted = rows;
       if (!rows || rows === want) return;
       const measure = aboveRows > rows ? { rows: aboveRows, share: found.aboveHeight } : { rows, share: found.mine };
       const ratio = ratioFor({ ...measure, height: found.height }, want + aim);
-      if (ratio == null || Math.abs(ratio - found.ratio) < 0.002) return;
+      if (ratio == null || Math.abs(ratio - found.ratio) < 0.002 || (grow && ratio > found.ratio)) return;
       if (!(await rexApi("session.resize_pane", { direction: "vertical", before_block_id: found.above, after_block_id: SELF, ratio }))) return;
       // Stop when the pane didn't change: Rex keeps a pane a few rows high.
       const now = await settledRows(SELF);
+      if (now) fitted = now;
       if (!now || now === rows || now === want) return;
       aim = Math.max(-3, Math.min(3, aim + want - now));
     }
@@ -704,15 +718,28 @@ async function resize() {
 }
 
 // A pane added to or closed in the tab makes Rex even out its splits, which leaves
-// the panel half the tab high: fit it again then. A border you drag keeps its place.
+// the panel half the tab high: fit it again then. A border you drag keeps its place,
+// unless that leaves the panel too short for its accounts: then it snaps back to fit
+// them, up to MAX_SHARE of the split (#55). Rex can't stop a drag midway, so the
+// panel moves the border back once the drag settles. True when it fit the panel.
+async function settleResize() {
+  if (fitting || !SELF || !SESSION) return false;
+  const window = myWindow(await rexApi("session.view"));
+  if (!window || panes == null) return false;
+  if (panesOf(window) !== panes) await resize();
+  else if (needsFit(await settledRows(SELF), wantedRows(), fitted)) await resize({ grow: true });
+  else return false;
+  return true;
+}
+
 let settle = null;
 function onResize() {
   draw();
   clearTimeout(settle);
-  settle = setTimeout(async () => {
-    if (fitting || !SELF || !SESSION) return;
-    const window = myWindow(await rexApi("session.view"));
-    if (window && panes != null && panesOf(window) !== panes) { await resize(); draw(); }
+  // A drag that ends while a fit runs waits for it, so it isn't missed.
+  settle = setTimeout(async function again() {
+    if (fitting) settle = setTimeout(again, 500);
+    else if (await settleResize()) draw();
   }, 500);
 }
 
@@ -903,6 +930,8 @@ function main() {
 if (require.main === module) main();
 else module.exports = {
   width, fit, clip, until, ago, flag, parse, firstError, columns, row, cell, cellWidthFor, peak, splitAbove, firstLeaf, ratioFor, reasonText, findMcc, noticeLines, wantedRows, ui,
+  // The panel's height after a drag (#55): fit it, when a drag settles, and a reset for tests.
+  needsFit, resize, settleResize, resetFit: () => { panes = null; fitted = null; fitting = false; },
   parseProcStat, cpuPercent, parseMeminfo, parseVmStat, parseNetDev, parseNetstat, rate, step, formatBytes, formatRate, shortBytes, formatPair, memPercent, diskPercent, parseStatfs, readDisk, readout, label,
   cpuTimes, readStats, applyStats, resetStats, statsRow, statsParts, dotBlinks, isOnline, readOnline, header, refreshButton, footerButtons,
 };
