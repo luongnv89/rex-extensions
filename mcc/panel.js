@@ -23,8 +23,11 @@ const STATE = path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), ".
 const POLL = 30000;
 const CACHE_TIMEOUT = 15000;
 const LIVE_TIMEOUT = 120000;
-// The expanded strip never takes more than this share of the split it lives in.
+// A fit never gives the expanded strip more than this share of the split it lives in.
 const MAX_SHARE = 0.6;
+// Except the snap back after a drag, and a fit for new content, which may take nearly
+// all of it to show every account (#55): the pane above keeps a sliver.
+const GROW_SHARE = 0.99;
 // Rows a Rex pane spends on its own title and border, as a first guess.
 const CHROME = 2;
 // A row whose numbers are older than this says how old they are.
@@ -549,10 +552,14 @@ async function load() {
     } catch (e) { ui.error = firstError(r.stderr) || e.message; }
   }
   ui.loaded = true;
-  // Grow or shrink with the content (an account added, a notice shown), but only then:
-  // a height you set by hand stays until the content changes.
-  if (ui.sized != null && !ui.collapsed && wantedRows() !== ui.sized) await resize();
+  await refit();
   draw();
+}
+
+// Grow or shrink with the content (an account added, a notice shown), but only then:
+// a height you set by hand stays until the content changes.
+async function refit() {
+  if (ui.sized != null && !ui.collapsed && wantedRows() !== ui.sized) await resize({ fill: true });
 }
 
 // Look every account up live. mcc saves what it finds to its cache, so reading the
@@ -628,12 +635,18 @@ function splitAbove(node, block) {
 // The split ratio that gives the panel `want` rows in a split `height` of the tab high.
 // `rows` and `share` measure one pane: its rows and its height as a share of the tab.
 // A tall pane measures best: Rex keeps a pane a few rows high however small its share.
-// Each pane spends CHROME rows on its frame.
-function ratioFor({ rows, share, height }, want) {
+// Each pane spends CHROME rows on its frame. The panel gets at most `cap` of the split.
+function ratioFor(measure, want, cap = MAX_SHARE) {
+  const need = shareFor(measure, want);
+  if (need == null) return null;
+  return Math.max(1 - cap, Math.min(0.99, 1 - Math.min(cap, need)));
+}
+
+// The share of the split `want` rows take, uncapped: over GROW_SHARE, the split can't
+// hold them.
+function shareFor({ rows, share, height }, want) {
   if (!rows || !share || !height) return null;
-  const perRow = share / (rows + CHROME);
-  const part = Math.min(MAX_SHARE, ((want + CHROME) * perRow) / height);
-  return Math.max(1 - MAX_SHARE, Math.min(0.99, 1 - part));
+  return ((want + CHROME) * share) / (rows + CHROME) / height;
 }
 
 // A terminal block's rows as Rex's client sized it, or null.
@@ -673,8 +686,29 @@ const myWindow = (view) => view?.windows?.find((w) => (w.layers ?? []).some((l) 
 const panesOf = (window) => (window?.layers ?? []).flatMap((l) => (l.blocks ?? []).map((b) => b.block_id)).sort().join(" ");
 let panes = null;
 
+// The rows the last fit left the panel at. A fit can end short of its content: at
+// MAX_SHARE or GROW_SHARE of the split, or a row off where the rows round. Its own
+// move must not read as a drag that wants another fit.
+let fitted = null;
+
+// The wanted rows and pane set at which a snap back found the split too small for
+// every account. It took GROW_SHARE then; later drags keep their place, so the pane
+// above can be had back, until the accounts or the panes change.
+let full = null;
+const fullKey = () => `${wantedRows()}|${panes}`;
+
+// Whether a panel `rows` high should be fit again after a drag: only when it's
+// shorter than the `want` rows its content needs, and not where the last fit left
+// it. A collapsed panel wants one row, so it never is.
+const needsFit = (rows, want, last) => rows > 0 && rows < want && rows !== last;
+
+// `grow` only ever moves the border up, and may take up to GROW_SHARE of the split
+// rather than MAX_SHARE: after a drag, every account should show (#55), and a drag
+// that left the panel taller than that keeps its height. `fill`, for new content,
+// moves the border either way and takes up to GROW_SHARE when that holds every row,
+// else MAX_SHARE: it never leaves the panel short of rows the split could show.
 let fitting = false;
-async function resize() {
+async function resize({ grow = false, fill = false } = {}) {
   ui.sized = wantedRows();
   if (!SELF || !SESSION || fitting) return;
   fitting = true;
@@ -690,13 +724,18 @@ async function resize() {
       if (!found) return;
       const want = wantedRows();
       const [rows, aboveRows] = await Promise.all([settledRows(SELF), settledRows(found.above)]);
+      fitted = rows;
       if (!rows || rows === want) return;
       const measure = aboveRows > rows ? { rows: aboveRows, share: found.aboveHeight } : { rows, share: found.mine };
-      const ratio = ratioFor({ ...measure, height: found.height }, want + aim);
-      if (ratio == null || Math.abs(ratio - found.ratio) < 0.002) return;
+      const m = { ...measure, height: found.height };
+      const fits = shareFor(m, want) <= GROW_SHARE;
+      if (grow && !fits) full = fullKey();
+      const ratio = ratioFor(m, want + aim, grow || (fill && fits) ? GROW_SHARE : MAX_SHARE);
+      if (ratio == null || Math.abs(ratio - found.ratio) < 0.002 || (grow && ratio > found.ratio)) return;
       if (!(await rexApi("session.resize_pane", { direction: "vertical", before_block_id: found.above, after_block_id: SELF, ratio }))) return;
       // Stop when the pane didn't change: Rex keeps a pane a few rows high.
       const now = await settledRows(SELF);
+      if (now) fitted = now;
       if (!now || now === rows || now === want) return;
       aim = Math.max(-3, Math.min(3, aim + want - now));
     }
@@ -704,15 +743,28 @@ async function resize() {
 }
 
 // A pane added to or closed in the tab makes Rex even out its splits, which leaves
-// the panel half the tab high: fit it again then. A border you drag keeps its place.
+// the panel half the tab high: fit it again then. A border you drag keeps its place,
+// unless that leaves the panel too short for its accounts: then it snaps back to fit
+// them, up to GROW_SHARE of the split (#55), once if the split can't hold them all. Rex can't stop a drag midway, so the
+// panel moves the border back once the drag settles. True when it fit the panel.
+async function settleResize() {
+  if (fitting || !SELF || !SESSION) return false;
+  const window = myWindow(await rexApi("session.view"));
+  if (!window || panes == null) return false;
+  if (panesOf(window) !== panes) await resize();
+  else if (full !== fullKey() && needsFit(await settledRows(SELF), wantedRows(), fitted)) await resize({ grow: true });
+  else return false;
+  return true;
+}
+
 let settle = null;
 function onResize() {
   draw();
   clearTimeout(settle);
-  settle = setTimeout(async () => {
-    if (fitting || !SELF || !SESSION) return;
-    const window = myWindow(await rexApi("session.view"));
-    if (window && panes != null && panesOf(window) !== panes) { await resize(); draw(); }
+  // A drag that ends while a fit runs waits for it, so it isn't missed.
+  settle = setTimeout(async function again() {
+    if (fitting) settle = setTimeout(again, 500);
+    else if (await settleResize()) draw();
   }, 500);
 }
 
@@ -903,6 +955,8 @@ function main() {
 if (require.main === module) main();
 else module.exports = {
   width, fit, clip, until, ago, flag, parse, firstError, columns, row, cell, cellWidthFor, peak, splitAbove, firstLeaf, ratioFor, reasonText, findMcc, noticeLines, wantedRows, ui,
+  // The panel's height after a drag (#55): fit it, when a drag settles, and a reset for tests.
+  needsFit, resize, settleResize, refit, resetFit: () => { panes = null; fitted = null; full = null; fitting = false; },
   parseProcStat, cpuPercent, parseMeminfo, parseVmStat, parseNetDev, parseNetstat, rate, step, formatBytes, formatRate, shortBytes, formatPair, memPercent, diskPercent, parseStatfs, readDisk, readout, label,
   cpuTimes, readStats, applyStats, resetStats, statsRow, statsParts, dotBlinks, isOnline, readOnline, header, refreshButton, footerButtons,
 };
