@@ -44,7 +44,7 @@ const block = (key, module = MODULE) =>
 const bindsOldAction = (config) => new RegExp(`^\\s*rex\\.bind\\s*\\(.*"${OLD_ACTION}"`, "m").test(config);
 
 // Whether a config already loads rex-sshtab.lua.
-const loadsModule = (config) => /^\s*dofile\s*\(?\s*["'][^"'\n]*rex-sshtab\.lua["']/m.test(config);
+const loadsModule = (config) => /^\s*dofile\s*\(.*["'][^"'\n]*rex-sshtab\.lua["']/m.test(config);
 
 // The config without the lines block() added: the marker, the dofile and the bind.
 function removeBlock(config) {

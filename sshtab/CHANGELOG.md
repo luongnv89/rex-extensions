@@ -18,3 +18,7 @@
 ### Changed
 
 - The first version bound `cmd+t` to a `same_host_tab` action that opened the tab itself, so only the key worked. That action is gone and `cmd+t` is the app's New Tab again; `install.js` replaces the lines of that install.
+
+### Fixed
+
+- `install.js` sees a block that builds the path from `HOME`, such as `dofile(home .. "/…/rex-sshtab.lua")`, as installed. A second run now changes nothing instead of adding a second block on a fallback key.
