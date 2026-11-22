@@ -33,7 +33,7 @@ const block = (key, module = MODULE) =>
   `\n${MARKER} (https://github.com/luongnv89/rex-extensions/tree/main/mcc)\ndofile(${luaString(module)})\nrex.bind(${luaString(key)}, "${ACTION}")\n`;
 
 // Whether a config already loads rex-mcc.lua.
-const loadsModule = (config) => /^\s*dofile\s*\(?\s*["'][^"'\n]*rex-mcc\.lua["']/m.test(config);
+const loadsModule = (config) => /^\s*dofile\s*\(.*["'][^"'\n]*rex-mcc\.lua["']/m.test(config);
 
 // The config without the lines block() added: the marker, the dofile and the bind.
 function removeBlock(config) {

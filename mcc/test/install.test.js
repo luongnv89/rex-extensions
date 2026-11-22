@@ -84,6 +84,7 @@ test("block loads the module and binds the key; removeBlock takes exactly it out
   // Lines of yours around it stay.
   assert.equal(removeBlock(`a\n${text}b\n`), "a\nb\n");
   assert.ok(loadsModule("dofile('/elsewhere/rex-mcc.lua')"));
+  assert.ok(loadsModule('dofile(home .. "/p/rex-mcc.lua")'));
   assert.ok(!loadsModule('-- dofile("/p/rex-mcc.lua")'));
 });
 
