@@ -2,7 +2,9 @@
 // The 5-hour and weekly Claude Code usage of every account mcc manages, read from
 // `mcc usage --json-v2`, in a strip along the bottom of a Rex tab. Refresh looks
 // every account up live (`mcc usage --all`); collapse shrinks the strip so the
-// panes above get the room back. A line under the title shows this machine's CPU,
+// panes above get the room back. `d` swaps the bars for what else mcc knows: when
+// each account was last used, when its login ends, how old its numbers are and when
+// its windows reset. Devin, which has a daily window instead of a 5-hour one, shows it. A line under the title shows this machine's CPU,
 // memory, disk and network, sampled every 5 seconds.
 //
 // rex-mcc.lua starts it as `node panel.js`. When panel.js is under $HOME, the path
@@ -114,7 +116,9 @@ function run(cmd, args, timeout) {
 
 const usageWindow = (w) => (w && typeof w.percent === "number" ? { percent: w.percent, resetsAt: w.resets_at ?? null } : null);
 
-// `mcc usage --json-v2` → one row per profile.
+// `mcc usage --json-v2` → one row per profile. Devin (`provider: "devin"`) has a
+// daily window instead of a 5-hour one, and an overage balance; mcc leaves both
+// keys out for Claude Code profiles.
 function parse(stdout) {
   const doc = JSON.parse(stdout);
   if (doc?.schema !== 2 || !Array.isArray(doc.profiles)) throw new Error(`unexpected mcc output (schema ${doc?.schema ?? "?"}); update mcc`);
@@ -130,6 +134,10 @@ function parse(stdout) {
     updatedAt: p.usage?.updated_at ?? null,
     loginWarning: Boolean(p.login_warning),
     loginExpiresAt: p.login_expires_at ?? null,
+    lastActivity: p.last_activity ?? null,
+    provider: p.provider === "devin" ? "devin" : "claude",
+    day: usageWindow(p.usage?.daily),
+    overage: Number.isFinite(p.usage?.overage_usd) ? p.usage.overage_usd : null,
   }));
 }
 
@@ -143,7 +151,10 @@ const REASONS = {
 };
 const NEEDS_LOGIN = new Set(["not_logged_in", "token_expired", "unauthorized"]);
 const reasonText = (r) => REASONS[r] ?? (r ? String(r).replace(/_/g, " ") : "unavailable");
-const loginCommand = (p) => `mcc login ${p.isDefault ? "default" : p.name}`;
+// Devin keeps its own login, which mcc never touches: its CLI signs in again.
+const loginCommand = (p) => (p.provider === "devin" ? "devin auth login" : `mcc login ${p.isDefault ? "default" : p.name}`);
+// Devin's overage balance, as mcc prints it: $3.50.
+const dollars = (v) => `$${v.toFixed(2)}`;
 
 // ── Machine ─────────────────────────────────────────────────────────────────
 // Ported from mcc-herdr-plugin (herdr-app/mcc-usage/system.js and its panel.js);
@@ -412,6 +423,26 @@ function until(iso, now = Date.now()) {
   return `${Math.floor(h / 24)}d${h % 24}h`;
 }
 
+// Time since `iso`, short: now, 7m, 3h, 2d.
+function since(iso, now = Date.now()) {
+  const s = (now - Date.parse(iso)) / 1000;
+  if (!Number.isFinite(s)) return "";
+  if (s < 60) return "now";
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h`;
+  return `${Math.floor(s / 86400)}d`;
+}
+
+// A reset as a clock time, in `tz` (the machine's own when unset): 13:10 within a
+// day, else with the weekday, Fri 18:00. mcc prints it the same way, after the countdown.
+function clock(iso, now = Date.now(), tz) {
+  const t = Date.parse(iso);
+  if (!iso || !Number.isFinite(t)) return "";
+  const opts = { hour: "2-digit", minute: "2-digit", hourCycle: "h23", ...(tz ? { timeZone: tz } : {}) };
+  if (t - now >= 86400000) opts.weekday = "short";
+  try { return new Intl.DateTimeFormat("en-GB", opts).format(new Date(t)).replace(",", ""); } catch { return ""; }
+}
+
 function ago(iso, now = Date.now()) {
   const s = Math.max(0, (now - Date.parse(iso)) / 1000);
   if (!Number.isFinite(s)) return "";
@@ -450,11 +481,43 @@ function cell(label, w, bw, reset, now) {
 }
 const cellWidthFor = (bw, reset) => 3 + (bw ? bw + 1 : 0) + 6 + (reset ? 7 : 0);
 
-// How a row is laid out at `cols`: the widest that fits, dropping bars, then the countdown.
-// `indexWidth` is the width of the widest account number.
-function columns(cols, nameWidth, indexWidth = 1) {
+// The window a row shows first: the 5-hour one, or Devin's daily one.
+const firstWindow = (p) => (p.provider === "devin" ? ["1d", p.day] : ["5h", p.five]);
+
+const isStale = (p, now = Date.now()) => Boolean(p.updatedAt) && now - Date.parse(p.updatedAt) > STALE;
+
+// The columns after the windows, as mcc's LAST ACTIVE and LOGIN ENDS: how long since
+// each account was last used and how long before its login runs out. Each shows only
+// when some account has a value for it; `stale` keeps room for a row's "1h ago".
+function extrasFor(profiles, now = Date.now()) {
+  return { active: profiles.some((p) => p.lastActivity), login: profiles.some((p) => p.loginExpiresAt), stale: profiles.some((p) => isStale(p, now)) };
+}
+// "  seen 23h" is 11 wide, "  login 29d23h" 14, " 30d ago" 8.
+const extrasWidth = (x) => (x?.active ? 11 : 0) + (x?.login ? 14 : 0) + (x?.stale ? 8 : 0);
+// The extra columns appear only while the bars can stay this wide beside them.
+const EXTRAS_MIN_BAR = 8;
+
+function extraCells(p, x, now) {
+  let out = "";
+  if (x.active) out += "  " + dim("seen ") + dim(padEnd((p.lastActivity && since(p.lastActivity, now)) || "—", 4));
+  if (x.login) {
+    const left = p.loginExpiresAt ? until(p.loginExpiresAt, now) : "";
+    out += "  " + dim("login ") + (p.loginWarning ? yellow : dim)(padEnd(left === "now" ? "ended" : left || "—", 6));
+  }
+  return out;
+}
+
+// How a row is laid out at `cols`: the widest that fits, dropping the extra columns,
+// then bars, then the countdown. `indexWidth` is the width of the widest account
+// number; `extras` (from extrasFor) the extra columns there's data for.
+function columns(cols, nameWidth, indexWidth = 1, extras = null) {
   const lead = indexWidth + 1; // the account number and the space after it
   const fixed = 1 + lead + nameWidth + 2 + 2 + 2; // indent, number, name, gap, gap between windows, marker
+  if (extras && (extras.active || extras.login)) {
+    const room = cols - fixed - extrasWidth(extras) - 2 * cellWidthFor(0, true);
+    const bw = Math.min(20, Math.floor(room / 2) - 1);
+    if (bw >= EXTRAS_MIN_BAR) return { indexWidth, nameWidth, bw, reset: true, extras: { active: extras.active, login: extras.login } };
+  }
   for (const reset of [true, false]) {
     const room = cols - fixed - 2 * cellWidthFor(0, reset);
     const bw = Math.min(20, Math.floor(room / 2) - 1);
@@ -467,23 +530,53 @@ function columns(cols, nameWidth, indexWidth = 1) {
   return { indexWidth, nameWidth: Math.max(1, Math.min(nameWidth, cols - 14 - lead)), compact: true };
 }
 
+// The details view (`d`): instead of the bars, what mcc's table has besides them, in
+// the order it's dropped last: when each account was last used, when its login runs
+// out, how old its numbers are, then when each window resets as a clock time. Each
+// row stays one line, so the panel's height doesn't change.
+const DETAILS = [["active", 11], ["login", 14], ["age", 10], ["clock", 28]];
+function detailColumns(cols, nameWidth, indexWidth = 1, tz) {
+  const fixed = 1 + indexWidth + 1 + 2; // indent, number and its space, marker
+  const shown = {};
+  let used = fixed + nameWidth;
+  for (const [key, w] of DETAILS) if (used + w <= cols) { shown[key] = true; used += w; } else break;
+  return { indexWidth, nameWidth: Math.max(1, Math.min(nameWidth, cols - fixed)), details: shown, tz };
+}
+
+function detailCells(p, d, now, tz) {
+  let out = extraCells(p, { active: d.active, login: d.login }, now);
+  if (d.age) {
+    const age = p.updatedAt ? since(p.updatedAt, now) : p.source === "live" ? "live" : "";
+    out += "  " + dim("upd ") + (isStale(p, now) ? yellow : dim)(padEnd(age || "—", 4));
+  }
+  if (d.clock) {
+    const [firstLabel, first] = firstWindow(p);
+    for (const [label, w] of [[firstLabel, first], ["wk", p.week]]) out += "  " + dim(label + " ") + dim(padEnd((w && clock(w.resetsAt, now, tz)) || "—", 9));
+  }
+  return out;
+}
+
 function row(p, layout, issue, now = Date.now()) {
   const name = padEnd(fit(p.name, layout.nameWidth), layout.nameWidth);
   const marker = issue || p.loginWarning ? yellow(" ⚠") : "  ";
   const number = dim(padStart(String(p.index ?? ""), layout.indexWidth ?? 1)) + " ";
   const label = number + (p.isDefault ? accent(name) : name);
+  if (layout.details) return ` ${label}${detailCells(p, layout.details, now, layout.tz)}${marker}`;
+  const [firstLabel, first] = firstWindow(p);
   if (layout.compact) {
     const pct = (w) => (w ? String(Math.round(w.percent)) : "—");
-    const worst = Math.max(p.five?.percent ?? 0, p.week?.percent ?? 0);
-    const text = p.status !== "ok" && !p.five && !p.week ? "✗" : `${pct(p.five)}/${pct(p.week)}%${flag(worst)}`;
+    const worst = Math.max(first?.percent ?? 0, p.week?.percent ?? 0);
+    const text = p.status !== "ok" && !first && !p.week ? "✗" : `${pct(first)}/${pct(p.week)}%${flag(worst)}`;
     return ` ${label} ${tone(worst)(text)}`;
   }
-  if (p.status !== "ok" && !p.five && !p.week) {
+  const extras = layout.extras ? extraCells(p, layout.extras, now) : "";
+  if (p.status !== "ok" && !first && !p.week) {
     const span = 2 + 2 * cellWidthFor(layout.bw, layout.reset);
-    return ` ${label}  ${dim(padEnd(fit(reasonText(p.reason), span - 2), span - 2))}${marker}`;
+    // As wide as a row's two windows, so the columns after it line up.
+    return ` ${label}  ${dim(padEnd(fit(reasonText(p.reason), span - 2), span))}${extras}${marker}`;
   }
-  const stale = p.updatedAt && now - Date.parse(p.updatedAt) > STALE ? dim(` ${ago(p.updatedAt, now)}`) : "";
-  return ` ${label}  ${cell("5h", p.five, layout.bw, layout.reset, now)}  ${cell("wk", p.week, layout.bw, layout.reset, now)}${marker}${stale}`;
+  const stale = isStale(p, now) ? dim(` ${ago(p.updatedAt, now)}`) : "";
+  return ` ${label}  ${cell(firstLabel, first, layout.bw, layout.reset, now)}  ${cell("wk", p.week, layout.bw, layout.reset, now)}${extras}${marker}${stale}`;
 }
 
 // The highest percent of one window across accounts, for the collapsed header.
@@ -520,6 +613,7 @@ const dotBlinks = (cols, s = ui.stats) => !ui.collapsed && s.online === true && 
 const ui = {
   profiles: [],
   issues: {},        // name → live lookup failure (reason), from the last refresh
+  liveLogins: {},    // name → when its login ends, as the last refresh found it
   error: null,       // mcc missing, or its output unreadable
   liveError: null,   // why the last refresh failed, until one succeeds
   loaded: false,
@@ -527,6 +621,7 @@ const ui = {
   flash: null,       // { ok, until }: how the last refresh went, shown on its button for a moment
   lastLive: null,
   collapsed: false,
+  details: false,    // the details view (d) instead of the bars
   top: 0,
   frame: 0,
   buttons: [],
@@ -540,6 +635,17 @@ const ui = {
 const SPIN = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 let mcc = null;
 
+// The cache read finds a login's end only in .credentials.json; a refresh also reads
+// the macOS Keychain, where Claude Code may keep it. Keep what the refresh found for
+// an account the cache knows nothing about, until it passes.
+function withLiveLogins(profiles, live = ui.liveLogins, now = Date.now()) {
+  for (const p of profiles) {
+    const at = live[p.name];
+    if (!p.loginExpiresAt && at && Date.parse(at) > now) p.loginExpiresAt = at;
+  }
+  return profiles;
+}
+
 async function load() {
   if (!mcc) mcc = findMcc();
   if (!mcc) { ui.error = "mcc not found: install it or set MCC_BIN"; ui.loaded = true; return draw(); }
@@ -547,7 +653,7 @@ async function load() {
   if (r.error) ui.error = r.error.killed ? "mcc usage timed out" : `can't run ${mcc}`;
   else {
     try {
-      ui.profiles = parse(r.stdout);
+      ui.profiles = withLiveLogins(parse(r.stdout));
       ui.error = null;
     } catch (e) { ui.error = firstError(r.stderr) || e.message; }
   }
@@ -581,6 +687,7 @@ async function refresh() {
     const live = parse(r.stdout);
     ui.issues = {};
     for (const p of live) if (p.status !== "ok") ui.issues[p.name] = p.reason;
+    ui.liveLogins = Object.fromEntries(live.filter((p) => p.loginExpiresAt).map((p) => [p.name, p.loginExpiresAt]));
     ui.lastLive = Date.now();
     ui.liveError = null;
     ok = true;
@@ -768,6 +875,12 @@ function onResize() {
   }, 500);
 }
 
+// The details view changes what each row says, not how many there are: no refit.
+function toggleDetails() {
+  ui.details = !ui.details;
+  draw();
+}
+
 async function toggleCollapsed() {
   ui.collapsed = !ui.collapsed;
   ui.top = 0;
@@ -790,6 +903,8 @@ function noticeLines(now = Date.now()) {
     const reason = ui.issues[p.name] ?? (p.status !== "ok" ? p.reason : null);
     if (reason) out.push({ text: `${p.name}: ${reasonText(reason)}${NEEDS_LOGIN.has(reason) ? ` · ${loginCommand(p)}` : ""}`, color: yellow });
     else if (p.loginWarning) out.push({ text: `${p.name}: login ends ${until(p.loginExpiresAt, now) ? `in ${until(p.loginExpiresAt, now)}` : "soon"} · ${loginCommand(p)}`, color: yellow });
+    // As mcc does, only a balance above zero.
+    if (p.overage > 0) out.push({ text: `${p.name}: overage balance ${dollars(p.overage)}`, color: dim });
   }
   return out;
 }
@@ -846,7 +961,8 @@ function header(cols) {
   return bold(title) + " ".repeat(gap) + dim(infoText) + sep + refreshColor(refreshLabel);
 }
 
-const FOOTER = [{ text: " r refresh", action: () => refresh() }, { text: "c collapse", action: () => toggleCollapsed() }, { text: "q close", action: () => quit() }];
+const FOOTER = [{ text: " r refresh", action: () => refresh() }, { text: "c collapse", action: () => toggleCollapsed() }, { text: "q close", action: () => quit() }, { text: "d details", action: () => toggleDetails() }];
+// `d details` comes last, so a narrow pane cuts it rather than `q close`.
 
 // The footer's hints as buttons on `row`; a collapsed panel has no footer.
 function footerButtons(row, collapsed = ui.collapsed) {
@@ -869,7 +985,8 @@ function draw() {
   if (!ui.collapsed) out.push(statsRow(cols), dim("─".repeat(cols)));
 
   const nameWidth = Math.min(16, Math.max(4, ...ui.profiles.map((p) => width(p.name))));
-  const layout = columns(cols, nameWidth, String(ui.profiles.length).length);
+  const indexWidth = String(ui.profiles.length).length;
+  const layout = ui.details ? detailColumns(cols, nameWidth, indexWidth) : columns(cols, nameWidth, indexWidth, extrasFor(ui.profiles, now));
   const body = [];
   if (!ui.loaded) body.push(dim(" Loading…"));
   else if (!ui.profiles.length && !ui.error) body.push(dim(" No mcc profiles"));
@@ -917,6 +1034,7 @@ function onInput(data) {
     if (k === "q" || k === "\x03") return quit();
     if (k === "r") refresh();
     else if (k === "c" || k === " " || k === "\r" || k === "\n") toggleCollapsed();
+    else if (k === "d" && !ui.collapsed) toggleDetails();
     else if (k === "\x1b[A" || k === "\x1bOA" || k === "k") { ui.top -= 1; draw(); }
     else if (k === "\x1b[B" || k === "\x1bOB" || k === "j") { ui.top += 1; draw(); }
   }
@@ -954,7 +1072,7 @@ function main() {
 
 if (require.main === module) main();
 else module.exports = {
-  width, fit, clip, until, ago, flag, parse, firstError, columns, row, cell, cellWidthFor, peak, splitAbove, firstLeaf, ratioFor, reasonText, findMcc, noticeLines, wantedRows, ui,
+  width, fit, clip, until, since, clock, ago, detailColumns, toggleDetails, flag, parse, loginCommand, extrasFor, extrasWidth, withLiveLogins, firstError, columns, row, cell, cellWidthFor, peak, splitAbove, firstLeaf, ratioFor, reasonText, findMcc, noticeLines, wantedRows, ui, draw,
   // The panel's height after a drag (#55): fit it, when a drag settles, and a reset for tests.
   needsFit, resize, settleResize, refit, resetFit: () => { panes = null; fitted = null; full = null; fitting = false; },
   parseProcStat, cpuPercent, parseMeminfo, parseVmStat, parseNetDev, parseNetstat, rate, step, formatBytes, formatRate, shortBytes, formatPair, memPercent, diskPercent, parseStatfs, readDisk, readout, label,

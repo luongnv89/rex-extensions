@@ -504,7 +504,7 @@ test("the refresh button spins, then says how the refresh went for a moment", (t
 
 test("the footer's hints are buttons, and a collapsed panel has none", () => {
   const ranges = p.footerButtons(7, false).map(({ row, from, to }) => [row, from, to]);
-  assert.deepEqual(ranges, [[7, 0, 11], [7, 13, 24], [7, 26, 34]]);
+  assert.deepEqual(ranges, [[7, 0, 11], [7, 13, 24], [7, 26, 34], [7, 36, 46]]);
   assert.ok(p.footerButtons(7, false).every((b) => typeof b.action === "function"));
   assert.deepEqual(p.footerButtons(7, true), []);
 });
@@ -559,5 +559,198 @@ test("collapsed, the title line names the keys c, r and q at the default 36 cell
   // Expanded, the footer names them, so the title line doesn't.
   p.ui.collapsed = false;
   for (const cols of [36, 120]) assert.doesNotMatch(strip(p.header(cols)), /c▸|c expand/);
-  assert.equal(p.footerButtons(7, false).length, 3);
+  assert.equal(p.footerButtons(7, false).length, 4);
+});
+
+// mcc 0.11: Devin as its own provider, and each profile's last activity and login end.
+const DEVIN_DOC = JSON.stringify({
+  schema: 2,
+  profiles: [
+    { name: "default", is_default: true, provider: "claude", last_activity: "2026-11-03T21:53:00Z", login_expires_at: "2026-11-09T22:00:00Z",
+      usage: { status: "ok", five_hour: { percent: 12, resets_at: "2026-11-04T01:40:00Z" }, weekly: { percent: 30, resets_at: "2026-11-09T14:00:00Z" }, source: "cache", updated_at: "2026-11-03T20:30:00Z" } },
+    { name: "work", is_default: false, provider: "claude", last_activity: null, login_expires_at: null, login_warning: false,
+      usage: { status: "ok", five_hour: { percent: 50, resets_at: null }, weekly: { percent: 60, resets_at: null } } },
+    { name: "devin", is_default: false, provider: "devin", last_activity: null,
+      usage: { status: "ok", five_hour: null, daily: { percent: 40, resets_at: "2026-11-04T08:00:00Z" }, weekly: { percent: 54, resets_at: "2026-11-07T08:00:00Z" }, overage_usd: 3.5 } },
+  ],
+});
+
+test("parse reads Devin's daily window, its overage and each profile's last activity", () => {
+  const [d, w, v] = p.parse(DEVIN_DOC);
+  assert.equal(d.provider, "claude");
+  assert.equal(d.lastActivity, "2026-11-03T21:53:00Z");
+  assert.equal(d.day, null);
+  assert.equal(d.overage, null);
+  assert.equal(w.lastActivity, null);
+  assert.equal(v.provider, "devin");
+  assert.equal(v.five, null);
+  assert.deepEqual(v.day, { percent: 40, resetsAt: "2026-11-04T08:00:00Z" });
+  assert.equal(v.overage, 3.5);
+  // mcc 0.10 and older send neither key: a Claude Code profile.
+  assert.equal(p.parse(DOC)[0].provider, "claude");
+});
+
+test("Devin's row shows its daily window, never as a 5-hour one", () => {
+  const v = p.parse(DEVIN_DOC)[2];
+  const wide = strip(p.row(v, p.columns(100, 7), null, NOW));
+  assert.match(wide, /devin +1d █+░+ +40% +10h00 +wk █+░+ +54%/);
+  assert.doesNotMatch(wide, /5h/);
+  assert.match(strip(p.row(v, p.columns(22, 7), null, NOW)), /devin +40\/54%/);
+  // Its daily window doesn't count toward the 5-hour peak.
+  assert.equal(p.peak(p.parse(DEVIN_DOC), "five"), 50);
+  // A plan that hides the daily window: a dash, as mcc shows.
+  const hidden = { ...v, day: null };
+  assert.match(strip(p.row(hidden, p.columns(100, 7), null, NOW)), /1d ·+ +— +wk/);
+});
+
+test("Devin's login is renewed with its own CLI", () => {
+  const v = p.parse(DEVIN_DOC)[2];
+  assert.equal(p.loginCommand(v), "devin auth login");
+  assert.equal(p.loginCommand(p.parse(DEVIN_DOC)[0]), "mcc login default");
+  p.ui.profiles = [{ ...v, status: "unavailable", reason: "unauthorized", overage: null }];
+  p.ui.issues = {};
+  assert.deepEqual(p.noticeLines(NOW).map((n) => n.text), ["devin: login rejected · devin auth login"]);
+});
+
+test("an overage balance shows only above zero", () => {
+  const v = p.parse(DEVIN_DOC)[2];
+  p.ui.issues = {};
+  for (const [overage, want] of [[3.5, ["devin: overage balance $3.50"]], [0, []], [-8.042181, []], [null, []]]) {
+    p.ui.profiles = [{ ...v, overage }];
+    assert.deepEqual(p.noticeLines(NOW).map((n) => n.text), want, String(overage));
+  }
+});
+
+test("since is the short time since", () => {
+  assert.equal(p.since("2026-11-03T21:59:30Z", NOW), "now");
+  assert.equal(p.since("2026-11-03T21:53:00Z", NOW), "7m");
+  assert.equal(p.since("2026-11-03T19:00:00Z", NOW), "3h");
+  assert.equal(p.since("2026-11-01T22:00:00Z", NOW), "2d");
+});
+
+test("the seen and login columns show when there's room and data for them", () => {
+  const rows = p.parse(DEVIN_DOC);
+  const x = p.extrasFor(rows, NOW);
+  assert.deepEqual(x, { active: true, login: true, stale: true });
+  // No account with a last activity or a login end: no columns.
+  assert.deepEqual(p.extrasFor(p.parse(DOC).map((r) => ({ ...r, loginExpiresAt: null })), NOW), { active: false, login: false, stale: false });
+  assert.equal(p.columns(200, 7, 1, { active: false, login: false, stale: true }).extras, undefined);
+
+  const wide = p.columns(140, 7, 1, x);
+  assert.deepEqual(wide.extras, { active: true, login: true });
+  assert.equal(wide.bw, 20);
+  const [d, w, v] = rows.map((r) => strip(p.row(r, wide, null, NOW)));
+  assert.match(d, /5d16h +seen 7m +login 6d0h +1h ago$/);
+  assert.match(w, /seen — +login — +$/);
+  assert.match(v, /seen — +login — +$/);
+  // A login ending soon is flagged in its column too.
+  const warn = p.row({ ...rows[0], loginWarning: true }, wide, null, NOW);
+  assert.match(warn, /\x1b\[33m6d0h/);
+  assert.match(strip(warn), /⚠/);
+
+  // Narrower, the columns go before the bars get thinner than 8.
+  let on = null;
+  for (let cols = 140; cols > 40; cols--) if (p.columns(cols, 7, 1, x).extras) on = cols;
+  assert.equal(p.columns(on, 7, 1, x).bw, 8);
+  assert.equal(p.columns(on - 1, 7, 1, x).extras, undefined);
+  assert.equal(p.columns(on - 1, 7, 1, x).bw, 20);
+});
+
+// Narrower layouts reserve no room for a stale row's age; the pane cuts it, as before.
+test("rows with the extra columns never exceed the pane width, their age included", () => {
+  const rows = [...p.parse(DEVIN_DOC), { ...p.parse(DOC)[2], lastActivity: "2026-10-01T00:00:00Z", loginExpiresAt: "2026-12-30T00:00:00Z" }];
+  const x = p.extrasFor(rows, NOW);
+  for (let cols = 16; cols <= 200; cols++) {
+    const layout = p.columns(cols, 7, 1, x);
+    if (!layout.extras) continue;
+    for (const r of rows) {
+      const text = strip(p.row({ ...r, updatedAt: r.updatedAt && "2026-10-01T00:00:00Z" }, layout, null, NOW));
+      assert.ok(p.width(text) <= cols, `${cols} cols: "${text}" is ${p.width(text)} wide`);
+    }
+  }
+});
+
+test("a login end the live lookup found outlasts the cache read", () => {
+  const fresh = () => p.parse(DEVIN_DOC);
+  const live = { work: "2026-11-20T00:00:00Z", default: "2026-12-30T00:00:00Z", devin: "2026-11-01T00:00:00Z" };
+  const [d, w, v] = p.withLiveLogins(fresh(), live, NOW);
+  assert.equal(w.loginExpiresAt, "2026-11-20T00:00:00Z");
+  // The cache's own value wins, and one that has passed is dropped.
+  assert.equal(d.loginExpiresAt, "2026-11-09T22:00:00Z");
+  assert.equal(v.loginExpiresAt, null);
+});
+
+test("clock is a reset's time of day, with the weekday past a day", () => {
+  assert.equal(p.clock("2026-11-04T01:40:00Z", NOW, "UTC"), "01:40");
+  assert.equal(p.clock("2026-11-09T14:00:00Z", NOW, "UTC"), "Mon 14:00");
+  assert.equal(p.clock("2026-11-04T01:40:00Z", NOW, "Europe/Paris"), "02:40");
+  assert.equal(p.clock(null, NOW, "UTC"), "");
+});
+
+test("the details view swaps the bars for last use, login, age and reset times", () => {
+  const rows = p.parse(DEVIN_DOC);
+  const wide = p.detailColumns(100, 7, 1, "UTC");
+  const [d, w, v] = rows.map((r) => strip(p.row(r, wide, null, NOW)));
+  assert.equal(d, " 1 default  seen 7m    login 6d0h    upd 1h    5h 01:40      wk Mon 14:00  ");
+  assert.match(w, /work +seen — +login — +upd — +5h — +wk —/);
+  assert.match(v, /devin +seen — +login — +upd — +1d 08:00 +wk Sat 08:00/);
+  assert.doesNotMatch(d, /█|%/);
+  // A login ending soon, or numbers over an hour old, are in yellow; the ⚠ stays.
+  const warn = p.row({ ...rows[0], loginWarning: true }, wide, null, NOW);
+  assert.match(warn, /\x1b\[33m6d0h/);
+  assert.match(warn, /\x1b\[33m1h/);
+  assert.match(strip(warn), /⚠$/);
+  // The panel under rex-github is about 51 wide: the reset times go first.
+  const mid = p.detailColumns(51, 7, 1, "UTC");
+  assert.deepEqual(mid.details, { active: true, login: true, age: true });
+  assert.equal(strip(p.row(rows[0], mid, null, NOW)), " 1 default  seen 7m    login 6d0h    upd 1h    ");
+});
+
+test("details rows never exceed the pane width", () => {
+  const rows = [...p.parse(DEVIN_DOC), p.parse(DOC)[2], { ...p.parse(DOC)[0], lastActivity: "2026-10-01T00:00:00Z", loginExpiresAt: "2026-12-30T00:00:00Z", loginWarning: true }];
+  for (let cols = 12; cols <= 200; cols++) {
+    const layout = p.detailColumns(cols, 7, 1, "UTC");
+    for (const r of rows) {
+      const text = strip(p.row(r, layout, "token_expired", NOW));
+      assert.ok(p.width(text) <= cols, `${cols} cols: "${text}" is ${p.width(text)} wide`);
+    }
+  }
+});
+
+test("the details view doesn't change the panel's height", () => {
+  p.ui.profiles = p.parse(DEVIN_DOC);
+  p.ui.issues = {};
+  p.ui.collapsed = false;
+  p.ui.details = false;
+  const before = p.wantedRows();
+  p.ui.details = true;
+  assert.equal(p.wantedRows(), before);
+  p.ui.details = false;
+});
+
+test("a row that couldn't be read keeps the extra columns in line", () => {
+  const [ok] = p.parse(DEVIN_DOC);
+  const bad = { ...p.parse(DOC)[2], lastActivity: "2026-11-03T21:00:00Z" };
+  const layout = p.columns(120, 7, 1, { active: true, login: true, stale: false });
+  const at = (r) => strip(p.row(r, layout, null, NOW)).indexOf("seen");
+  assert.ok(at(ok) > 0);
+  assert.equal(at(bad), at(ok));
+});
+
+test("a narrow footer keeps q close", () => {
+  const strip2 = (s) => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
+  const cols = 36, out = [];
+  const write = process.stdout.write, c = process.stdout.columns, r = process.stdout.rows;
+  Object.defineProperty(process.stdout, "columns", { value: cols, configurable: true });
+  Object.defineProperty(process.stdout, "rows", { value: 12, configurable: true });
+  process.stdout.write = (s) => { out.push(s); return true; };
+  try {
+    p.ui.profiles = p.parse(DOC); p.ui.issues = {}; p.ui.collapsed = false; p.ui.details = false; p.ui.loaded = true;
+    p.draw();
+  } finally {
+    process.stdout.write = write;
+    Object.defineProperty(process.stdout, "columns", { value: c, configurable: true });
+    Object.defineProperty(process.stdout, "rows", { value: r, configurable: true });
+  }
+  assert.match(strip2(out.join("")), /r refresh · c collapse · q close/);
 });
