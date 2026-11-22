@@ -6,14 +6,31 @@ The 5-hour and weekly Claude Code usage of every account [mcc](https://github.co
  ▾ mcc usage                                                            updated 4m ago  ↻ refresh
  cpu 12% · mem 27.0/32.0 GB · disk 822.1/926.4 GB 89% · net ↓1.2 MB/s ↑40 KB/s
 ─────────────────────────────────────────────────────────────────────────────────────────────────
- default    5h █░░░░░░░░░░░░░░░░░░░   5%   3h17    wk ███░░░░░░░░░░░░░░░░░  17%   4d4h
- csdaisy    5h ░░░░░░░░░░░░░░░░░░░░   0%           wk ███░░░░░░░░░░░░░░░░░  13%   21h57  ⚠ 1h ago
- work       5h █████░░░░░░░░░░░░░░░  25%   1h27    wk █████░░░░░░░░░░░░░░░  24%   6d0h
+ 1 default  5h █░░░░░░░░░░░░░░░░░░░   5%   3h17    wk ███░░░░░░░░░░░░░░░░░  17%   4d4h
+ 2 csdaisy  5h ░░░░░░░░░░░░░░░░░░░░   0%           wk ███░░░░░░░░░░░░░░░░░  13%   21h57  ⚠ 1h ago
+ 3 work     5h █████░░░░░░░░░░░░░░░  25%   1h27    wk █████░░░░░░░░░░░░░░░  24%   6d0h
+ 4 devin    1d ····················    —           wk ███████████░░░░░░░░░  54%   3d4h
  csdaisy: login expired · mcc login csdaisy
- r refresh · c collapse · q close
+ devin: overage balance $3.50
+ r refresh · c collapse · q close · d details
+```
+
+Press `d` for the details: what else mcc knows about each account, in place of the bars.
+
+```
+ 1 default  seen 1d    login —       upd 4m    5h 01:17      wk Sun 02:00
+ 2 csdaisy  seen now   login —       upd 1h    5h —          wk 19:57     ⚠
+ 3 work     seen 15m   login 6d0h    upd 4m    5h 23:27      wk Mon 22:00
+ 4 devin    seen —     login —       upd 4m    1d —          wk Sat 02:00
 ```
 
 Each row starts with the account's number, in mcc's order, and shows a bar, the percent used and the time until the window resets. As in `mcc usage`, `!` marks 80% or more and `!!` marks 95% or more. The default account's name is in cyan. A ⚠ marks an account whose last live lookup failed or whose login ends soon, with a line under the table naming the `mcc login` command that fixes it. When an account's numbers are more than an hour old, its row says how old they are.
+
+[Devin](https://devin.ai), which mcc shows when the Devin CLI is signed in, has a daily window instead of a 5-hour one: its row says `1d`, with a dash when its plan hides that window. When its overage balance is above zero, a line under the table shows it. A Devin login that has run out names `devin auth login`, since mcc never touches that login.
+
+When the pane is wide enough (about 91 columns or more), each row also says, after its windows, when the account was last used (`seen 7m`) and how long before its login runs out (`login 6d0h`, yellow when it ends soon), as `mcc usage`'s LAST ACTIVE and LOGIN ENDS columns do. A column shows only when some account has a value for it: mcc reads a login's end from the profile's `.credentials.json`, and only a refresh also reads the macOS Keychain, so the panel keeps what the last refresh found there. In a narrower pane, press `d`.
+
+**Details** (`d`) swaps each row's bars for the same last use and login end, how old its numbers are (`upd 4m`, yellow past an hour), and when each window resets as a clock time (`5h 13:10`, `wk Fri 18:00`), in the order they're dropped last as the pane narrows: in a pane 51 columns wide, the reset times give way. The panel's height doesn't change; press `d` again for the bars. The panel doesn't remember the view.
 
 The line under the title shows this machine's CPU, memory and disk use (green, yellow from 80%, red from 95%) and how fast it's receiving (↓) and sending (↑) over the network. A value it can't read says `unavailable`; the rest of the line and the usage rows still show. When the whole line doesn't fit, it shows only the memory and disk percent and, for the network, a dot: `net ●`, blinking green while this machine is online, or a red `net ○` when it's offline. Narrower still, it drops the dot, then the disk.
 
@@ -52,6 +69,7 @@ Press the key in any pane. The panel opens across the bottom of the tab, under a
 | --- | --- |
 | `r`, or click **↻ refresh** (expanded, anywhere right of the title) | Look every account's usage up live; the button then reads ✓ updated or ✗ failed, and a failed refresh leaves a line saying why until one succeeds |
 | `c`, enter, or click the title (collapsed, also the summary) | Collapse or expand |
+| `d`, or click **d details** in the footer (expanded) | Switch between the bars and the details |
 | `↑` `↓`, `j` `k`, or the wheel | Scroll when the accounts don't fit |
 | `q` | Close the panel |
 
@@ -106,7 +124,7 @@ node --test
 - `rex-mcc.lua`: the `mcc_usage` action, which opens the panel under the tab's rex-github panel, or across the bottom of the tab, or closes it.
 - `panel.js`: the panel itself. Plain Node, no npm packages.
 - `install.js`: adds the panel and a key to `init.lua`, or takes them out.
-- `test/`: unit tests for reading mcc's JSON, the rows at every width, the notices, the machine stats parsers, the disk reading, the online check, and their line at every width (fixtures in `test/system-fixtures.js`), finding the split above the panel and the ratio that fits it, and for which key `install.js` picks and how it edits `init.lua`.
+- `test/`: unit tests for reading mcc's JSON (Devin included), the rows and the details at every width, the notices, the machine stats parsers, the disk reading, the online check, and their line at every width (fixtures in `test/system-fixtures.js`), finding the split above the panel and the ratio that fits it, and for which key `install.js` picks and how it edits `init.lua`.
 
 ## License
 
