@@ -33,7 +33,7 @@ const block = (key, module = MODULE) =>
   `\n${MARKER} (https://github.com/luongnv89/rex-extensions/tree/main/github)\ndofile(${luaString(module)})\nrex.bind(${luaString(key)}, "${ACTION}")\n`;
 
 // Whether a config already loads rex-github.lua.
-const loadsModule = (config) => /^\s*dofile\s*\(?\s*["'][^"'\n]*rex-github\.lua["']/m.test(config);
+const loadsModule = (config) => /^\s*dofile\s*\(.*["'][^"'\n]*rex-github\.lua["']/m.test(config);
 
 // The config without the lines block() added: the marker, the dofile and the bind.
 function removeBlock(config) {
