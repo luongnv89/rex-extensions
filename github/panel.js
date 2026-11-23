@@ -23,6 +23,8 @@ const STATE = path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), ".
 const STALE = 120000;
 const LIMIT = 50;
 const POLL = 2000;
+const POLL_IDLE = 8000;
+const POLL_HIDDEN = 10000;
 // The panel's width in columns until the user drags it to another (#16): about
 // Rex's sidebar (291pt at 8pt a column). It takes at most MAX_SHARE of its split,
 // so the other side stays usable. A saved width outside MIN_COLUMNS..MAX_COLUMNS
@@ -351,24 +353,42 @@ async function processOf(block) {
   return (await rexApi("block.method", { block_id: block, method: "process", args: {} })).result ?? null;
 }
 
+// Next poll wait in ms: hidden tabs poll at POLL_HIDDEN, active visible tabs at
+// POLL, and unchanged visible tabs back off up to POLL_IDLE.
+function pollDelay(visible, idle) {
+  if (!visible) return POLL_HIDDEN;
+  if (idle < 3) return POLL;
+  return Math.min(POLL_IDLE, POLL * (2 ** (idle - 2)));
+}
+
 // Follow the focused pane of our own tab; when we have focus, keep the last one.
+// Skips reading the target process while the tab is hidden, and returns whether
+// visibility, layout revision, target pane or folder changed.
+let lastRevision = null;
 async function locate() {
-  if (!SELF || !SESSION) return;
+  if (!SELF || !SESSION) return false;
   try {
+    const prevVisible = ui.visible, prevTarget = target, prevCwd = cwd;
     const { result: view } = await rexApi("session.view");
     const me = windowOf(view, SELF);
-    if (!me) return;
+    if (!me) return false;
     notePanes(me);
     ui.tab = me.window_id;
     ui.visible = view.active_window_id === me.window_id;
+    const rev = view.revision ?? null;
+    const revChanged = rev !== null && lastRevision !== null && rev !== lastRevision;
+    lastRevision = rev;
     const blocks = blocksOf(me);
     const focused = me.focused_block_id;
     if (focused && focused !== SELF && blocks.some((b) => b.block_id === focused)) target = focused;
-    if (!blocks.some((b) => b.block_id === target)) return;
+    if (!ui.visible || !blocks.some((b) => b.block_id === target)) {
+      return ui.visible !== prevVisible || revChanged || target !== prevTarget;
+    }
     const proc = await processOf(target);
     const dir = proc?.foreground?.cwd ?? proc?.child?.cwd;
     if (dir) cwd = dir;
-  } catch {}
+    return ui.visible !== prevVisible || revChanged || target !== prevTarget || cwd !== prevCwd;
+  } catch { return false; }
 }
 
 async function refresh() {
@@ -2911,8 +2931,27 @@ function main() {
 
   process.stdout.write(`${MODES_ON}${ESC}2J`);
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
-  process.stdin.on("data", onInput);
-  process.stdout.on("resize", onResize);
+  let idle = 0, pollTimer = null, polling = false;
+  const schedulePoll = () => {
+    clearTimeout(pollTimer);
+    pollTimer = setTimeout(tick, pollDelay(ui.visible, idle));
+  };
+  async function tick() {
+    polling = true;
+    try {
+      const changed = await locate();
+      idle = ui.visible ? (changed ? 0 : idle + 1) : 0;
+      // Fetch only while the panel's tab is on screen: a hidden panel keeps running.
+      if (ui.visible && (cwd !== ui.context || Date.now() - ui.fetchedAt > STALE)) refresh();
+    } finally {
+      polling = false;
+      schedulePoll();
+    }
+  }
+  const wakePoll = () => { if (idle > 0) { idle = 0; if (!polling) schedulePoll(); } };
+
+  process.stdin.on("data", (d) => { wakePoll(); onInput(d); });
+  process.stdout.on("resize", () => { wakePoll(); onResize(); });
   for (const sig of ["SIGTERM", "SIGHUP", "SIGINT"]) process.on(sig, quit);
   // Keep a crash on screen: the pane closes as soon as the process exits.
   process.on("uncaughtException", (e) => {
@@ -2923,15 +2962,10 @@ function main() {
   });
 
   setInterval(() => { if (ui.loading) { ui.frame++; draw(); } }, 100);
-  setInterval(async () => {
-    await locate();
-    // Fetch only while the panel's tab is on screen: a hidden panel keeps running.
-    if (ui.visible && (cwd !== ui.context || Date.now() - ui.fetchedAt > STALE)) refresh();
-  }, POLL);
 
   try { readStore(); } catch {}
   draw();
-  locate().then(refresh);
+  locate().then(() => { refresh(); schedulePoll(); });
   fitWidth();
 }
 
@@ -2939,7 +2973,7 @@ if (require.main === module) main();
 else {
   module.exports = {
     width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput, MODES_ON, MODES_OFF,
-    act, startChoice, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, AGENT_NAMES, flags, locate, splitLeft, ratioFor, fitWidth, COLUMNS, MAX_SHARE,
+    act, startChoice, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, AGENT_NAMES, flags, locate, pollDelay, POLL, POLL_IDLE, POLL_HIDDEN, splitLeft, ratioFor, fitWidth, COLUMNS, MAX_SHARE,
     // The width the panel keeps (#16): the settle after a resize, and a fresh start for tests.
     settleResize, savedWidth, resetWidth: () => { panes = null; border = null; fitting = false; pending = null; },
     // A pull request's Merge button (#13): its press, the rules it builds the CLI's

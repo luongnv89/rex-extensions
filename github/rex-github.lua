@@ -94,7 +94,7 @@ local function share(ctx, window)
   return WIDTH
 end
 
-local function toggle(ctx)
+local function toggle(ctx, args)
   local view = rex.call("session.view", { session_id = ctx.session_id })
   local window, blocks = find_window(view, ctx.block_id)
   if not window then error("rex-github: no window holds the focused block") end
@@ -117,13 +117,14 @@ local function toggle(ctx)
     table.insert(command, cwd)
   end
   local ratio = 1 - share(ctx, window)
+  local focus = not (type(args) == "table" and args.focus == false)
   local opened = rex.call("session.new_split", {
     session_id = ctx.session_id,
     anchor_id = root_of(window) or ctx.block_id,
     direction = "horizontal",
     side = "after",
     ratio = ratio,
-    focus = true,
+    focus = focus,
     layout = { block = { flavor = TERMINAL, label = LABEL, options = { command = command, cwd = cwd or "" } } },
   })
   -- Rex's app may even out the tab's splits right after: panel.js then fits its
@@ -137,5 +138,6 @@ rex.action({
   description = "Show or hide the open pull requests and issues of the repo you're in.",
   category = "GitHub",
   keywords = "github gitlab pull request merge issue pr mr",
+  args = { focus = "boolean?" },
   run = toggle,
 })

@@ -51,7 +51,7 @@ process.on("exit", () => fs.rmSync(stateHome, { recursive: true, force: true }))
 Object.assign(process.env, { REX_GITHUB_REX: "rex", REX_SESSION: "session:s", REX_BLOCK: "block:panel", REX_GITHUB_STARTUP_MS: "1", XDG_STATE_HOME: stateHome });
 process.argv.push("--target", "block:agent", "--cwd", "/start");
 const P = require("../profiles.cjs");
-const { width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput, MODES_ON, MODES_OFF, act, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, flags, locate, state, follow, splitLeft, ratioFor, fitWidth, COLUMNS, MAX_SHARE, settleResize, savedWidth, resetWidth, pressMerge, MERGE_GAP, mergeStrategy, mergeArgs, mergeGuard, refresh, pressClose, checkedNumbers, paneLabel, KEYMAP, mergeMode, branchDelete } = require("../panel.js");
+const { width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput, MODES_ON, MODES_OFF, act, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, flags, locate, pollDelay, POLL, POLL_IDLE, POLL_HIDDEN, state, follow, splitLeft, ratioFor, fitWidth, COLUMNS, MAX_SHARE, settleResize, savedWidth, resetWidth, pressMerge, MERGE_GAP, mergeStrategy, mergeArgs, mergeGuard, refresh, pressClose, checkedNumbers, paneLabel, KEYMAP, mergeMode, branchDelete } = require("../panel.js");
 
 // Drops colors and OSC 8 hyperlinks, leaving the text a terminal shows.
 const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b\]8;[^\x07\x1b]*(?:\x1b\\|\x07)/g, "");
@@ -2523,27 +2523,48 @@ test("flags reads --target and --cwd as rex-github.lua passes them", () => {
 test("locate follows the focused pane of the panel's own tab, and keeps it while the panel has focus", async () => {
   ui.visible = true;
   fakeRex({ "block:agent": shellProc("/one"), "block:b2": shellProc("/two") }, { focused: "block:b2" });
-  await locate();
+  assert.equal(await locate(), true);
   assert.deepEqual(state(), { cwd: "/two", target: "block:b2" });
   assert.equal(ui.tab, "window:w1");
   assert.equal(ui.visible, true);
+  // Unchanged poll reports no change so the poll loop can back off.
+  assert.equal(await locate(), false);
   // The panel has focus: it keeps following the last pane, whose folder can change.
   fakeRex({ "block:agent": shellProc("/one"), "block:b2": shellProc("/two/sub") }, { focused: "block:panel" });
-  await locate();
+  assert.equal(await locate(), true);
   assert.deepEqual(state(), { cwd: "/two/sub", target: "block:b2" });
-  // Focus in another tab is someone else's; that tab being shown hides this one.
+  // Focus in another tab is someone else's; while hidden, locate skips reading process.
+  calls.length = 0;
   fakeRex({ "block:agent": shellProc("/one"), "block:b2": shellProc("/two") }, { focused: "block:panel", other: { "block:w2": shellProc("/elsewhere") }, active: "window:w2" });
-  await locate();
-  assert.deepEqual(state(), { cwd: "/two", target: "block:b2" });
+  assert.equal(await locate(), true);
+  assert.deepEqual(rexCalls(), ["view"]);
+  assert.deepEqual(state(), { cwd: "/two/sub", target: "block:b2" });
   assert.equal(ui.visible, false);
+  // Returning to the tab reads the target pane's current folder right away.
+  calls.length = 0;
+  fakeRex({ "block:agent": shellProc("/one"), "block:b2": shellProc("/two") }, { focused: "block:panel", other: { "block:w2": shellProc("/elsewhere") }, active: "window:w1" });
+  assert.equal(await locate(), true);
+  assert.deepEqual(rexCalls(), ["view", "process block:b2"]);
+  assert.deepEqual(state(), { cwd: "/two", target: "block:b2" });
+  assert.equal(ui.visible, true);
   // A rex that fails changes nothing.
   fakeRex({}, { replies: { view: fail("connection refused") } });
-  await locate();
+  assert.equal(await locate(), false);
   assert.deepEqual(state(), { cwd: "/two", target: "block:b2" });
   // Back to the first pane, for any test after this one.
   fakeRex({ "block:agent": shellProc("/start") }, { focused: "block:agent" });
   await locate();
   assert.deepEqual(state(), { cwd: "/start", target: "block:agent" });
+});
+
+test("pollDelay stays fast while active, backs off when idle, and slows down while hidden", () => {
+  assert.equal(pollDelay(true, 0), POLL);
+  assert.equal(pollDelay(true, 2), POLL);
+  assert.equal(pollDelay(true, 3), POLL * 2);
+  assert.equal(pollDelay(true, 4), POLL_IDLE);
+  assert.equal(pollDelay(true, 20), POLL_IDLE);
+  assert.equal(pollDelay(false, 0), POLL_HIDDEN);
+  assert.equal(pollDelay(false, 10), POLL_HIDDEN);
 });
 
 // ── Width ───────────────────────────────────────────────────────────────────

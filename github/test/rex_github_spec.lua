@@ -33,10 +33,10 @@ os.getenv = function(name)
 end
 
 -- A stub of Rex: one tab holding the focused block "blk-1", in CWD when it's set.
-local CWD, run, split
+local CWD, run, action_spec, split
 rex = {
   bind = function() end,
-  action = function(spec) run = spec.run end,
+  action = function(spec) action_spec = spec; run = spec.run end,
   call = function(method, params)
     if method == "session.view" then
       return { windows = { { layers = { {
@@ -67,9 +67,9 @@ local function load_as(as)
 end
 
 -- The new pane's command and cwd when $HOME is `home` and the focused pane is in `cwd`.
-local function open(home, cwd)
+local function open(home, cwd, args)
   HOME, CWD, split = home, cwd, nil
-  run({ session_id = "s-1", block_id = "blk-1" })
+  run({ session_id = "s-1", block_id = "blk-1" }, args)
   local options = split.layout.block.options
   return options.command, options.cwd
 end
@@ -141,6 +141,16 @@ local folder = MODULE:match("^(.*)/[^/]*$")
 local parent, name = folder:match("^(.*)(/[^/]*)$")
 command = open(parent, "/srv")
 eq(list(command), under_home(name .. "/panel.js", "--cwd", "/srv"), "the real module")
+eq(split.focus, true, "opens with focus by default")
+eq(action_spec.args and action_spec.args.focus, "boolean?", "declares optional focus boolean argument")
+
+-- Optional focus = false keeps focus on the terminal (for automation/hooks).
+open(parent, "/srv", { focus = false })
+eq(split.focus, false, "focus = false opens the panel without taking focus")
+open(parent, "/srv", { focus = true })
+eq(split.focus, true, "focus = true opens the panel with focus")
+open(parent, "/srv", {})
+eq(split.focus, true, "empty args table defaults to focus = true")
 
 if failures > 0 then
   io.stderr:write(string.format("%d of %d checks failed\n", failures, count))
