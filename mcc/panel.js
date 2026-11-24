@@ -116,9 +116,13 @@ function run(cmd, args, timeout) {
 
 const usageWindow = (w) => (w && typeof w.percent === "number" ? { percent: w.percent, resetsAt: w.resets_at ?? null } : null);
 
+const usd = (v) => (Number.isFinite(v) ? v : null);
+
 // `mcc usage --json-v2` → one row per profile. Devin (`provider: "devin"`) has a
 // daily window instead of a 5-hour one, and an overage balance; mcc leaves both
-// keys out for Claude Code profiles.
+// keys out for Claude Code profiles. An API-key profile (`auth: "api_key"`, mcc
+// #132) has no window at all, but its estimated spend this month on this machine
+// and the budget set for it; each is left out when unknown.
 function parse(stdout) {
   const doc = JSON.parse(stdout);
   if (doc?.schema !== 2 || !Array.isArray(doc.profiles)) throw new Error(`unexpected mcc output (schema ${doc?.schema ?? "?"}); update mcc`);
@@ -137,7 +141,10 @@ function parse(stdout) {
     lastActivity: p.last_activity ?? null,
     provider: p.provider === "devin" ? "devin" : "claude",
     day: usageWindow(p.usage?.daily),
-    overage: Number.isFinite(p.usage?.overage_usd) ? p.usage.overage_usd : null,
+    overage: usd(p.usage?.overage_usd),
+    apiKey: p.auth === "api_key",
+    cost: usd(p.usage?.est_cost_usd),
+    budget: usd(p.usage?.budget_usd),
   }));
 }
 
@@ -155,6 +162,30 @@ const reasonText = (r) => REASONS[r] ?? (r ? String(r).replace(/_/g, " ") : "una
 const loginCommand = (p) => (p.provider === "devin" ? "devin auth login" : `mcc login ${p.isDefault ? "default" : p.name}`);
 // Devin's overage balance, as mcc prints it: $3.50.
 const dollars = (v) => `$${v.toFixed(2)}`;
+
+// An API-key profile has no Claude login: mcc gives its row the status a profile
+// without one has (`no_data` from the cache, `not_logged_in` live) only so older
+// readers still understand it. Nothing is wrong with it, and `mcc login` refuses it.
+const hasIssue = (p) => !p.apiKey && p.status !== "ok";
+// What a refresh found wrong, by account name.
+const liveIssues = (live) => Object.fromEntries(live.filter(hasIssue).map((p) => [p.name, p.reason]));
+
+// An API-key profile's spend against its budget, in percent, when it has both.
+const spendPercent = (p) => (p.cost != null && p.budget > 0 ? (p.cost / p.budget) * 100 : null);
+// Its spend, longest form first, as mcc says it: est. $1.50 this month of $50.00
+// budget (3%). The row takes the first that fits.
+function spendTexts(p) {
+  if (p.reason === "disabled") return [reasonText(p.reason)];
+  const pct = spendPercent(p);
+  const share = pct == null ? "" : ` (${Math.round(pct)}%)`;
+  if (p.cost == null && p.budget != null) return [`no cost recorded yet; ${dollars(p.budget)} budget`, `no cost yet; ${dollars(p.budget)}`, "no cost yet", "—"];
+  if (p.cost == null) return ["no cost recorded yet", "no cost yet", "—"];
+  const c = dollars(p.cost);
+  if (p.budget == null) return [`est. ${c} this month`, `${c} this month`, c];
+  const b = dollars(p.budget);
+  return [`est. ${c} this month of ${b} budget${share}`, `${c} this month of ${b}${share}`, `${c} of ${b}${share}`, `${c}${share}`, c];
+}
+const spendText = (p, max) => spendTexts(p).find((t) => width(t) <= max) ?? fit(spendTexts(p).at(-1), max);
 
 // ── Machine ─────────────────────────────────────────────────────────────────
 // Ported from mcc-herdr-plugin (herdr-app/mcc-usage/system.js and its panel.js);
@@ -549,19 +580,43 @@ function detailCells(p, d, now, tz) {
     const age = p.updatedAt ? since(p.updatedAt, now) : p.source === "live" ? "live" : "";
     out += "  " + dim("upd ") + (isStale(p, now) ? yellow : dim)(padEnd(age || "—", 4));
   }
-  if (d.clock) {
+  if (d.clock && p.apiKey) {
+    // No window to reset: its spend instead, in the same 28 columns.
+    const pct = spendPercent(p);
+    out += "  " + dim("api ") + (pct == null ? dim : tone(Math.round(pct)))(padEnd(spendText(p, 22), 22));
+  } else if (d.clock) {
     const [firstLabel, first] = firstWindow(p);
     for (const [label, w] of [[firstLabel, first], ["wk", p.week]]) out += "  " + dim(label + " ") + dim(padEnd((w && clock(w.resetsAt, now, tz)) || "—", 9));
   }
   return out;
 }
 
+// An API-key profile's row after its name: in place of the two windows, as wide as
+// they are so the columns after it line up, its spend this month, with a bar of
+// the budget used when it has one.
+function spendCells(p, layout, now) {
+  const pct = spendPercent(p);
+  const color = pct == null ? (p.cost == null ? dim : (x) => x) : tone(Math.round(pct));
+  if (layout.compact) return " " + color(spendText(p, 10));
+  const span = 2 + 2 * cellWidthFor(layout.bw, layout.reset);
+  let out = dim("api ");
+  let room = span - 4;
+  // "api " is a column wider than "5h ", so the bar is a column shorter: it ends
+  // where the 5-hour bars above and below it end.
+  const bw = layout.bw - 1;
+  if (pct != null && bw >= 2) { out += bar(Math.round(pct), bw) + " "; room -= bw + 1; }
+  const text = spendText(p, room);
+  const extras = layout.extras ? extraCells(p, layout.extras, now) : "";
+  return `  ${out}${color(text)}${" ".repeat(Math.max(0, room - width(text)))}${extras}`;
+}
+
 function row(p, layout, issue, now = Date.now()) {
   const name = padEnd(fit(p.name, layout.nameWidth), layout.nameWidth);
-  const marker = issue || p.loginWarning ? yellow(" ⚠") : "  ";
+  const marker = (issue && !p.apiKey) || p.loginWarning ? yellow(" ⚠") : "  ";
   const number = dim(padStart(String(p.index ?? ""), layout.indexWidth ?? 1)) + " ";
   const label = number + (p.isDefault ? accent(name) : name);
   if (layout.details) return ` ${label}${detailCells(p, layout.details, now, layout.tz)}${marker}`;
+  if (p.apiKey) return ` ${label}${spendCells(p, layout, now)}${layout.compact ? "" : marker}`;
   const [firstLabel, first] = firstWindow(p);
   if (layout.compact) {
     const pct = (w) => (w ? String(Math.round(w.percent)) : "—");
@@ -685,8 +740,7 @@ async function refresh() {
   try {
     if (r.error) throw new Error(r.error.killed ? "live lookup timed out" : `can't run ${mcc}`);
     const live = parse(r.stdout);
-    ui.issues = {};
-    for (const p of live) if (p.status !== "ok") ui.issues[p.name] = p.reason;
+    ui.issues = liveIssues(live);
     ui.liveLogins = Object.fromEntries(live.filter((p) => p.loginExpiresAt).map((p) => [p.name, p.loginExpiresAt]));
     ui.lastLive = Date.now();
     ui.liveError = null;
@@ -900,7 +954,7 @@ function noticeLines(now = Date.now()) {
   if (ui.error) out.push({ text: ui.error, color: red });
   if (ui.liveError) out.push({ text: `refresh failed: ${ui.liveError}`, color: red });
   for (const p of ui.profiles) {
-    const reason = ui.issues[p.name] ?? (p.status !== "ok" ? p.reason : null);
+    const reason = p.apiKey ? null : ui.issues[p.name] ?? (hasIssue(p) ? p.reason : null);
     if (reason) out.push({ text: `${p.name}: ${reasonText(reason)}${NEEDS_LOGIN.has(reason) ? ` · ${loginCommand(p)}` : ""}`, color: yellow });
     else if (p.loginWarning) out.push({ text: `${p.name}: login ends ${until(p.loginExpiresAt, now) ? `in ${until(p.loginExpiresAt, now)}` : "soon"} · ${loginCommand(p)}`, color: yellow });
     // As mcc does, only a balance above zero.
@@ -1072,7 +1126,7 @@ function main() {
 
 if (require.main === module) main();
 else module.exports = {
-  width, fit, clip, until, since, clock, ago, detailColumns, toggleDetails, flag, parse, loginCommand, extrasFor, extrasWidth, withLiveLogins, firstError, columns, row, cell, cellWidthFor, peak, splitAbove, firstLeaf, ratioFor, reasonText, findMcc, noticeLines, wantedRows, ui, draw,
+  width, fit, clip, until, since, clock, ago, detailColumns, toggleDetails, flag, parse, loginCommand, liveIssues, spendTexts, extrasFor, extrasWidth, withLiveLogins, firstError, columns, row, cell, cellWidthFor, peak, splitAbove, firstLeaf, ratioFor, reasonText, findMcc, noticeLines, wantedRows, ui, draw,
   // The panel's height after a drag (#55): fit it, when a drag settles, and a reset for tests.
   needsFit, resize, settleResize, refit, resetFit: () => { panes = null; fitted = null; full = null; fitting = false; },
   parseProcStat, cpuPercent, parseMeminfo, parseVmStat, parseNetDev, parseNetstat, rate, step, formatBytes, formatRate, shortBytes, formatPair, memPercent, diskPercent, parseStatfs, readDisk, readout, label,
