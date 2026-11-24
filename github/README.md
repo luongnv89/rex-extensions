@@ -181,7 +181,7 @@ Fix issue #{number} on a new branch, add a test, and open a pull request that cl
 - not hold a backslash, a line break, or a control, invisible (zero-width, bidi), private-use or unassigned character;
 - be at most 500 characters with the longest number filled in.
 
-A custom prompt needs no skill, so the panel doesn't look for one: the agent starts even when the IDD skills aren't installed. With mcc, `mcc` still has to be on your `PATH`. Since the prompt goes as written to every harness, `/issue-resolver {number}` runs the skill only on Claude Code (directly or through mcc); another agent reads it as plain text. A skill Claude Code has from a plugin needs the plugin's name, such as `/idd:issue-resolver {number}`.
+A custom prompt needs no skill, so the panel doesn't look for one: the agent starts even when the IDD skills aren't installed. With mcc, `mcc` still has to be installed, on your `PATH` or where its installers put it (see [Import from mcc](#import-from-mcc)). Since the prompt goes as written to every harness, `/issue-resolver {number}` runs the skill only on Claude Code (directly or through mcc); another agent reads it as plain text. A skill Claude Code has from a plugin needs the plugin's name, such as `/idd:issue-resolver {number}`.
 
 Leave the prompt empty to send the default again: the skill and the number, as above.
 
@@ -293,7 +293,7 @@ The imported profile is then one of yours: assign it to Resolve or Review, or pi
 
 The profile form's **Test** button, or ctrl-t, checks that the profile's agent can start with the harness, model and thinking level in the form, without starting it and without saving anything. It runs, in the repo's folder, commands that only print and exit, never with a prompt, so no agent works on anything and no tokens are spent:
 
-- `<harness> --version` for every harness (`mcc`, `claude`, `codex`, `pi`, `opencode`, `vibe` or `devin`), found on your `PATH`: the command is there and runs;
+- `<harness> --version` for every harness (`mcc`, `claude`, `codex`, `pi`, `opencode`, `vibe` or `devin`), found on your `PATH` (mcc also where its installers put it, see [Import from mcc](#import-from-mcc)): the command is there and runs;
 - for Claude Code via `mcc run`, `mcc env -q --shell bash`: mcc finds the Claude Code account it would use in the repo, as Resolve and Review read it; for a profile imported from mcc, `mcc env -q --shell bash <name>`: mcc finds that mcc profile;
 - with a model, for Pi `pi --list-models`, for OpenCode `opencode models` and for Devin `devin models list --process-model in-process` (so no background daemon starts): the model is one they list, for Devin as a family, an alias or a model's own name. That matters most for OpenCode, which starts its default model when it doesn't know the profile's.
 
