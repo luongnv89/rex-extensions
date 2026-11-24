@@ -8,7 +8,7 @@ The 5-hour and weekly Claude Code usage of every account [mcc](https://github.co
 ─────────────────────────────────────────────────────────────────────────────────────────────────
  1 csdaisy  5h ░░░░░░░░░░░░░░░░░░░░   0%           wk ███░░░░░░░░░░░░░░░░░  13%   21h57  ⚠ 1h ago
  2 default  5h █░░░░░░░░░░░░░░░░░░░   5%   3h17    wk ███░░░░░░░░░░░░░░░░░  17%   4d4h
- 3 work     5h █████░░░░░░░░░░░░░░░  25%   1h27    wk █████░░░░░░░░░░░░░░░  24%   6d0h
+►3 work     5h █████░░░░░░░░░░░░░░░  25%   1h27    wk █████░░░░░░░░░░░░░░░  24%   6d0h
  4 devin    1d ····················    —           wk ███████████░░░░░░░░░  54%   3d4h
  5 api      api ██░░░░░░░░░░░░░░░░░ est. $4.60 this month of $50.00 budget (9%)
  csdaisy: login expired · mcc login csdaisy
@@ -21,7 +21,7 @@ Press `d` for the details: what else mcc knows about each account, in place of t
 ```
  1 csdaisy  seen now   login —       upd 1h    5h —          wk 19:57     ⚠
  2 default  seen 1d    login —       upd 4m    5h 01:17      wk Sun 02:00
- 3 work     seen 15m   login 6d0h    upd 4m    5h 23:27      wk Mon 22:00
+►3 work     seen 15m   login 6d0h    upd 4m    5h 23:27      wk Mon 22:00
  4 devin    seen —     login —       upd 4m    1d —          wk Sat 02:00
  5 api      seen 1m    login —       upd —     api $4.60 of $50.00 (9%)
 ```
