@@ -5841,7 +5841,7 @@ test("without mcc, Settings offers no import and is as before; with mcc it offer
   setupGitHub("issues");
   lines = screen(() => key("s"));
   assert.match(lines[0], /^ ⚙ Settings +\+ Import {2}\+ New {2}✕ $/, lines.join("\n"));
-  assert.ok(text(lines.slice(-2)).includes("n new · i import"), lines.join("\n"));
+  assert.ok(text(lines.slice(-2)).includes("n new · i mcc"), lines.join("\n"));
   lines = screenAt(60, 40, () => key("?"));
   assert.ok(shows(lines, "i + Import a profile from mcc"), lines.join("\n"));
   screen(() => key("\x1b\x1b"));
@@ -6035,4 +6035,30 @@ test("Test of an imported profile checks mcc finds its own mcc profile (#63)", a
   assert.ok(text(lines).includes("Test failed: `mcc env -q --shell bash cskonal` failed: ✗ error: no profile named \"cskonal\""), lines.join("\n"));
   assert.equal(storeText(), before);
   screen(() => key("\x1b\x1b"));
+});
+
+test("with mcc found, Settings and the import picker keep their key hints whole at 28, 30 and 40 cells (#63)", async (t) => {
+  claudeHome(t);
+  mccOnPath(t);
+  mccProfiles(MCC_USAGE);
+  for (const cols of [28, 30, 40]) {
+    const at = (fn) => {
+      const lines = screenAt(cols, 24, fn);
+      for (const l of lines) assert.ok(width(l ?? "") <= cols, `${cols}: ${l}`);
+      return lines;
+    };
+    setupGitHub("issues");
+    let lines = at(() => key("s"));
+    assert.match(lines[0], /\+ Import {2}\+ New {2}✕ $/, `${cols}:\n${lines.join("\n")}`);
+    let foot = text(lines.slice(-3));
+    for (const hint of ["n new", "i mcc", "e edit", "d delete", "R/V assign", "esc back"]) assert.ok(foot.includes(hint), `${cols}: ${foot}`);
+    assert.ok(!foot.includes("…"), `${cols}: ${foot}`);
+    await picked(() => key("i"));
+    lines = at(draw);
+    foot = text(lines.slice(-2));
+    for (const hint of ["↑↓ select", "⏎ import", "? keys", "esc back"]) assert.ok(foot.includes(hint), `${cols}: ${foot}`);
+    assert.ok(!foot.includes("…"), `${cols}: ${foot}`);
+    assert.ok(lines.some((l) => /^▌ cskonal/.test(l ?? "")) && lines.some((l) => /^ {2}work/.test(l ?? "")), `${cols}:\n${lines.join("\n")}`);
+    screen(() => key("\x1b\x1b"));
+  }
 });

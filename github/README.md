@@ -281,7 +281,7 @@ A profile that can't be saved shows why, in red, and nothing is written.
 
 ### Import from mcc
 
-When mcc is installed on the machine of the Rex server, the settings show **+ Import** in the header, before **+ New**, and `i import` in the key hints. The panel looks for `mcc` where the mcc panel does: `$MCC_BIN`, else the panel's `PATH`, else `~/.local/bin`, `~/.cargo/bin`, `/opt/homebrew/bin` and `/usr/local/bin`. Without mcc, the settings show neither and work as before.
+When mcc is installed on the machine of the Rex server, the settings show **+ Import** in the header, before **+ New**, and `i mcc` in the key hints. The panel looks for `mcc` where the mcc panel does: `$MCC_BIN`, else the panel's `PATH`, else `~/.local/bin`, `~/.cargo/bin`, `/opt/homebrew/bin` and `/usr/local/bin`. Without mcc, the settings show neither and work as before.
 
 Press `i` or click **+ Import**: the panel runs `mcc usage --json-v2` and lists mcc's Claude Code profiles, tagged `default` for mcc's default and `imported` once one of your profiles starts it. Devin profiles aren't listed, since `mcc run` starts Claude Code only. `↑`/`↓` select one, enter or its **Import** button imports it, `?` lists these keys, and esc, `q` or `✕` go back to the settings.
 

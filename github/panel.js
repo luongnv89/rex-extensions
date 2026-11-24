@@ -2470,13 +2470,14 @@ function settingsLines(cols, rows) {
     notes.push([muted, `Starts the mcc profile ${st.form.mccProfile}, imported from mcc. Another harness leaves it behind.`]);
   }
   if (st.mode === "edit" && st.form.harness === "opencode" && st.form.thinking) notes.push([yellow, OPENCODE_NOTE]);
-  // The form's and the prompt's key hints come from their KEYMAP tables (#37).
+  // The form's and the prompt's key hints come from their KEYMAP tables (#37). + Import's
+  // is "i mcc", short enough to keep "esc back" on the third line at 28 cells (#63).
   const footer = hintLines(st.mode === "edit" ? (st.form.adding !== null ? ["type the model", "⏎ add", "esc cancel"]
     : KEYMAP.form.filter((e) => e.model === undefined || e.model === (st.field === MODEL_FIELD)).map((e) => e.hint))
     : st.mode === "prompt" ? KEYMAP.prompt.filter((e) => !e.custom || hasCustom(st)).map((e) => e.hint)
     : st.mode === "confirm" ? ["y delete", "any other key keeps it"]
     : picking ? ["↑↓ select", "⏎ import", "? keys", "esc back"]
-      : ["↑↓ select", "? keys", "n new", ...(st.mcc ? ["i import"] : []), st.promptSel === MERGE_ROW ? "e change" : "e edit", "d delete", "R/V assign", "esc back"], cols);
+      : ["↑↓ select", "? keys", "n new", ...(st.mcc ? ["i mcc"] : []), st.promptSel === MERGE_ROW ? "e change" : "e edit", "d delete", "R/V assign", "esc back"], cols);
   const room = Math.max(0, rows - out.length - footer.length - 1);
   const said = notes.flatMap(([tone, text]) => wrap(text, cols - 2, Infinity).map((l) => [tone, l]));
   if (said.length > room) {
