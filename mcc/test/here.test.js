@@ -46,16 +46,18 @@ const here = {
 };
 
 // A tab of block:top and block:other above the panel, `focus` focused, each pane in
-// the folder `dirs` gives it. mcc answers `here` from the folder it runs in, by
-// `answers`, and `usage` with USAGE. Nothing touches the real screen.
+// the folder `dirs` gives it. `blocks` lists the tab's panes, and Rex fails each
+// method in `silent`. mcc answers `here` from the folder it runs in, by `answers`,
+// and `usage` with USAGE. Nothing touches the real screen.
 function scene(t, { focus = "block:top", dirs = {}, answers = {} } = {}) {
   p.resetHere();
   calls.length = 0;
-  const tab = { focus, dirs, answers };
+  const tab = { focus, dirs, answers, blocks: ["block:top", "block:other", "block:panel"], silent: new Set() };
   rex = (args) => {
     const method = args[4], body = args[5] && JSON.parse(args[5]);
+    if (tab.silent.has(method === "block.method" ? body.method : method)) return { code: 1, stderr: "Error: Rex didn't answer" };
     if (method === "session.view") {
-      const blocks = [{ block_id: "block:top" }, { block_id: "block:other" }, { block_id: "block:panel" }];
+      const blocks = tab.blocks.map((block_id) => ({ block_id }));
       return ok(JSON.stringify({ windows: [{ window_id: "window:w1", focused_block_id: tab.focus, layers: [{ kind: "tiled", blocks }] }] }));
     }
     if (method === "block.method" && body.method === "process") return ok(JSON.stringify({ foreground: { cwd: tab.dirs[body.block_id] } }));
@@ -276,4 +278,40 @@ test("an answer for a folder you've since left is dropped (#64)", async (t) => {
   release();
   await first;
   assert.deepEqual(marked().map((l) => l.match(/\d (\w+)/)[1]), ["personal"], "the late answer for /code/work is ignored");
+});
+
+test("the mark stays, and mcc here doesn't run, while Rex doesn't answer (#64)", async (t) => {
+  const cases = {
+    "session.view fails": (tab) => tab.silent.add("session.view"),
+    "the pane's process can't be read": (tab) => tab.silent.add("process"),
+    "the panel's tab isn't in the view": (tab) => { tab.blocks = ["block:top", "block:other"]; },
+  };
+  for (const [why, silence] of Object.entries(cases)) {
+    await t.test(why, async (t) => {
+      const tab = scene(t, { dirs: { "block:top": "/code/work" }, answers: { "/code/work": here.set("work", "/code/work"), "/tmp": here.none } });
+      await p.load();
+      await p.follow();
+      assert.match(marked()[0], / work /);
+      silence(tab);
+      // Had the panel read anything, it would see /tmp, which has no default.
+      tab.dirs["block:top"] = "/tmp";
+      await p.follow();
+      await p.follow();
+      assert.deepEqual(marked().map((l) => l.match(/\d (\w+)/)[1]), ["work"], "a missed read keeps the mark");
+      assert.equal(hereCalls().length, 1, "no `mcc here` without a folder read");
+    });
+  }
+});
+
+test("the mark goes when the followed pane closes, without running mcc here (#64)", async (t) => {
+  const tab = scene(t, { dirs: { "block:top": "/code/work" }, answers: { "/code/work": here.set("work", "/code/work") } });
+  await p.load();
+  await p.follow();
+  assert.equal(marked().length, 1);
+  // The panel has focus when the pane it followed closes: there's no pane left to follow.
+  tab.focus = "block:panel";
+  tab.blocks = ["block:other", "block:panel"];
+  await p.follow();
+  assert.deepEqual(marked(), []);
+  assert.equal(hereCalls().length, 1, "no `mcc here` without a folder");
 });
