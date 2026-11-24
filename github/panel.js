@@ -2535,7 +2535,11 @@ function tabStrip(st, cols, row) {
   if (names) {
     const extra = cols - names.reduce((w, t) => w + width(t) + 2, 0);
     cells = names.map((text, i) => ({ text, w: width(text) + 2 + Math.floor(extra / n) + (i < extra % n ? 1 : 0) }));
-  } else cells = TABS.map((t, i) => (i === at ? { text: t.name, w: cols - 3 * (n - 1) } : { text: String(i + 1), w: 3 }));
+  } else {
+    // A number takes 3 cells, fewer only in a pane too narrow for even that.
+    const small = Math.min(3, Math.floor(cols / n));
+    cells = TABS.map((t, i) => (i === at ? { text: t.name, w: cols - small * (n - 1) } : { text: String(i + 1), w: small }));
+  }
   let x = 0;
   const line = cells.map(({ text, w }, i) => {
     ui.buttons.push({ row, from: x, to: x + w, action: () => { switchTab(st, i); draw(); } });

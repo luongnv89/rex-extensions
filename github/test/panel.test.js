@@ -2206,7 +2206,8 @@ test("the tab showing is inverted, and the strip fits at 28, 30 and 40 cells wit
     const dir = home(t);
     useProfiles(dir, [CC]);
     if (withMcc) mccOnPath(t);
-    for (const cols of [28, 30, 40, 60]) {
+    // 36, the width the panel opens at, is the narrowest with every tab named.
+    for (const cols of [28, 30, 35, 36, 40, 42, 43, 60]) {
       setupGitHub("issues");
       screenAt(cols, 24, () => key("s"));
       for (const [k, name] of [["1", "Profiles"], ["2", "Prompts"], ["3", "Button labels"], ["4", "Merging"]]) {
@@ -2218,11 +2219,11 @@ test("the tab showing is inverted, and the strip fits at 28, 30 and 40 cells wit
         assert.ok(!strip2.includes("…"), where);
         // The tab showing, named in full or by its short name, and the only one inverted.
         const active = activeTab(raw);
-        assert.ok(cols >= 60 ? active === name : [name, "Labels"].includes(active), `${active}\n${where}`);
+        assert.ok(cols >= 43 || cols < 36 ? active === name : [name, "Labels"].includes(active), `${active}\n${where}`);
         assert.equal(raw[2].split("\x1b[7m").length, 2, where);
         // Every tab is there: named while the line has room, else by its number, its key.
         const others = [["1", "Profiles"], ["2", "Prompts"], ["3", "Labels"], ["4", "Merging"]].filter(([n]) => n !== k);
-        for (const [n, other] of others) assert.ok(cols >= 40 ? new RegExp(other, "i").test(strip2) : strip2.includes(` ${n} `), `${other}\n${where}`);
+        for (const [n, other] of others) assert.ok(cols >= 36 ? new RegExp(other, "i").test(strip2) : strip2.includes(` ${n} `), `${other}\n${where}`);
       }
       screenAt(cols, 24, () => key("\x1b"));
     }
@@ -2264,6 +2265,17 @@ test("1 to 4, ⇥, ⇧⇥, ← → h l and a click switch Settings' tabs, ⇥ go
   lines = screen(() => click(...find(lines, "Profiles")));
   assert.equal(ui.settings.promptSel, null);
   assert.ok(lines[0].includes("+ New"), lines[0]);
+  // At 28 cells, a click on a tab's number opens it too.
+  lines = screenAt(28, 24, draw);
+  assert.match(lines[2], /^ +Profiles +2 {2}3 {2}4 $/, lines.join("\n"));
+  screenAt(28, 24, () => click(lines[2].lastIndexOf("3"), 2));
+  assert.equal(ui.settings.promptSel, "label:resolve");
+  lines = screenAt(28, 24, draw);
+  assert.match(lines[2], /^ 1 {2}2 +Button labels +4 $/, lines.join("\n"));
+  screenAt(28, 24, () => click(1, 2));
+  assert.equal(ui.settings.promptSel, null);
+  // Even a pane far too narrow draws its tabs without failing, within the pane.
+  assert.ok(width(screenAt(8, 24, draw)[2]) <= 8);
   // A delete still asking is taken back by a click on another tab: y then deletes nothing.
   screen(() => key("d"));
   assert.equal(ui.settings.mode, "confirm");
@@ -2302,7 +2314,7 @@ test("a change made in one tab is saved, and still applied after switching tabs 
   screen(() => key("21"));
   screen(() => key("\x1b"));
   assert.equal(ui.settings, null);
-  assert.equal(JSON.parse(fs.readFileSync(storeFile(), "utf8")).labels.resolve, "Fix it");
+  assert.equal(JSON.parse(fs.readFileSync(storeFile(), "utf8")).labels?.resolve, "Fix it");
   // The rows' button reads it, and Settings opened again shows both.
   let lines = screen(draw);
   assert.ok(lines.some((l) => l?.replace(/^▌/, "").trim() === "Fix it #12   Close #12"), lines.join("\n"));
