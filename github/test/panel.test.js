@@ -961,6 +961,40 @@ const mccEnv = (dir) => { mcc = (args) => args[0] === "env" ? { code: 0, stdout:
 const mccCalls = () => calls.filter((c) => c[0] === "mcc").map((c) => c.slice(1).join(" "));
 const OPENED_MCC = "Opened mcc in a new pane. If it asks something first, such as about a usage limit, answer it there; Claude Code then works on:";
 
+// ── Importing mcc profiles (#63) ──
+// What `mcc usage --json-v2` lists: Claude Code profiles, mcc's default among them,
+// and a Devin one, which isn't Claude Code.
+const MCC_USAGE = [
+  { name: "cskonal", provider: "claude", is_default: false, usage: { status: "ok" } },
+  { name: "default", provider: "claude", is_default: true, usage: { status: "ok" } },
+  { name: "work", provider: "claude", is_default: false, usage: { status: "ok" } },
+  { name: "devin", provider: "devin", is_default: false, usage: { status: "ok" } },
+];
+// An mcc whose `usage --json-v2` lists `profiles` as schema 2 does, and whose `env
+// -q --shell bash <name>` names the folder `dirs` has for that name (null: ~/.claude,
+// as for mcc's default); for a name it doesn't have, it fails as mcc does.
+function mccProfiles(profiles, dirs = {}) {
+  mcc = (args) => {
+    if (args[0] === "usage") return { code: 0, stdout: JSON.stringify({ schema: 2, profiles, updated_at: "2026-11-24T10:00:00Z", machines: [] }) };
+    if (args[0] === "--version") return { code: 0, stdout: "mcc 0.12.0\n" };
+    if (args[0] !== "env") return { code: 1, stderr: "unexpected" };
+    const name = args[4];
+    if (!Object.hasOwn(dirs, name)) return { code: 2, stderr: `✗ error: no profile named "${name}"\n  hint: run \`mcc list\` to see your profiles\n` };
+    return { code: 0, stdout: dirs[name] === null ? "unset CLAUDE_CONFIG_DIR\nexport MCC_PROFILE=default\n" : `export CLAUDE_CONFIG_DIR='${dirs[name]}'\nunset MCC_PROFILE\n` };
+  };
+}
+// fn, then the frames until the import picker has heard from mcc: the lines drawn then.
+async function picked(fn) {
+  const { write } = process.stdout, cols = process.stdout.columns, rows = process.stdout.rows;
+  process.stdout.write = function (s, ...rest) {
+    if (typeof s === "string" && s.startsWith("\x1b[?2026h")) return true;
+    return write.call(this, s, ...rest);
+  };
+  process.stdout.columns = 60; process.stdout.rows = 24;
+  try { fn(); for (let i = 0; i < 200 && (ui.settings?.picker?.loading || ui.settings?.picker?.importing); i++) await tick(); } finally { Object.assign(process.stdout, { write, columns: cols, rows }); }
+  return screen(draw);
+}
+
 test("with no profile assigned, Resolve starts Claude Code through mcc run, with the skills of mcc's profile", async (t) => {
   const dir = home(t, { ".mcc/profiles/work/skills/issue-resolver/SKILL.md": "x" });
   const bin = mccOnPath(t);
@@ -5180,7 +5214,7 @@ const BUTTON_KEYS = {
   prompt: [[/^Save$/, "⏎"], [/^Use default$/, "^R"], [/^(Cancel|✕)$/, "esc"]],
 };
 
-test("every view's key table names each key once, and every button drawn in it has a key there (#37)", (t) => {
+test("every view's key table names each key once, and every button drawn in it has a key there (#37)", async (t) => {
   for (const [mode, table] of Object.entries(KEYMAP)) {
     const keys = table.flatMap((e) => e.keys);
     assert.deepEqual(keys.filter((k, i) => keys.indexOf(k) !== i), [], `${mode} has a key twice`);
@@ -5199,14 +5233,24 @@ test("every view's key table names each key once, and every button drawn in it h
     autopilot: [() => { setupGitHub("issues"); screen(() => key("p")); ui.autopilot.checked.add(12); }],
     menu: [() => { setupGitHub("issues"); screen(() => key("a")); }],
     // The last: the merge mode's row (#39), past the prompt rows.
-    settings: [() => { setupGitHub("issues"); screen(() => key("s")); }, () => screen(() => key("j")), () => screen(() => key("jj")), () => screen(() => key("jjjj"))],
+    settings: [() => { setupGitHub("issues"); screen(() => key("s")); }, () => screen(() => key("j")), () => screen(() => key("jj")), () => screen(() => key("jjjj")),
+      // With mcc found, + Import too (#63).
+      () => { mccOnPath(t); setupGitHub("issues"); screen(() => key("s")); }],
     form: [() => screen(() => key("n"))],
     // One key at a time: a chunk that leaves the form drops the text after it, as a paste's.
     prompt: [() => screen(() => { key("\x1b"); key("qsjjje"); })],
+    // The import's picker (#63): an mcc profile to import, then one imported already.
+    import: [async () => {
+      usePrompts(dir, { resolve: "Fix #{number}" }, [CC, CX, { id: "work", name: "mcc work", harness: "mcc", mccProfile: "work" }], {});
+      mccProfiles(MCC_USAGE);
+      setupGitHub("issues");
+      screen(() => key("s"));
+      await picked(() => key("i"));
+    }, () => screen(() => key("jj"))],
   };
   for (const [mode, setups] of Object.entries(frames)) {
     for (const [n, set] of setups.entries()) {
-      set();
+      await set();
       const lines = screenAt(60, 40, draw), where = `${mode} ${n}`;
       if (mode === "prompt") assert.equal(ui.settings.mode, "prompt", where);
       let seen = 0;
@@ -5773,4 +5817,222 @@ test("a button label at its longest gives before the row's #N and the menu title
   const [sx, sy] = find(start, "▶ Start");
   const ap = screenAt(36, 24, () => click(sx + 1, sy));
   assert.ok(ap.some((l) => /┌ x{17}… 1 issue with/.test(l ?? "")), ap.join("\n"));
+});
+
+// ── Importing mcc profiles (#63) ────────────────────────────────────────────
+
+test("without mcc, Settings offers no import and is as before; with mcc it offers + Import, and opening Settings runs nothing (#63)", (t) => {
+  claudeHome(t);
+  mccOnPath(t, false);
+  setupGitHub("issues");
+  let lines = screen(() => key("s"));
+  assert.match(lines[0], /^ ⚙ Settings +\+ New {2}✕ $/, lines.join("\n"));
+  assert.ok(!/Import|import/.test(text(lines)), lines.join("\n"));
+  // i does nothing, and ? doesn't list it.
+  lines = screen(() => key("i"));
+  assert.equal(ui.settings.mode, "list");
+  assert.ok(!/Import|import/.test(text(lines)), lines.join("\n"));
+  lines = screenAt(60, 40, () => key("?"));
+  assert.ok(!text(lines).includes("Import"), lines.join("\n"));
+  screen(() => key("\x1b\x1b"));
+  assert.deepEqual(calls, []);
+  // With mcc: + Import beside + New, i in the key hints and the key list, and still nothing run.
+  mccOnPath(t);
+  setupGitHub("issues");
+  lines = screen(() => key("s"));
+  assert.match(lines[0], /^ ⚙ Settings +\+ Import {2}\+ New {2}✕ $/, lines.join("\n"));
+  assert.ok(text(lines.slice(-2)).includes("n new · i import"), lines.join("\n"));
+  lines = screenAt(60, 40, () => key("?"));
+  assert.ok(shows(lines, "i + Import a profile from mcc"), lines.join("\n"));
+  screen(() => key("\x1b\x1b"));
+  assert.deepEqual(calls, []);
+});
+
+test("mcc is found off a thin PATH, in ~/.local/bin, for Settings and for Resolve (#63)", async (t) => {
+  const dir = home(t, { ".claude/skills/issue-resolver/SKILL.md": "x", ".local/bin/mcc": "#!/bin/sh\nexit 0\n" });
+  const bin = path.join(dir, ".local/bin/mcc");
+  fs.chmodSync(bin, 0o755);
+  // PATH holds no mcc, and MCC_BIN is unset, as Rex's server may start the panel.
+  mccOnPath(t, false);
+  delete process.env.MCC_BIN;
+  mccEnv(path.join(dir, ".claude"));
+  setupGitHub("issues");
+  const lines = screen(() => key("s"));
+  assert.match(lines[0], /\+ Import {2}\+ New/, lines.join("\n"));
+  screen(() => key("\x1b"));
+  setupGitHub("issues");
+  fakeRex(agentHere());
+  await screenAsync(() => key("a"));
+  assert.deepEqual(splitCommand(), [bin, "run", "--", "/issue-resolver 12"]);
+});
+
+test("i lists mcc's Claude Code profiles to import, not Devin's, tagging mcc's default and those imported (#63)", async (t) => {
+  const dir = home(t);
+  useProfiles(dir, [{ id: "w", name: "My work", harness: "mcc", mccProfile: "work" }]);
+  mccOnPath(t);
+  mccProfiles(MCC_USAGE);
+  setupGitHub("issues");
+  screen(() => key("s"));
+  let lines = await picked(() => key("i"));
+  assert.deepEqual(mccCalls(), ["usage --json-v2"]);
+  assert.match(lines[0], /^ Import from mcc +✕ $/, lines.join("\n"));
+  const row = (name) => lines.find((l) => new RegExp(`^[▌ ] ${name} `).test(l ?? ""))?.trimEnd();
+  assert.match(row("cskonal"), /^▌ cskonal$/, lines.join("\n"));
+  assert.match(row("default"), /^ {2}default +default$/, lines.join("\n"));
+  assert.match(row("work"), /^ {2}work +imported$/, lines.join("\n"));
+  assert.equal(row("devin"), undefined, lines.join("\n"));
+  // The selected one has its Import button; one imported already, Imported ✓.
+  assert.ok(lines.some((l) => /^▌ {4}Import\s*$/.test(l ?? "")), lines.join("\n"));
+  assert.match(lines.at(-1), /↑↓ select · ⏎ import · \? keys · esc back/);
+  lines = screen(() => key("jj"));
+  assert.ok(lines.some((l) => /^▌ {4}Imported ✓\s*$/.test(l ?? "")), lines.join("\n"));
+  // Enter on it imports nothing more, and runs nothing.
+  calls.length = 0;
+  const before = storeText();
+  lines = await picked(() => key("\r"));
+  assert.ok(text(lines).includes("work is imported already, as My work: edit that profile instead"), lines.join("\n"));
+  assert.deepEqual(calls, []);
+  assert.equal(storeText(), before);
+  // ? lists its keys; esc goes back to the list.
+  lines = screenAt(60, 40, () => key("?"));
+  assert.match(lines[0], /Keys: Import from mcc/);
+  for (const e of KEYMAP.import) assert.ok(shows(lines, `${e.keys.join(" ")} ${e.does}`), lines.join("\n"));
+  screen(() => key("\x1b"));
+  screen(() => key("\x1b"));
+  assert.equal(ui.settings.mode, "list");
+});
+
+test("the import says why when mcc can't list its profiles, or has none to import (#63)", async (t) => {
+  claudeHome(t);
+  mccOnPath(t);
+  for (const [answer, says] of [
+    [{ code: 1, stderr: "\x1b[31m✗ error: can't read ~/.mcc\x1b[0m\nmore\n" }, "Can't list mcc's profiles: `mcc usage --json-v2` failed: ✗ error: can't read ~/.mcc"],
+    [{ code: 0, stdout: JSON.stringify({ schema: 1, accounts: [] }) }, "Can't list mcc's profiles: unexpected mcc output (schema 1); update mcc"],
+    [{ code: 0, stdout: JSON.stringify({ schema: 2, profiles: [MCC_USAGE[3]] }) }, "mcc has no Claude Code profile to import"],
+  ]) {
+    mcc = () => answer;
+    setupGitHub("issues");
+    screen(() => key("s"));
+    const lines = await picked(() => key("i"));
+    assert.ok(text(lines).includes(says), lines.join("\n"));
+    // Enter imports nothing, with nothing listed.
+    calls.length = 0;
+    await picked(() => key("\r"));
+    assert.deepEqual(calls, []);
+    screen(() => key("\x1b\x1b"));
+  }
+});
+
+test("importing an mcc profile adds a profile with the model and thinking level of its own settings (#63)", async (t) => {
+  const dir = home(t, {
+    // cskonal's folder isn't named after it: it is the one mcc env names.
+    ".mcc/profiles/cus_konal/settings.json": JSON.stringify({ model: "opus", effortLevel: "high", theme: "dark" }),
+    ".claude/settings.json": JSON.stringify({ model: "opus[1m]", effortLevel: "medium" }),
+  });
+  useProfiles(dir, [CC]);
+  mccOnPath(t);
+  mccProfiles(MCC_USAGE, { cskonal: path.join(dir, ".mcc/profiles/cus_konal"), default: null });
+  setupGitHub("issues");
+  screen(() => key("s"));
+  await picked(() => key("i"));
+  calls.length = 0;
+  let lines = await picked(() => key("\r"));
+  assert.deepEqual(mccCalls(), ["env -q --shell bash cskonal"]);
+  let stored = JSON.parse(storeText());
+  assert.equal(stored.version, 7);
+  assert.deepEqual(stored.profiles, [CC, { id: "cskonal", name: "mcc cskonal", harness: "mcc", mccProfile: "cskonal", model: "opus", thinking: "high" }]);
+  assert.ok(text(lines).includes("Imported cskonal as mcc cskonal: Claude Code via mcc run · mcc profile cskonal · opus · thinking high"), lines.join("\n"));
+  // Back in the list, the new profile selected, its description naming its mcc profile.
+  assert.equal(ui.settings.mode, "list");
+  assert.ok(lines.some((l) => /^▌ mcc cskonal +cskonal$/.test(l?.trimEnd() ?? "")), lines.join("\n"));
+  // mcc's default lives in ~/.claude: its model can't be passed on (opus[1m]), so it
+  // is left empty, which starts the profile's own; its thinking level is kept.
+  await picked(() => key("i"));
+  lines = await picked(() => key("j\r"));
+  stored = JSON.parse(storeText());
+  assert.deepEqual(stored.profiles.at(-1), { id: "mcc-default", name: "mcc default", harness: "mcc", mccProfile: "default", thinking: "medium" });
+  // One mcc env fails for: it says why, and nothing is saved.
+  const before = storeText();
+  await picked(() => key("i"));
+  lines = await picked(() => key("jj\r"));
+  assert.ok(text(lines).includes("Can't import work: mcc env failed: ✗ error: no profile named \"work\""), lines.join("\n"));
+  assert.equal(storeText(), before);
+  assert.equal(ui.settings.mode, "import");
+  screen(() => key("\x1b\x1b"));
+});
+
+test("a read-only profiles file isn't written by an import (#63)", async (t) => {
+  const dir = home(t);
+  const newer = JSON.stringify({ version: 8, profiles: [], assign: {} });
+  fs.writeFileSync(useProfiles(dir, []), newer);
+  mccOnPath(t);
+  mccProfiles(MCC_USAGE, { cskonal: path.join(dir, ".claude") });
+  setupGitHub("issues");
+  screen(() => key("s"));
+  await picked(() => key("i"));
+  const lines = await picked(() => key("\r"));
+  assert.ok(shows(lines, "Not saved: The profiles file is version 8, not 1, 2, 3, 4, 5, 6 or 7: it is read only here"), lines.join("\n"));
+  assert.equal(storeText(), newer);
+  screen(() => key("\x1b\x1b"));
+});
+
+test("an imported profile keeps its mcc profile when edited, and leaves it behind on another harness (#63)", (t) => {
+  const dir = home(t);
+  useProfiles(dir, [{ id: "work", name: "mcc work", harness: "mcc", mccProfile: "work", model: "opus" }]);
+  mccOnPath(t);
+  setupGitHub("issues");
+  let lines = screen(() => key("sj"));
+  assert.ok(text(lines).includes("Claude Code via mcc run · mcc profile work · opus"), lines.join("\n"));
+  lines = screen(() => key("e"));
+  assert.ok(text(lines).includes("Starts the mcc profile work, imported from mcc. Another harness leaves it behind."), lines.join("\n"));
+  screen(() => key("!"));
+  screen(() => key("\r"));
+  let stored = JSON.parse(storeText());
+  assert.equal(stored.version, 7);
+  assert.deepEqual(stored.profiles, [{ id: "work", name: "mcc work!", harness: "mcc", mccProfile: "work", model: "opus" }]);
+  // Claude Code itself starts no mcc profile: saved without it, the file goes back to version 1.
+  screen(() => key("e"));
+  lines = screen(() => key("\x1b[B\x1b[B\x1b[C"));
+  assert.equal(ui.settings.form.harness, "claude");
+  assert.ok(!text(lines).includes("Starts the mcc profile"), lines.join("\n"));
+  screen(() => key("\r"));
+  stored = JSON.parse(storeText());
+  assert.equal(stored.version, 1);
+  assert.deepEqual(stored.profiles, [{ id: "work", name: "mcc work!", harness: "claude", model: "opus" }]);
+});
+
+test("an imported profile is in the profile menu, and starts mcc run --profile with its own skills (#63)", async (t) => {
+  // The skill is only in the imported profile's own folder, not in ~/.claude.
+  const dir = home(t, { ".mcc/profiles/cus_konal/skills/issue-resolver/SKILL.md": "x" });
+  useProfiles(dir, [{ id: "cskonal", name: "mcc cskonal", harness: "mcc", mccProfile: "cskonal", model: "opus", thinking: "high" }], { resolve: "cskonal" });
+  const bin = mccOnPath(t);
+  mccProfiles([], { cskonal: path.join(dir, ".mcc/profiles/cus_konal") });
+  setupGitHub("issues");
+  fakeRex(agentHere());
+  const menu = screen(() => key("a"));
+  assert.ok(menu.some((l) => l?.includes("mcc cskonal")), menu.join("\n"));
+  assert.deepEqual(ui.menu.entries.map((e) => e.id), ["default", "cskonal"]);
+  const after = await screenAsync(() => key("\r"));
+  assert.deepEqual(splitCommand(), [bin, "run", "--profile", "cskonal", "--", "--model", "opus", "--effort", "high", "/issue-resolver 12"]);
+  assert.deepEqual(mccCalls(), ["env -q --shell bash cskonal"]);
+  assert.ok(text(after).includes(`${OPENED_MCC} /issue-resolver 12`), after.join("\n"));
+});
+
+test("Test of an imported profile checks mcc finds its own mcc profile (#63)", async (t) => {
+  const dir = home(t);
+  useProfiles(dir, [{ id: "cskonal", name: "mcc cskonal", harness: "mcc", mccProfile: "cskonal" }]);
+  mccOnPath(t);
+  mccProfiles([], { cskonal: path.join(dir, ".mcc/profiles/cus_konal") });
+  setupGitHub("issues");
+  screen(() => key("sje"));
+  const before = storeText();
+  calls.length = 0;
+  let lines = await tested(() => key("\x14"));
+  assert.deepEqual(mccCalls(), ["--version", "env -q --shell bash cskonal"]);
+  assert.ok(text(lines).includes("Test passed: mcc runs (mcc 0.12.0), and mcc finds the mcc profile cskonal. Nothing was saved."), lines.join("\n"));
+  mccProfiles([], {});
+  lines = await tested(() => key("\x14"));
+  assert.ok(text(lines).includes("Test failed: `mcc env -q --shell bash cskonal` failed: ✗ error: no profile named \"cskonal\""), lines.join("\n"));
+  assert.equal(storeText(), before);
+  screen(() => key("\x1b\x1b"));
 });
