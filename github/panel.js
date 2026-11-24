@@ -1085,6 +1085,26 @@ function which(name) {
   return null;
 }
 
+// The mcc binary, found as the mcc panel finds it (copied from mcc/panel.js, since
+// extensions share no code): $MCC_BIN, else PATH, else the places mcc's installers
+// use, as the PATH Rex's server starts the panel with may be thinner than your
+// shell's (#63). An MCC_BIN that isn't an executable file is no mcc, rather than a
+// command that fails later; relative folders are skipped, as which() skips them.
+function findMcc() {
+  const runs = (file) => { try { fs.accessSync(file, fs.constants.X_OK); return fs.statSync(file).isFile(); } catch { return false; } };
+  const given = process.env.MCC_BIN;
+  if (given) return path.isAbsolute(given) && runs(given) ? given : null;
+  const home = os.homedir();
+  const dirs = [...(process.env.PATH || "").split(path.delimiter), path.join(home, ".local", "bin"), path.join(home, ".cargo", "bin"), "/opt/homebrew/bin", "/usr/local/bin"];
+  for (const dir of dirs) {
+    if (dir && path.isAbsolute(dir) && runs(path.join(dir, "mcc"))) return path.join(dir, "mcc");
+  }
+  return null;
+}
+
+// A command's output on one line, without its colors or any other control character.
+const oneLine = (text) => fit(clean(firstLine(String(text ?? "").replace(/\x1b\[[0-?]*[ -\/]*[@-~]/g, ""))).trim(), 160);
+
 // The profile store, read again on every use: the app may have changed it.
 function readStore() {
   const file = P.storePath(os.homedir());
@@ -1255,7 +1275,7 @@ async function launch(action, root, profile, template = null) {
   const what = action.numbers ? issueList(action.numbers) : `${action.noun} #${action.number}`, verb = action.verb ?? action.key;
   const again = action.button ?? action.label;
   if (!SESSION || !SELF) return say("error", `Open this panel in Rex to ${verb} ${what} with an agent.`);
-  const mcc = harness === "mcc" ? which("mcc") : null;
+  const mcc = harness === "mcc" ? findMcc() : null;
   if (harness === "mcc" && !mcc) {
     return say("error", `mcc isn't on your PATH: press s to pick another profile for ${action.profiles ?? action.label}, or install mcc.`);
   }
@@ -1277,8 +1297,9 @@ async function launch(action, root, profile, template = null) {
 
   let claudeDir = null;
   if (harness === "mcc" && custom === null) {
-    // The Claude Code profile `mcc run` would start in this repo, and its folder.
-    const env = await run(mcc, ["env", "-q", "--shell", "bash"], { cwd: root, timeout: 10000 })
+    // The Claude Code profile `mcc run` would start in this repo, and its folder; for
+    // a profile imported from mcc, the one it pins with --profile (#63).
+    const env = await run(mcc, ["env", "-q", "--shell", "bash", ...(profile.mccProfile ? [profile.mccProfile] : [])], { cwd: root, timeout: 10000 })
       .catch((e) => ({ code: -1, stdout: "", stderr: e.message }));
     claudeDir = env.code === 0 ? P.parseMccEnv(env.stdout, os.homedir()) : null;
     if (!claudeDir) {
@@ -1467,8 +1488,9 @@ const MENU_KEYS = [" ↑↓/jk choose · ⏎ start · esc/q cancel", " ↑↓ ·
 // Every button's key, by view (#37): the list ? shows, and what the form's and the
 // prompt's key hints are made of. An entry's `keys` are single keys, and no key is
 // in a view twice. `hint` is the entry's key hint; `model` says it's shown only on
-// the form's Model field (true) or only off it (false), and `custom` only while a
-// custom prompt is saved, which is when Use default shows.
+// the form's Model field (true) or only off it (false), `custom` only while a
+// custom prompt is saved, which is when Use default shows, and `mcc` only while mcc
+// is found, which is when + Import shows (#63).
 const binding = (keys, does, more = {}) => ({ keys: keys ? keys.split(" ") : [], does, ...more });
 const VIEW_KEYS = [
   binding("s", "⚙ Settings"),
@@ -1512,12 +1534,19 @@ const KEYMAP = {
   settings: [
     binding("↑ ↓ j k", "select a profile, a prompt, a button label or the merge mode"),
     binding("n", "+ New"),
+    binding("i", "+ Import a profile from mcc", { mcc: true }),
     binding("e ⏎", "Edit, or Change the merge mode"),
     binding("d", "Delete: it asks first"),
     binding("R", "Use for Resolve"),
     binding("V", "Use for Review"),
     binding("?", "these keys"),
     binding("q esc s", "✕ back to the lists"),
+  ],
+  import: [
+    binding("↑ ↓ j k", "select an mcc profile"),
+    binding("⏎", "Import it, with the model and thinking level of its settings"),
+    binding("?", "these keys"),
+    binding("q esc", "✕ back to Settings"),
   ],
   form: [
     binding("↑ ↓ ⇥", "the next or previous field", { hint: "↑↓ field" }),
@@ -1537,14 +1566,14 @@ const KEYMAP = {
   ],
 };
 // What ? is about, in the key list's title.
-const HELP_TITLES = { main: "the lists", autopilot: "Auto-pilot", menu: "the profile menu", settings: "Settings" };
+const HELP_TITLES = { main: "the lists", autopilot: "Auto-pilot", menu: "the profile menu", settings: "Settings", import: "Import from mcc" };
 
 // The key list, over the whole pane like the profiles view: each key and what it
 // presses, the words wrapped beside it, scrolled by ↑↓ when the pane is too short.
 function helpLines(cols, rows) {
   ui.buttons = [];
   ui.rows = [];
-  const h = ui.help, table = KEYMAP[h.mode];
+  const h = ui.help, table = KEYMAP[h.mode].filter((e) => !e.mcc || ui.settings?.mcc);
   const out = [` ${bold(fit(`Keys: ${HELP_TITLES[h.mode]}`, cols - 2))}`, dim("─".repeat(cols))];
   const kw = Math.min(Math.max(...table.map((e) => width(e.keys.join(" ")))), Math.max(1, Math.floor((cols - 4) / 3)));
   const body = [];
@@ -1825,7 +1854,7 @@ const choices = (form, key, store = ui.settings.store) => {
 // What OpenCode does with a thinking level, in the profiles module's words.
 const OPENCODE_NOTE = P.buildLaunch({ id: "x", name: "x", harness: "opencode", thinking: "high" }, "x").warnings[0];
 const entries = () => [P.DEFAULT_PROFILE, ...ui.settings.store.profiles];
-const describe = (p) => [P.HARNESS_NAMES[p.harness], p.model, p.thinking && `thinking ${p.thinking}`].filter(Boolean).join(" · ");
+const describe = (p) => [P.HARNESS_NAMES[p.harness], p.mccProfile && `mcc profile ${p.mccProfile}`, p.model, p.thinking && `thinking ${p.thinking}`].filter(Boolean).join(" · ");
 // An action's (or Auto-pilot's) name in Settings: its button's label, yours or its own.
 const actionName = (a, store = ui.settings.store) => P.buttonLabel(store, a);
 // What an action, or Auto-pilot (#31), sends with no custom prompt, as Claude Code takes it.
@@ -1853,8 +1882,10 @@ const FIRST_ROWS = [BELOW_ROWS[0], LABEL_ROWS[0], MERGE_ROW];
 // label's, or MERGE_ROW, the merge mode's (#39); null while a profile is. `prompt` is
 // the prompt or the label being edited: { action, kind, text }, kind "prompt" or "label".
 // `scroll` is how far the wheel moved the form or the prompt from where it shows.
+// `mcc` is the mcc binary, found once as Settings opens, or null: + Import shows
+// only with it (#63). `picker` is the import's list of mcc profiles while it shows.
 function openSettings() {
-  ui.settings = { mode: "list", sel: 0, promptSel: null, form: null, prompt: null, field: 0, scroll: 0, error: null, fieldErrors: {}, info: null, ...readStore() };
+  ui.settings = { mode: "list", sel: 0, promptSel: null, form: null, prompt: null, picker: null, field: 0, scroll: 0, error: null, fieldErrors: {}, info: null, mcc: findMcc(), ...readStore() };
   draw();
 }
 
@@ -1874,7 +1905,7 @@ function selectedEntry(st) {
 function settingsBack() {
   const st = ui.settings;
   if (st.mode === "list") return closeSettings();
-  Object.assign(st, { mode: "list", form: null, prompt: null, scroll: 0, error: null, fieldErrors: {} });
+  Object.assign(st, { mode: "list", form: null, prompt: null, picker: null, scroll: 0, error: null, fieldErrors: {} });
   draw();
 }
 
@@ -1927,9 +1958,10 @@ function change(fn, info, kept = {}) {
 function editProfile(p) {
   const st = ui.settings;
   // `saved` is the profile's model when its harness doesn't offer it, so it stays
-  // a choice; `adding` is the model being typed after +.
+  // a choice; `adding` is the model being typed after +. An imported profile's mcc
+  // profile (#63) has no field: it is kept as it is, until the harness changes.
   const saved = p?.model && !P.modelChoices(st.store, p.harness).includes(p.model) ? p.model : "";
-  st.form = { prev: p?.id ?? null, name: p?.name ?? "", id: p?.id ?? "", harness: p?.harness ?? "mcc", model: p?.model ?? "", thinking: p?.thinking ?? "", args: (p?.args ?? []).join(" "), saved, adding: null };
+  st.form = { prev: p?.id ?? null, name: p?.name ?? "", id: p?.id ?? "", harness: p?.harness ?? "mcc", mccProfile: p?.mccProfile ?? "", model: p?.model ?? "", thinking: p?.thinking ?? "", args: (p?.args ?? []).join(" "), saved, adding: null };
   Object.assign(st, { mode: "edit", field: 0, scroll: 0, error: null, fieldErrors: {}, info: null });
   draw();
 }
@@ -1944,7 +1976,7 @@ function saveForm() {
   }
   // Args are split on spaces; with none, the profile has none and starts as before.
   const args = f.args.split(/\s+/).filter(Boolean);
-  const profile = { id: f.id, name: f.name.trim(), harness: f.harness, model: f.model, thinking: f.thinking, ...(args.length ? { args } : {}) };
+  const profile = { id: f.id, name: f.name.trim(), harness: f.harness, mccProfile: f.mccProfile, model: f.model, thinking: f.thinking, ...(args.length ? { args } : {}) };
   change(() => {
     saveStore(P.upsertProfile(st.store, profile, f.prev));
     Object.assign(st, { mode: "list", form: null, promptSel: null });
@@ -1954,8 +1986,9 @@ function saveForm() {
 
 // How long Test (#43) waits for each command it runs.
 const TEST_MS = 15000;
-// The fields Test checks: the name and id don't change what starts.
-const TESTED = ["harness", "model", "thinking"];
+// The fields Test checks: the name and id don't change what starts. An imported
+// profile's mcc profile does: it is the account mcc starts (#63).
+const TESTED = ["harness", "mccProfile", "model", "thinking"];
 
 // Shows what Test found for `profile`, and keeps it on the form with that profile,
 // so it can be taken back when those fields change.
@@ -1997,7 +2030,7 @@ async function testForm() {
   }
   // The fields it checks can start, so the reasons under them are gone.
   for (const k of TESTED) delete st.fieldErrors[k];
-  const bin = which(check.bin);
+  const bin = check.bin === "mcc" ? findMcc() : which(check.bin);
   if (!bin) {
     testSays(st, profile, { error: `Test failed: ${check.bin} isn't on your PATH. Install ${shown}, or choose another harness` });
     return draw();
@@ -2006,9 +2039,9 @@ async function testForm() {
   form.testing = `Testing ${shown}…`;
   Object.assign(st, { info: null, error: null });
   draw();
-  // A command's output goes on one line, without its colors or any other control character.
-  const one = (text) => fit(clean(firstLine(String(text ?? "").replace(/\x1b\[[0-?]*[ -\/]*[@-~]/g, ""))).trim(), 160);
-  const said = (r) => one(r.stderr) || one(r.stdout);
+  const said = (r) => oneLine(r.stderr) || oneLine(r.stdout);
+  // An imported profile's account is its own mcc profile, not the repo's (#63).
+  const account = profile.mccProfile ? `the mcc profile ${profile.mccProfile}` : null;
   const cwd = ui.root || os.homedir();
   let version = "", failed = null;
   for (const step of check.steps) {
@@ -2016,9 +2049,9 @@ async function testForm() {
     const r = await run(bin, step.args, { cwd, timeout: TEST_MS }).catch((e) =>
       ({ code: -1, stdout: "", stderr: e.killed || e.signal ? `no answer in ${TEST_MS / 1000}s` : e.message }));
     if (r.code !== 0) { failed = `\`${command}\` failed: ${said(r) || `exit ${r.code}`}`; break; }
-    if (step.kind === "version") version = fit(one(r.stdout) || one(r.stderr), 80);
+    if (step.kind === "version") version = fit(oneLine(r.stdout) || oneLine(r.stderr), 80);
     if (step.kind === "account" && !P.parseMccEnv(r.stdout, os.homedir())) {
-      failed = `\`${command}\` didn't name the Claude Code account mcc would use in this repo`;
+      failed = `\`${command}\` didn't name ${account ? `the Claude Code folder of ${account}` : "the Claude Code account mcc would use in this repo"}`;
       break;
     }
     if (step.kind === "models" && !P.listsModel(profile.harness, r.stdout, profile.model)) {
@@ -2030,7 +2063,7 @@ async function testForm() {
   if (ui.settings !== st || st.form !== form) return;
   if (TESTED.every((k) => form[k] === profile[k])) {
     const found = [`${check.bin} runs${version ? ` (${version})` : ""}`];
-    if (profile.harness === "mcc") found.push("mcc finds the Claude Code account for this repo");
+    if (profile.harness === "mcc") found.push(account ? `mcc finds ${account}` : "mcc finds the Claude Code account for this repo");
     if (check.modelChecked) found.push(`it lists the model ${profile.model}`);
     // Test doesn't run the profile's own launch arguments (#48): the agent reads them as it starts.
     const later = [profile.model && !check.modelChecked && "model", profile.thinking && "thinking level", form.args.trim() && "args"].filter(Boolean);
@@ -2158,6 +2191,84 @@ function confirmDelete(yes) {
   draw();
 }
 
+// ── Importing mcc profiles (#63) ────────────────────────────────────────────
+
+// How long the import waits for each mcc command it runs: as long as Test does.
+const MCC_MS = TEST_MS;
+const mccFailed = (e) => ({ code: -1, stdout: "", stderr: e.killed || e.signal ? `no answer in ${MCC_MS / 1000}s` : e.message });
+
+// + Import, or i: mcc's Claude Code profiles, listed by `mcc usage --json-v2`, to
+// choose one from. It runs only now, not as Settings opens, and its answer is
+// dropped if the picker closed meanwhile.
+async function openImport() {
+  const st = ui.settings, picker = { loading: true, list: [], sel: 0, importing: null };
+  Object.assign(st, { mode: "import", picker, error: null, info: null });
+  draw();
+  const r = await run(st.mcc, ["usage", "--json-v2"], { timeout: MCC_MS }).catch(mccFailed);
+  if (ui.settings !== st || st.picker !== picker) return;
+  picker.loading = false;
+  try {
+    if (r.code !== 0) throw new Error(`\`mcc usage --json-v2\` failed: ${oneLine(r.stderr) || `exit ${r.code}`}`);
+    picker.list = P.parseMccUsage(r.stdout);
+    if (!picker.list.length) st.info = "mcc has no Claude Code profile to import";
+  } catch (e) {
+    st.error = `Can't list mcc's profiles: ${e.message}`;
+  }
+  draw();
+}
+
+// The profile here that starts mcc profile `name`, if one does.
+const importedAs = (st, name) => st.store.profiles.find((p) => p.mccProfile === name) ?? null;
+
+// The picker's Import, or enter: the chosen mcc profile becomes a profile here that
+// starts it with `mcc run --profile`. Its model and thinking level are those of its
+// settings.json, in the folder `mcc env <name>` names (never one made from the name:
+// mcc keeps some elsewhere), as a plain `mcc run` of it reads them. One imported
+// already isn't imported twice, and a read-only file isn't written.
+async function importSelected() {
+  const st = ui.settings, picker = st.picker, chosen = picker?.list[picker.sel];
+  if (!chosen || picker.importing) return;
+  const have = importedAs(st, chosen.name);
+  if (have) {
+    Object.assign(st, { error: `${chosen.name} is imported already, as ${have.name}: edit that profile instead`, info: null });
+    return draw();
+  }
+  picker.importing = `Importing ${chosen.name} from mcc…`;
+  Object.assign(st, { error: null, info: null });
+  draw();
+  const r = await run(st.mcc, ["env", "-q", "--shell", "bash", chosen.name], { timeout: MCC_MS }).catch(mccFailed);
+  picker.importing = null;
+  if (ui.settings !== st || st.picker !== picker) return;
+  const dir = r.code === 0 ? P.parseMccEnv(r.stdout, os.homedir()) : null;
+  if (!dir) {
+    const why = r.code === 0 ? "mcc env didn't name its Claude Code folder" : `mcc env failed: ${oneLine(r.stderr) || `exit ${r.code}`}`;
+    Object.assign(st, { error: `Can't import ${chosen.name}: ${why}`, info: null });
+    return draw();
+  }
+  const profile = P.importedProfile(chosen.name, json(path.join(dir, "settings.json")), st.store);
+  change(() => {
+    saveStore(P.upsertProfile(st.store, profile));
+    Object.assign(st, { mode: "list", picker: null, promptSel: null });
+    st.sel = Math.max(0, entries().findIndex((p) => p.id === profile.id));
+  }, `Imported ${chosen.name} as ${profile.name}: ${describe(profile)}`);
+}
+
+// Keys in the picker: ↑↓ (or k and j) choose, enter imports, esc or q go back to the
+// list, and ? lists these keys.
+function importKey(st, k) {
+  const picker = st.picker;
+  if (k === "\x1b" || k === "q") return settingsBack();
+  if (UP.includes(k) || k === "k") pickStep(picker, -1);
+  else if (DOWN.includes(k) || k === "j") pickStep(picker, 1);
+  else if (k === "\r" || k === "\n") return importSelected();
+  else if (k === "?") return openHelp("import");
+  else return;
+  draw();
+}
+
+// ↑ and ↓ in the picker, and the wheel, stopping at either end.
+const pickStep = (picker, by) => { picker.sel = Math.max(0, Math.min(picker.list.length - 1, picker.sel + by)); };
+
 const UP = ["\x1b[A", "\x1bOA"], DOWN = ["\x1b[B", "\x1bOB"];
 
 // Keys in the profile views. In the form, keys are text: q or j is typed, not a
@@ -2174,6 +2285,7 @@ function settingsKey(m) {
   st.scroll = 0;
   if (k === "\x03") return quit();
   if (st.mode === "confirm") return confirmDelete(k === "y" || k === "Y");
+  if (st.mode === "import") return importKey(st, k);
   if (st.mode === "edit") return formKey(st, k);
   if (st.mode === "prompt") return promptKey(st, k);
   selectedEntry(st);
@@ -2182,6 +2294,7 @@ function settingsKey(m) {
   if (UP.includes(k) || k === "k") step(st, -1);
   else if (DOWN.includes(k) || k === "j") step(st, 1);
   else if (k === "n") return editProfile(null);
+  else if (k === "i" && st.mcc) return openImport();
   else if (k === "e" || k === "\r" || k === "\n") return merge ? toggleMergeMode() : label ? editLabel(label) : at >= 0 ? editPrompt(st.promptSel) : editSelected();
   else if (merge && (k === "d" || k === "R" || k === "V")) {
     Object.assign(st, { error: "The merge mode isn't a profile: e or enter changes it", info: null });
@@ -2208,15 +2321,16 @@ function step(st, by) {
   else st.sel += 1;
 }
 
-// The wheel: in the list it moves the selection, so it reaches the prompt rows; in
-// the form and the prompt it scrolls, so their buttons can be reached in a short
-// pane. A delete question waits for its key.
+// The wheel: in the list it moves the selection, so it reaches the prompt rows, as
+// it does in the import's list (#63); in the form and the prompt it scrolls, so
+// their buttons can be reached in a short pane. A delete question waits for its key.
 function wheel(st, by) {
   if (st.mode === "confirm") return;
   if (st.mode === "list") {
     selectedEntry(st);
     step(st, by);
-  } else st.scroll = (st.scroll || 0) + 3 * by;
+  } else if (st.mode === "import") pickStep(st.picker, by);
+  else st.scroll = (st.scroll || 0) + 3 * by;
   draw();
 }
 
@@ -2278,6 +2392,8 @@ function formKey(st, k) {
     // default; one in neither list is kept.
     const offered = field.key === "harness" && P.modelChoices(st.store, form.harness).includes(form.model);
     form[field.key] = list[(at + (k === "\x1b[D" ? list.length - 1 : 1)) % list.length];
+    // Only mcc run starts an mcc profile: another harness leaves it behind (#63).
+    if (form.harness !== "mcc") form.mccProfile = "";
     if (!choices(form, "thinking").includes(form.thinking)) form.thinking = "";
     if (offered && !P.modelChoices(st.store, form.harness).includes(form.model)) form.model = "";
     delete st.fieldErrors[field.key];
@@ -2324,14 +2440,15 @@ function settingsLines(cols, rows) {
   const st = ui.settings, out = [];
   ui.rows = [];
   ui.buttons = [];
-  const editing = st.mode === "edit" || st.mode === "prompt";
+  const editing = st.mode === "edit" || st.mode === "prompt", picking = st.mode === "import";
   const p = editing ? null : selectedEntry(st);
-  // Header: the view's name, + New in the list, and ✕ (back) at the right edge.
-  const tools = editing ? [] : [[" + New ", () => editProfile(null)]];
+  // Header: the view's name, + New in the list, after + Import while mcc is found
+  // (#63), and ✕ (back) at the right edge.
+  const tools = editing || picking ? [] : [...(st.mcc ? [[" + Import ", () => openImport()]] : []), [" + New ", () => editProfile(null)]];
   tools.push([" ✕ ", () => settingsBack()]);
   const right = tools.reduce((w, [t]) => w + width(t), 0);
   const heading = fit(st.mode === "edit" ? (st.form.prev ? `Edit profile ${st.form.prev}` : "New profile")
-    : st.mode === "prompt" ? editTarget(st.prompt).title : "⚙ Settings", cols - right - 2);
+    : st.mode === "prompt" ? editTarget(st.prompt).title : picking ? "Import from mcc" : "⚙ Settings", cols - right - 2);
   out.push(` ${bold(heading)}${" ".repeat(Math.max(0, cols - 1 - width(heading) - right))}${dim(tools.map(([t]) => t).join(""))}`);
   let x = cols - right;
   for (const [t, action] of tools) { ui.buttons.push({ row: 0, from: x, to: x + width(t), action }); x += width(t); }
@@ -2347,13 +2464,19 @@ function settingsLines(cols, rows) {
   if (st.info) notes.push([green, st.info]);
   for (const w of st.warnings) notes.push([yellow, w]);
   if (st.mode === "edit" && st.form.testing) notes.push([yellow, st.form.testing]);
+  if (picking && st.picker.loading) notes.push([yellow, "Reading mcc's profiles…"]);
+  if (picking && st.picker.importing) notes.push([yellow, st.picker.importing]);
+  if (st.mode === "edit" && st.form.mccProfile) {
+    notes.push([muted, `Starts the mcc profile ${st.form.mccProfile}, imported from mcc. Another harness leaves it behind.`]);
+  }
   if (st.mode === "edit" && st.form.harness === "opencode" && st.form.thinking) notes.push([yellow, OPENCODE_NOTE]);
   // The form's and the prompt's key hints come from their KEYMAP tables (#37).
   const footer = hintLines(st.mode === "edit" ? (st.form.adding !== null ? ["type the model", "⏎ add", "esc cancel"]
     : KEYMAP.form.filter((e) => e.model === undefined || e.model === (st.field === MODEL_FIELD)).map((e) => e.hint))
     : st.mode === "prompt" ? KEYMAP.prompt.filter((e) => !e.custom || hasCustom(st)).map((e) => e.hint)
     : st.mode === "confirm" ? ["y delete", "any other key keeps it"]
-      : ["↑↓ select", "? keys", "n new", st.promptSel === MERGE_ROW ? "e change" : "e edit", "d delete", "R/V assign", "esc back"], cols);
+    : picking ? ["↑↓ select", "⏎ import", "? keys", "esc back"]
+      : ["↑↓ select", "? keys", "n new", ...(st.mcc ? ["i import"] : []), st.promptSel === MERGE_ROW ? "e change" : "e edit", "d delete", "R/V assign", "esc back"], cols);
   const room = Math.max(0, rows - out.length - footer.length - 1);
   const said = notes.flatMap(([tone, text]) => wrap(text, cols - 2, Infinity).map((l) => [tone, l]));
   if (said.length > room) {
@@ -2438,6 +2561,27 @@ function settingsLines(cols, rows) {
     for (const note of notes) for (const l of wrap(note, cols - 4, Infinity)) { body.push("  " + dim(l)); owner.push(null); }
     body.push(""); owner.push(null);
     addButtons([["Save", () => savePrompt()], ...(hasCustom(st) ? [["Use default", useDefault]] : []), ["Cancel", () => settingsBack()]], "  ", 2, null);
+  } else if (picking) {
+    // mcc's Claude Code profiles (#63), each with its tags at the right edge: mcc's
+    // default, and imported once a profile here starts it. The selected one has
+    // its Import button on a line of its own, as a profile has its buttons.
+    const picker = st.picker;
+    const about = "Each becomes a profile here that starts it with mcc run --profile, with the model and thinking level of its own settings.";
+    for (const l of wrap(about, cols - 4, Infinity)) { body.push("  " + dim(l)); owner.push(null); }
+    picker.list.forEach((m, i) => {
+      body.push(""); owner.push(null);
+      const on = i === picker.sel, bar = on ? accent("▌") : " ", have = importedAs(st, m.name);
+      const select = () => { picker.sel = i; Object.assign(st, { error: null }); draw(); };
+      const tag = fit([m.isDefault && "default", have && "imported"].filter(Boolean).join(" · "), Math.max(0, cols - 9));
+      const name = fit(m.name, Math.max(4, cols - width(tag) - 5));
+      if (on) selStart = body.length;
+      body.push(`${bar} ${on ? bold(name) : name}${" ".repeat(Math.max(1, cols - 3 - width(name) - width(tag)))}${have ? accent(tag) : dim(tag)}`);
+      owner.push(select);
+      if (on) {
+        addButtons([have ? ["Imported ✓", () => {}] : ["Import", () => importSelected()]], `${bar}   `, 4, select);
+        selEnd = body.length;
+      }
+    });
   } else {
     // Four sections, each under a heading ruled to the right edge: the profiles,
     // the prompt each action sends, its button's label, and what a merge does. A blank line before each

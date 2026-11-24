@@ -204,11 +204,11 @@ test("parseStore: no file is empty; bad JSON or another version is read only", (
     assert.match(r.warnings[0], /isn't valid JSON/);
   }
   // Version 2 holds custom prompts (#20), version 3 custom models (#24), version 4
-  // the Auto-pilot prompt (#31) and version 5 a profile's args (#48), version 6 button labels, and all are
-  // read; a newer one is read only.
-  const newer = P.parseStore(JSON.stringify({ version: 7, profiles: [ok({ harness: "pi" })], assign: { resolve: "p" } }));
+  // the Auto-pilot prompt (#31) and version 5 a profile's args (#48), version 6 button labels, version 7
+  // a profile imported from mcc (#63), and all are read; a newer one is read only.
+  const newer = P.parseStore(JSON.stringify({ version: 8, profiles: [ok({ harness: "pi" })], assign: { resolve: "p" } }));
   assert.equal(newer.readOnly, true);
-  assert.equal(newer.warnings[0], "The profiles file is version 7, not 1, 2, 3, 4, 5 or 6: it is read only here");
+  assert.equal(newer.warnings[0], "The profiles file is version 8, not 1, 2, 3, 4, 5, 6 or 7: it is read only here");
   assert.equal(P.resolveProfile(newer.store, "resolve").harness, "pi");
 });
 
@@ -245,9 +245,9 @@ test("parseStore skips bad, duplicate and reserved profiles, drops a missing ass
   const notList = P.parseStore(JSON.stringify({ version: 1, profiles: { a: 1 } }));
   assert.equal(notList.readOnly, true);
   assert.match(notList.warnings[0], /read only here/);
-  // Another version says so first, and only once (version 2 is read since #20, 3 since #24, 4 since #31, 5 since #48, 6 since button labels).
-  const both = P.parseStore(JSON.stringify({ version: 7, profiles: ["x"] }));
-  assert.match(both.warnings[0], /version 7/);
+  // Another version says so first, and only once (version 2 is read since #20, 3 since #24, 4 since #31, 5 since #48, 6 since button labels, 7 since #63).
+  const both = P.parseStore(JSON.stringify({ version: 8, profiles: ["x"] }));
+  assert.match(both.warnings[0], /version 8/);
   assert.ok(!both.warnings.some((w) => /fix or remove them/.test(w)));
   // What it writes, it reads back the same.
   const again = P.parseStore(P.serializeStore(store));
@@ -366,7 +366,7 @@ test("prompts: version 1 without them, version 2 with them, and a bad one makes 
   assert.match(r.warnings[0], /Some profiles in the file can't be used/);
   assert.ok(!r.warnings.some((w) => /A prompt in the file/.test(w)));
   // A newer version is read only, with its prompts still read.
-  r = hand({ resolve: "Go {number}" }, 7);
+  r = hand({ resolve: "Go {number}" }, 8);
   assert.equal(r.readOnly, true);
   assert.equal(r.store.prompts.resolve, "Go {number}");
 });
@@ -632,12 +632,13 @@ test("a hand-edited Auto-pilot prompt it can't use is skipped and makes the file
   assert.equal(r.store.prompts.autopilot, null);
   r = hand({ autopilot: " Go {numbers} " });
   assert.deepEqual(r, { store: { ...P.emptyStore(), prompts: { resolve: null, review: null, autopilot: "Go {numbers}" } }, warnings: [], readOnly: false });
-  // Version 4 is read, 5 since #48 and 6 since button labels; 7 is newer, read only.
+  // Version 4 is read, 5 since #48, 6 since button labels and 7 since #63; 8 is newer, read only.
   assert.equal(hand({}, 4).readOnly, false);
   assert.equal(hand({}, 5).readOnly, false);
   assert.equal(hand({}, 6).readOnly, false);
-  assert.equal(hand({}, 7).readOnly, true);
-  assert.equal(P.STORE_VERSION, 6);
+  assert.equal(hand({}, 7).readOnly, false);
+  assert.equal(hand({}, 8).readOnly, true);
+  assert.equal(P.STORE_VERSION, 7);
 });
 
 test("buildCheck names the commands that check a profile can start: --version, mcc's account, and Pi's or OpenCode's models (#43)", () => {
@@ -876,9 +877,9 @@ test("args it can't use make their profile skipped and the file read only; a new
   assert.deepEqual(hand([]).store.profiles, [{ id: "a", name: "Profile", harness: "claude" }]);
   assert.equal(hand([]).readOnly, false);
   // A newer version is still read only, its args read.
-  const newer = hand(["--x"], 7);
+  const newer = hand(["--x"], 8);
   assert.equal(newer.readOnly, true);
-  assert.match(newer.warnings[0], /version 7, not 1, 2, 3, 4, 5 or 6/);
+  assert.match(newer.warnings[0], /version 8, not 1, 2, 3, 4, 5, 6 or 7/);
   assert.deepEqual(newer.store.profiles[0].args, ["--x"]);
 });
 

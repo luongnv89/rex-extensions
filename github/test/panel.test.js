@@ -48,7 +48,9 @@ require("node:child_process").execFile = (cmd, args, opts, cb) => {
 // The panel keeps its state (its view, its width) in a folder of its own, for the run.
 const stateHome = fs.mkdtempSync(path.join(os.tmpdir(), "rex-github-state-"));
 process.on("exit", () => fs.rmSync(stateHome, { recursive: true, force: true }));
-Object.assign(process.env, { REX_GITHUB_REX: "rex", REX_SESSION: "session:s", REX_BLOCK: "block:panel", REX_GITHUB_STARTUP_MS: "1", XDG_STATE_HOME: stateHome });
+// MCC_BIN names an mcc that isn't there, so the mcc of the machine running the tests
+// (in /opt/homebrew/bin, say) is never found: a test that wants one sets its own (#63).
+Object.assign(process.env, { REX_GITHUB_REX: "rex", REX_SESSION: "session:s", REX_BLOCK: "block:panel", REX_GITHUB_STARTUP_MS: "1", XDG_STATE_HOME: stateHome, MCC_BIN: path.join(stateHome, "no-mcc") });
 process.argv.push("--target", "block:agent", "--cwd", "/start");
 const P = require("../profiles.cjs");
 const { width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput, MODES_ON, MODES_OFF, act, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, flags, locate, state, follow, splitLeft, ratioFor, fitWidth, COLUMNS, MAX_SHARE, settleResize, savedWidth, resetWidth, pressMerge, MERGE_GAP, mergeStrategy, mergeArgs, mergeGuard, refresh, pressClose, checkedNumbers, paneLabel, KEYMAP, mergeMode, branchDelete } = require("../panel.js");
@@ -940,8 +942,9 @@ test("agentArgv puts each harness's flags first and the prompt last, as one word
 // ── Profiles: per-row buttons, harnesses, mcc ───────────────────────────────
 
 const PATH = process.env.PATH;
+const MCC_BIN = process.env.MCC_BIN;
 // PATH set to exactly one new folder, holding an executable mcc unless `present`
-// is false; restored after the test.
+// is false, and MCC_BIN to that mcc; restored after the test.
 function mccOnPath(t, present = true) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rex-github-bin-"));
   if (present) {
@@ -949,7 +952,8 @@ function mccOnPath(t, present = true) {
     fs.chmodSync(path.join(dir, "mcc"), 0o755);
   }
   process.env.PATH = dir;
-  t.after(() => { process.env.PATH = PATH; fs.rmSync(dir, { recursive: true, force: true }); });
+  process.env.MCC_BIN = path.join(dir, "mcc");
+  t.after(() => { Object.assign(process.env, { PATH, MCC_BIN }); fs.rmSync(dir, { recursive: true, force: true }); });
   return path.join(dir, "mcc");
 }
 // An mcc whose `env -q --shell bash` prints what it prints for a profile folder.
@@ -1192,7 +1196,7 @@ test("s opens the profiles; a new profile is typed, saved and assigned, then use
   }));
   assert.equal(exit, null, "a key in the form closed the panel");
   assert.equal(ui.settings.mode, "edit");
-  assert.deepEqual({ ...ui.settings.form, prev: undefined }, { prev: undefined, name: "Quick job", id: "qj", harness: "codex", model: "gpt-6.1-sol", thinking: "low", args: "", saved: "", adding: null });
+  assert.deepEqual({ ...ui.settings.form, prev: undefined }, { prev: undefined, name: "Quick job", id: "qj", harness: "codex", mccProfile: "", model: "gpt-6.1-sol", thinking: "low", args: "", saved: "", adding: null });
   lines = screen(() => onInput(Buffer.from("\r")));
   assert.equal(ui.settings.mode, "list");
   assert.ok(lines.some((l) => l?.includes("Saved Quick job")), lines.join("\n"));
@@ -1289,7 +1293,7 @@ test("a store changed elsewhere since it was read isn't overwritten", (t) => {
 
 test("a corrupt or newer store is shown read only, and actions use the default", async (t) => {
   const dir = home(t, { ".claude/skills/issue-resolver/SKILL.md": "x" });
-  for (const bad of ["{ not json", JSON.stringify({ version: 7, profiles: [], assign: {} })]) {
+  for (const bad of ["{ not json", JSON.stringify({ version: 8, profiles: [], assign: {} })]) {
     const file = useProfiles(dir, []);
     fs.writeFileSync(file, bad);
     setupGitHub("issues");
@@ -1580,11 +1584,11 @@ test("at 28, 30 and 40 cells the profiles show each warning, note and question w
     assert.ok(lines.at(-1).trimEnd().endsWith("esc back"), `${cols}:\n${lines.join("\n")}`);
     at(() => onInput(Buffer.from("\x1b")));
 
-    // A file from another version: 1 to 6 are read (2 since #20's prompts, 3 since #24's models, 4 since #31's Auto-pilot prompt, 5 since #48's args, 6 since button labels).
-    fs.writeFileSync(useProfiles(dir, []), JSON.stringify({ version: 7, profiles: [], assign: {} }));
+    // A file from another version: 1 to 7 are read (2 since #20's prompts, 3 since #24's models, 4 since #31's Auto-pilot prompt, 5 since #48's args, 6 since button labels, 7 since #63's mcc profiles).
+    fs.writeFileSync(useProfiles(dir, []), JSON.stringify({ version: 8, profiles: [], assign: {} }));
     setupGitHub("issues");
     lines = at(() => onInput(Buffer.from("s")));
-    assert.ok(shows(lines, "The profiles file is version 7, not 1, 2, 3, 4, 5 or 6: it is read only here"), `${cols}:\n${lines.join("\n")}`);
+    assert.ok(shows(lines, "The profiles file is version 8, not 1, 2, 3, 4, 5, 6 or 7: it is read only here"), `${cols}:\n${lines.join("\n")}`);
     at(() => onInput(Buffer.from("\x1b")));
 
     // A 40-character name in what a change did, and in the delete question.
@@ -4029,12 +4033,12 @@ test("a model that breaks the MODEL rule, or is already offered, isn't added; - 
 test("a model isn't added to a read-only file, or over a change made elsewhere", (t) => {
   const dir = home(t);
   // Read only: from a newer version, the file kept as it is.
-  const newer = JSON.stringify({ version: 7, profiles: [], assign: {} });
+  const newer = JSON.stringify({ version: 8, profiles: [], assign: {} });
   fs.writeFileSync(useProfiles(dir, []), newer);
   setupGitHub("issues");
   screen(() => onInput(Buffer.from("sn" + TO_MODEL)));
   let lines = screen(() => onInput(Buffer.from("+mine\r")));
-  assert.ok(shows(lines, "Not saved: The profiles file is version 7, not 1, 2, 3, 4, 5 or 6: it is read only here"), lines.join("\n"));
+  assert.ok(shows(lines, "Not saved: The profiles file is version 8, not 1, 2, 3, 4, 5, 6 or 7: it is read only here"), lines.join("\n"));
   assert.equal(fs.readFileSync(storeFile(), "utf8"), newer);
   assert.equal(ui.settings.form.adding, "mine");
   screen(() => onInput(Buffer.from("\x1b\x1b\x1b")));
@@ -5061,7 +5065,8 @@ test("? opens the key list of the view it's pressed in, with every key of that v
       const lines = screenAt(60, 40, () => key("?"));
       assert.equal(ui.help?.mode, mode);
       assert.match(lines[0], /^ Keys: /, lines.join("\n"));
-      for (const e of KEYMAP[mode]) assert.ok(shows(lines, `${e.keys.join(" ")} ${e.does}`), `${mode}: ${e.keys.join(" ")}\n${lines.join("\n")}`);
+      // Without mcc, + Import's key isn't listed: nothing offers it (#63).
+      for (const e of KEYMAP[mode]) assert.equal(shows(lines, `${e.keys.join(" ")} ${e.does}`), !e.mcc, `${mode}: ${e.keys.join(" ")}\n${lines.join("\n")}`);
       assert.match(lines.at(-1), /\?\/esc\/q close/);
       assert.equal(noExit(() => screen(() => key(close))), null, `${mode}: ${JSON.stringify(close)} closed the panel`);
       assert.equal(ui.help, null, `${mode}: ${JSON.stringify(close)}`);
@@ -5169,7 +5174,8 @@ const BUTTON_KEYS = {
     [/^Merg(e|ing) [#!]\d/, "m"], [/^Clos(e|ing) #\d/, "c"], [/^Confirm (merge|close) #/, "y"]],
   autopilot: [[/^☑/, "p"], [/^⚙/, "s"], [/^↻/, "r"], [/^↗/, "o"], [/^((Pull|Merge) requests|Issues)/, "1"], [/^▶ Start/, "⏎"], [/^✕ Cancel$/, "esc"]],
   menu: [[/^│/, "⏎"]],
-  settings: [[/^\+ New$/, "n"], [/^✕$/, "esc"], [/^(Use for Resolve|Resolve ✓)$/, "R"], [/^(Use for Review|Review ✓)$/, "V"], [/^Edit$/, "e"], [/^Delete$/, "d"], [/^Change$/, "e"]],
+  settings: [[/^\+ New$/, "n"], [/^\+ Import$/, "i"], [/^✕$/, "esc"], [/^(Use for Resolve|Resolve ✓)$/, "R"], [/^(Use for Review|Review ✓)$/, "V"], [/^Edit$/, "e"], [/^Delete$/, "d"], [/^Change$/, "e"]],
+  import: [[/^(Import|Imported ✓)$/, "⏎"], [/^✕$/, "esc"]],
   form: [[/^Save$/, "⏎"], [/^Test$/, "^T"], [/^(Cancel|✕)$/, "esc"]],
   prompt: [[/^Save$/, "⏎"], [/^Use default$/, "^R"], [/^(Cancel|✕)$/, "esc"]],
 };
