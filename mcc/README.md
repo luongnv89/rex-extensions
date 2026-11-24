@@ -26,7 +26,7 @@ Press `d` for the details: what else mcc knows about each account, in place of t
  5 api      seen 1m    login —       upd —     api $4.60 of $50.00 (9%)
 ```
 
-The rows are in order of weekly use, least first, as `mcc usage` sorts them by default. Devin is included, an account without a weekly number comes after those with one, and API-key profiles come last. Each row starts with its number in that order and shows a bar, the percent used and the time until the window resets. As in `mcc usage`, `!` marks 80% or more and `!!` marks 95% or more. The default account's name is in cyan. A ⚠ marks an account whose last live lookup failed or whose login ends soon, with a line under the table naming the `mcc login` command that fixes it. When an account's numbers are more than an hour old, its row says how old they are.
+The rows are in order of weekly use, least first, as `mcc usage` sorts them by default. Devin is included, an account without a weekly number comes after those with one, and API-key profiles come last. Each row starts with its number in that order and shows a bar, the percent used and the time until the window resets. As in `mcc usage`, `!` marks 80% or more and `!!` marks 95% or more. The default account's name is in cyan. A green `►` in place of the row's leading space marks the profile `mcc run` would start in the folder of the pane you work in (the focused pane of the panel's tab, or the last one while the panel has focus), as `mcc here` reports it: the project default set on that folder with `mcc project set`, or inherited from a parent folder. It moves when you focus another pane or `cd` elsewhere, within about 2 seconds, and a project default you set or remove shows at the next 30-second cache read. That's not always the cyan account, which is the one mcc uses where no folder sets one: where none applies, no row is marked. Nothing is marked when mcc isn't found, `mcc here` fails, or the profile it names isn't in the table. A ⚠ marks an account whose last live lookup failed or whose login ends soon, with a line under the table naming the `mcc login` command that fixes it. When an account's numbers are more than an hour old, its row says how old they are.
 
 [Devin](https://devin.ai), which mcc shows when the Devin CLI is signed in, has a daily window instead of a 5-hour one: its row says `1d`, with a dash when its plan hides that window. When its overage balance is above zero, a line under the table shows it. A Devin login that has run out names `devin auth login`, since mcc never touches that login.
 
@@ -90,7 +90,7 @@ Click the panel, or move focus to it, before using its keys. Expanded, the foote
 
 - Rex on macOS or Linux, with a server that speaks API revision 8 or later (`rex version` shows it).
 - Node 20 or later, as `node` on the `PATH` your login shell sets.
-- [mcc](https://github.com/luongnv89/mcc) 0.6 or later, which prints `mcc usage --json-v2`. API-key profiles show their spend with an mcc that has them (after 0.11.0); an older mcc shows none. The panel looks for it on `PATH`, then in `~/.local/bin`, `~/.cargo/bin`, `/opt/homebrew/bin` and `/usr/local/bin`. If it's elsewhere, set `MCC_BIN` to its full path.
+- [mcc](https://github.com/luongnv89/mcc) 0.6 or later, which prints `mcc usage --json-v2`. API-key profiles show their spend with an mcc that has them (after 0.11.0); an older mcc shows none. The `►` mark needs an mcc with `mcc here`; with an older one, no row is marked. The panel looks for it on `PATH`, then in `~/.local/bin`, `~/.cargo/bin`, `/opt/homebrew/bin` and `/usr/local/bin`. If it's elsewhere, set `MCC_BIN` to its full path.
 
 ## What it runs
 
@@ -98,6 +98,7 @@ Rex runs `init.lua` and the panel as your user, with no sandbox. This one:
 
 - in Rex's server, when you press the key: reads the session's layout and opens or closes one pane labelled `rex-mcc` running `node panel.js` (through `sh -c` when the extension sits under `$HOME`, so the session's machine finds `panel.js` under its own `$HOME`);
 - in the panel: runs `mcc usage --json-v2` every 30 seconds, and `mcc usage --all --json-v2` when you refresh. With other machines set up in mcc, each of these runs `ssh` to every one of them (see [Use](#use));
+- every 2 seconds, runs `rex api call` to read which pane of the panel's tab is focused (`session.view`) and that pane's folder (its `process` method), and runs `mcc here` in that folder when it changes and after each 30-second reread. `mcc here` only reads mcc's settings: it signs nothing in and looks up no usage;
 - every 5 seconds, reads the machine's CPU, memory, disk and network: `/usr/bin/vm_stat` and `/usr/sbin/netstat -ibn` on macOS, `/proc/meminfo`, `/proc/net/dev` and `/sys/devices/virtual/net` on Linux, and a `statfs` call on `/` (no program) on both;
 - runs `rex api call` to read the tab's layout and its panes' sizes, and to move the border above the panel when it fits its height;
 - when you run `install.js`: runs `rex config check`, a `rex do` script that loads your `init.lua` to list the keys it binds, edits `init.lua` (see [Install](#install)), and runs `rex config reload`;
@@ -131,7 +132,7 @@ node --test
 - `rex-mcc.lua`: the `mcc_usage` action, which opens the panel under the tab's rex-github panel, or across the bottom of the tab, or closes it.
 - `panel.js`: the panel itself. Plain Node, no npm packages.
 - `install.js`: adds the panel and a key to `init.lua`, or takes them out.
-- `test/`: unit tests for reading mcc's JSON (Devin and API-key profiles included), the rows and the details at every width, the notices, the machine stats parsers, the disk reading, the online check, and their line at every width (fixtures in `test/system-fixtures.js`), finding the split above the panel and the ratio that fits it, and for which key `install.js` picks and how it edits `init.lua`.
+- `test/`: unit tests for reading mcc's JSON (Devin and API-key profiles included), the rows and the details at every width, the notices, reading `mcc here` and the mark that follows the focused pane's folder (`test/here.test.js`), the machine stats parsers, the disk reading, the online check, and their line at every width (fixtures in `test/system-fixtures.js`), finding the split above the panel and the ratio that fits it, and for which key `install.js` picks and how it edits `init.lua`.
 
 ## License
 

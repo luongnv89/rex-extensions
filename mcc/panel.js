@@ -5,7 +5,9 @@
 // panes above get the room back. `d` swaps the bars for what else mcc knows: when
 // each account was last used, when its login ends, how old its numbers are and when
 // its windows reset. Devin, which has a daily window instead of a 5-hour one, shows it. A line under the title shows this machine's CPU,
-// memory, disk and network, sampled every 5 seconds.
+// memory, disk and network, sampled every 5 seconds. A ► marks the profile mcc
+// would start in the folder of the pane you work in (`mcc here`), and follows you
+// from pane to pane.
 //
 // rex-mcc.lua starts it as `node panel.js`. When panel.js is under $HOME, the path
 // is resolved under the $HOME of the machine the pane runs on, through `sh -c`.
@@ -44,6 +46,10 @@ const BLINK = 1000;
 // how it went on its button for FLASH.
 const MIN_SPIN = 700;
 const FLASH = 2500;
+// How often the panel looks at which pane you work in and its folder (#64). Each look
+// is two `rex api call`s; `mcc here` runs only when the folder changes.
+const LOCATE = 2000;
+const HERE_TIMEOUT = 3000;
 
 // ── Terminal ────────────────────────────────────────────────────────────────
 
@@ -107,9 +113,10 @@ function findMcc(env = process.env) {
 }
 
 // Resolves for any exit code; `error` is set only when the program can't start or times out.
-function run(cmd, args, timeout) {
+// A `cwd` that doesn't exist counts as the program not starting (ENOENT).
+function run(cmd, args, timeout, cwd) {
   return new Promise((resolve) => {
-    execFile(cmd, args, { encoding: "utf8", timeout, maxBuffer: 8 << 20, env: { ...process.env, NO_COLOR: "1" } },
+    execFile(cmd, args, { encoding: "utf8", timeout, maxBuffer: 8 << 20, env: { ...process.env, NO_COLOR: "1" }, ...(cwd ? { cwd } : {}) },
       (error, stdout, stderr) => resolve({ code: error?.code ?? 0, error: error && (error.code === "ENOENT" || error.killed) ? error : null, stdout, stderr }));
   });
 }
@@ -146,6 +153,17 @@ function parse(stdout) {
     cost: usd(p.usage?.est_cost_usd),
     budget: usd(p.usage?.budget_usd),
   }));
+}
+
+// `mcc here`, run in a folder → the profile `mcc run` would start there, from its
+// first line: Here: `NAME` — REASON. Only a project default counts, set on that
+// folder or inherited from a parent; mcc names `default` when there is none ("no
+// project default here or in a parent folder"), and that's no default for the folder.
+// Any other line, from an older mcc or a new wording, names nothing.
+const HERE = /^Here: `([^`]+)` — (?:the default for |inherited from parent folder )/;
+function parseHere(stdout) {
+  const m = String(stdout ?? "").split("\n")[0].match(HERE);
+  return (m && clean(m[1])) || null;
 }
 
 // The first line of mcc's stderr that isn't its --all risk notice.
@@ -578,6 +596,11 @@ function columns(cols, nameWidth, indexWidth = 1, extras = null) {
   return { indexWidth, nameWidth: Math.max(1, Math.min(nameWidth, cols - 14 - lead)), compact: true };
 }
 
+// The mark on the row of the profile mcc would start in your pane's folder (#64). It
+// takes the row's leading space, so no column moves, and isn't cyan, the colour of the
+// default account's name, which may be the same row.
+const HERE_MARK = sgr("1;32")("►");
+
 // The details view (`d`): instead of the bars, what mcc's table has besides them, in
 // the order it's dropped last: when each account was last used, when its login runs
 // out, how old its numbers are, then when each window resets as a clock time. Each
@@ -627,28 +650,29 @@ function spendCells(p, layout, now) {
   return `  ${out}${color(text)}${" ".repeat(Math.max(0, room - width(text)))}${extras}`;
 }
 
-function row(p, layout, issue, now = Date.now()) {
+// `here` is the name of the profile mcc would start in your pane's folder, if any.
+function row(p, layout, issue, now = Date.now(), here = null) {
   const name = padEnd(fit(p.name, layout.nameWidth), layout.nameWidth);
   const marker = (issue && !p.apiKey) || p.loginWarning ? yellow(" ⚠") : "  ";
   const number = dim(padStart(String(p.index ?? ""), layout.indexWidth ?? 1)) + " ";
-  const label = number + (p.isDefault ? accent(name) : name);
-  if (layout.details) return ` ${label}${detailCells(p, layout.details, now, layout.tz)}${marker}`;
-  if (p.apiKey) return ` ${label}${spendCells(p, layout, now)}${layout.compact ? "" : marker}`;
+  const label = (here != null && p.name === here ? HERE_MARK : " ") + number + (p.isDefault ? accent(name) : name);
+  if (layout.details) return `${label}${detailCells(p, layout.details, now, layout.tz)}${marker}`;
+  if (p.apiKey) return `${label}${spendCells(p, layout, now)}${layout.compact ? "" : marker}`;
   const [firstLabel, first] = firstWindow(p);
   if (layout.compact) {
     const pct = (w) => (w ? String(Math.round(w.percent)) : "—");
     const worst = Math.max(first?.percent ?? 0, p.week?.percent ?? 0);
     const text = p.status !== "ok" && !first && !p.week ? "✗" : `${pct(first)}/${pct(p.week)}%${flag(worst)}`;
-    return ` ${label} ${tone(worst)(text)}`;
+    return `${label} ${tone(worst)(text)}`;
   }
   const extras = layout.extras ? extraCells(p, layout.extras, now) : "";
   if (p.status !== "ok" && !first && !p.week) {
     const span = 2 + 2 * cellWidthFor(layout.bw, layout.reset);
     // As wide as a row's two windows, so the columns after it line up.
-    return ` ${label}  ${dim(padEnd(fit(reasonText(p.reason), span - 2), span))}${extras}${marker}`;
+    return `${label}  ${dim(padEnd(fit(reasonText(p.reason), span - 2), span))}${extras}${marker}`;
   }
   const stale = isStale(p, now) ? dim(` ${ago(p.updatedAt, now)}`) : "";
-  return ` ${label}  ${cell(firstLabel, first, layout.bw, layout.reset, now)}  ${cell("wk", p.week, layout.bw, layout.reset, now)}${extras}${marker}${stale}`;
+  return `${label}  ${cell(firstLabel, first, layout.bw, layout.reset, now)}  ${cell("wk", p.week, layout.bw, layout.reset, now)}${extras}${marker}${stale}`;
 }
 
 // The highest percent of one window across accounts, for the collapsed header.
@@ -703,6 +727,7 @@ const ui = {
   cpuBase: null,     // the last CPU times and byte counters, for the next percent and rate
   netBase: null,
   sampling: false,
+  here: null,        // the profile mcc would start in your pane's folder, or null (#64)
 };
 const SPIN = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 let mcc = null;
@@ -732,6 +757,8 @@ async function load() {
   ui.loaded = true;
   await refit();
   draw();
+  // `mcc project set` can change the answer for the same folder.
+  if (hereDir) await lookHere();
 }
 
 // Grow or shrink with the content (an account added, a notice shown), but only then:
@@ -946,6 +973,50 @@ function onResize() {
   }, 500);
 }
 
+// ── Where you work ──────────────────────────────────────────────────────────
+// Which profile mcc would start in the folder of the pane you work in (#64).
+
+let target = null;    // the pane followed
+let hereDir = null;   // its folder, as last read
+let locating = false;
+let lookups = 0;      // numbers each `mcc here`, so only the newest answer is shown
+
+// The folder of the focused pane of the panel's tab, as the GitHub panel follows it;
+// while the panel itself has focus, the last one. Null when the tab has no pane to
+// follow, undefined when Rex didn't answer, so a missed read doesn't clear the mark.
+async function locate() {
+  const window = myWindow(await rexApi("session.view"));
+  if (!window) return undefined;
+  const blocks = (window.layers ?? []).flatMap((l) => (l.blocks ?? []).map((b) => b.block_id));
+  const focused = window.focused_block_id;
+  if (focused && focused !== SELF && blocks.includes(focused)) target = focused;
+  if (!target || !blocks.includes(target)) return null;
+  const proc = await rexApi("block.method", { block_id: target, method: "process", args: {} });
+  if (!proc) return undefined;
+  return proc.foreground?.cwd ?? proc.child?.cwd ?? null;
+}
+
+// Ask mcc again about the folder: no mark when mcc isn't found, fails, times out, or
+// names no project default. None of it touches the usage rows or their errors.
+async function lookHere(dir = hereDir) {
+  const n = ++lookups;
+  const name = dir && mcc ? readout(await run(mcc, ["here"], HERE_TIMEOUT, dir), parseHere) : null;
+  // A newer lookup started meanwhile, for another folder or a newer answer: this one is stale.
+  if (n !== lookups) return;
+  if (name !== ui.here) { ui.here = name; draw(); }
+}
+
+// One look at where you work: asks mcc only when the folder changed.
+async function follow() {
+  if (!SELF || !SESSION || !mcc || locating) return;
+  locating = true;
+  let dir;
+  try { dir = await locate(); } finally { locating = false; }
+  if (dir === undefined || dir === hereDir) return;
+  hereDir = dir;
+  await lookHere(dir);
+}
+
 // The details view changes what each row says, not how many there are: no refit.
 function toggleDetails() {
   ui.details = !ui.details;
@@ -1061,7 +1132,7 @@ function draw() {
   const body = [];
   if (!ui.loaded) body.push(dim(" Loading…"));
   else if (!ui.profiles.length && !ui.error) body.push(dim(" No mcc profiles"));
-  for (const p of ui.profiles) body.push(row(p, layout, ui.issues[p.name], now));
+  for (const p of ui.profiles) body.push(row(p, layout, ui.issues[p.name], now, ui.here));
   if (!ui.collapsed) for (const n of notices) body.push(" " + n.color(fit(n.text, cols - 2)));
   else if (ui.error) body.unshift(" " + red(fit(ui.error, cols - 2)));
 
@@ -1136,9 +1207,14 @@ function main() {
   // The online dot blinks once a second; nothing redraws for it when it isn't shown.
   setInterval(() => { if (dotBlinks(process.stdout.columns || 60)) { ui.blink = !ui.blink; draw(); } }, BLINK);
 
+  // Rex's focus can move with no key in this pane, so the panel looks.
+  setInterval(follow, LOCATE);
+
   draw();
   sampleStats();
   load().then(resize).then(draw);
+  // After load() has looked for mcc, which it does before its first await.
+  follow();
 }
 
 if (require.main === module) main();
@@ -1146,6 +1222,8 @@ else module.exports = {
   width, fit, clip, until, since, clock, ago, detailColumns, toggleDetails, flag, parse, ordered, loginCommand, liveIssues, spendTexts, extrasFor, extrasWidth, withLiveLogins, firstError, columns, row, cell, cellWidthFor, peak, splitAbove, firstLeaf, ratioFor, reasonText, findMcc, noticeLines, wantedRows, ui, draw,
   // The panel's height after a drag (#55): fit it, when a drag settles, and a reset for tests.
   needsFit, resize, settleResize, refit, resetFit: () => { panes = null; fitted = null; full = null; fitting = false; },
+  // Where you work (#64): the mark's source, one look, the cache read that asks again, and a reset for tests.
+  parseHere, follow, load, resetHere: () => { target = null; hereDir = null; locating = false; lookups++; ui.here = null; mcc = null; },
   parseProcStat, cpuPercent, parseMeminfo, parseVmStat, parseNetDev, parseNetstat, rate, step, formatBytes, formatRate, shortBytes, formatPair, memPercent, diskPercent, parseStatfs, readDisk, readout, label,
   cpuTimes, readStats, applyStats, resetStats, statsRow, statsParts, dotBlinks, isOnline, readOnline, header, refreshButton, footerButtons,
 };
