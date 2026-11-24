@@ -371,7 +371,8 @@ It sends nothing anywhere except through `gh` to GitHub, or `glab` to GitLab, an
 - **"No agent in this tab and no pane to start one next to":** the panel opens the new pane to the right of your agent, or of the pane it follows. Click a pane in the panel's tab, then try again.
 - **"didn't start" or "closed right after it started":** the agent exited within 3 seconds. Its pane, if Rex kept it, shows why; otherwise run the command the notice shows yourself.
 - **"mcc isn't on your PATH":** the default profile starts Claude Code through `mcc run`. Install mcc on the machine of the Rex server, or assign another profile to Resolve or Review (`s`).
-- **"The issue-resolver skill isn't found for mcc":** `mcc env -q --shell bash`, run in the repo, didn't name a Claude Code folder. Run it there yourself to see why.
+- **"The issue-resolver skill isn't found for mcc":** `mcc env -q --shell bash`, run in the repo, didn't name a Claude Code folder; for a profile imported from mcc, `mcc env -q --shell bash NAME` with its mcc profile's name. Run it there yourself to see why.
+- **"mcc can't find the mcc profile NAME":** the profile was imported from mcc profile NAME, which was renamed or deleted in mcc since. Press `s` and import it again (`i`), or assign another profile to Resolve or Review.
 - **"Can't list mcc's profiles" or "Can't import NAME":** the mcc command named in the message failed, with its reason. Run `mcc usage --json-v2` or `mcc env NAME` yourself to see more. "unexpected mcc output (schema N); update mcc" means this mcc is older than the panel: update it.
 - **"Opened mcc in a new pane":** mcc runs there, and may be asking something before Claude Code starts, most often about a usage limit. Answer it in the new pane; Claude Code then works on the prompt.
 - **"The profiles changed elsewhere and were read again":** another panel saved the profiles file after this one read it. Make your change again.

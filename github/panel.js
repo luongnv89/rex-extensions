@@ -1308,6 +1308,11 @@ async function launch(action, root, profile, template = null) {
     claudeDir = env.code === 0 ? P.parseMccEnv(env.stdout, os.homedir()) : null;
     if (!claudeDir) {
       const why = env.code === 0 ? "mcc env didn't name a Claude Code folder" : `mcc env failed: ${firstLine(env.stderr) || `exit ${env.code}`}`;
+      // An imported profile's mcc profile renamed or deleted in mcc since: the skills
+      // aren't what is missing.
+      if (profile.mccProfile && env.code !== 0) {
+        return say("error", `mcc can't find the mcc profile ${profile.mccProfile} (${why}): press s to import it again, or to pick another profile for ${action.profiles ?? action.label}.`);
+      }
       return say("error", `The ${action.skill} skill isn't found for mcc (${why}). Install the skills from:`, IDD);
     }
   }
@@ -1858,7 +1863,9 @@ const choices = (form, key, store = ui.settings.store) => {
 // What OpenCode does with a thinking level, in the profiles module's words.
 const OPENCODE_NOTE = P.buildLaunch({ id: "x", name: "x", harness: "opencode", thinking: "high" }, "x").warnings[0];
 const entries = () => [P.DEFAULT_PROFILE, ...ui.settings.store.profiles];
-const describe = (p) => [P.HARNESS_NAMES[p.harness], p.mccProfile && `mcc profile ${p.mccProfile}`, p.model, p.thinking && `thinking ${p.thinking}`].filter(Boolean).join(" · ");
+// An imported profile's mcc profile comes first, in place of the harness it implies,
+// so a narrow pane still shows which account it starts (#63).
+const describe = (p) => [p.mccProfile ? `mcc profile ${p.mccProfile}` : P.HARNESS_NAMES[p.harness], p.model, p.thinking && `thinking ${p.thinking}`].filter(Boolean).join(" · ");
 // An action's (or Auto-pilot's) name in Settings: its button's label, yours or its own.
 const actionName = (a, store = ui.settings.store) => P.buttonLabel(store, a);
 // What an action, or Auto-pilot (#31), sends with no custom prompt, as Claude Code takes it.
@@ -2581,7 +2588,9 @@ function settingsLines(cols, rows) {
       body.push(""); owner.push(null);
       const on = i === picker.sel, bar = on ? accent("▌") : " ", have = importedAs(st, m.name);
       const select = () => { picker.sel = i; Object.assign(st, { error: null }); draw(); };
-      const tag = fit([m.isDefault && "default", have && "imported"].filter(Boolean).join(" · "), Math.max(0, cols - 9));
+      // The name says which profile it is: it keeps up to 10 cells, and the tags give first.
+      const keep = Math.min(10, width(m.name));
+      const tag = fit([m.isDefault && "default", have && "imported"].filter(Boolean).join(" · "), Math.max(0, cols - 5 - keep));
       const name = fit(m.name, Math.max(4, cols - width(tag) - 5));
       if (on) selStart = body.length;
       body.push(`${bar} ${on ? bold(name) : name}${" ".repeat(Math.max(1, cols - 3 - width(name) - width(tag)))}${have ? accent(tag) : dim(tag)}`);

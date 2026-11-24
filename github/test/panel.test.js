@@ -6079,7 +6079,7 @@ test("importing an mcc profile adds a profile with the model and thinking level 
   let stored = JSON.parse(storeText());
   assert.equal(stored.version, 7);
   assert.deepEqual(stored.profiles, [CC, { id: "cskonal", name: "mcc cskonal", harness: "mcc", mccProfile: "cskonal", model: "opus", thinking: "high" }]);
-  assert.ok(text(lines).includes("Imported cskonal as mcc cskonal: Claude Code via mcc run · mcc profile cskonal · opus · thinking high"), lines.join("\n"));
+  assert.ok(text(lines).includes("Imported cskonal as mcc cskonal: mcc profile cskonal · opus · thinking high"), lines.join("\n"));
   // Back in the list, the new profile selected, its description naming its mcc profile.
   assert.equal(ui.settings.mode, "list");
   assert.ok(lines.some((l) => /^▌ mcc cskonal +cskonal$/.test(l?.trimEnd() ?? "")), lines.join("\n"));
@@ -6120,7 +6120,11 @@ test("an imported profile keeps its mcc profile when edited, and leaves it behin
   mccOnPath(t);
   setupGitHub("issues");
   let lines = screen(() => key("sj"));
-  assert.ok(text(lines).includes("Claude Code via mcc run · mcc profile work · opus"), lines.join("\n"));
+  assert.ok(text(lines).includes("mcc profile work · opus"), lines.join("\n"));
+  assert.ok(!text(lines).includes("Claude Code via mcc run · mcc profile"), lines.join("\n"));
+  // The mcc profile comes first, so a narrow Settings list still shows it whole.
+  lines = screenAt(32, 24, draw);
+  assert.ok(lines.some((l) => /^▌ {3}mcc profile work/.test(l ?? "")), lines.join("\n"));
   lines = screen(() => key("e"));
   assert.ok(text(lines).includes("Starts the mcc profile work, imported from mcc. Another harness leaves it behind."), lines.join("\n"));
   screen(() => key("!"));
@@ -6156,6 +6160,23 @@ test("an imported profile is in the profile menu, and starts mcc run --profile w
   assert.ok(text(after).includes(`${OPENED_MCC} /issue-resolver 12`), after.join("\n"));
 });
 
+test("an imported profile whose mcc profile is gone says so, not that the skill is missing (#63)", async (t) => {
+  const dir = home(t, { ".mcc/profiles/cus_konal/skills/issue-resolver/SKILL.md": "x" });
+  useProfiles(dir, [{ id: "cskonal", name: "mcc cskonal", harness: "mcc", mccProfile: "cskonal" }], { resolve: "cskonal" });
+  mccOnPath(t);
+  // Renamed or deleted in mcc since it was imported.
+  mccProfiles([], {});
+  setupGitHub("issues");
+  fakeRex(agentHere());
+  screen(() => key("a"));
+  const after = await screenAsync(() => key("\r"));
+  assert.deepEqual(mccCalls(), ["env -q --shell bash cskonal"]);
+  assert.deepEqual(rexCalls(), ["view", "process block:agent"]);
+  assert.ok(text(after).includes("mcc can't find the mcc profile cskonal (mcc env failed: ✗ error: no profile named \"cskonal\"): press s to import it again, or to pick another profile for"), after.join("\n"));
+  assert.ok(!text(after).includes("skill isn't found"), after.join("\n"));
+  assert.ok(!after.some((l) => l?.trim() === IDD), after.join("\n"));
+});
+
 test("Test of an imported profile checks mcc finds its own mcc profile (#63)", async (t) => {
   const dir = home(t);
   useProfiles(dir, [{ id: "cskonal", name: "mcc cskonal", harness: "mcc", mccProfile: "cskonal" }]);
@@ -6172,6 +6193,27 @@ test("Test of an imported profile checks mcc finds its own mcc profile (#63)", a
   lines = await tested(() => key("\x14"));
   assert.ok(text(lines).includes("Test failed: `mcc env -q --shell bash cskonal` failed: ✗ error: no profile named \"cskonal\""), lines.join("\n"));
   assert.equal(storeText(), before);
+  screen(() => key("\x1b\x1b"));
+});
+
+test("in a narrow import picker, a profile's name stays readable and its tags give first (#63)", async (t) => {
+  const dir = home(t);
+  useProfiles(dir, [{ id: "cus-konal", name: "mcc cus_konal", harness: "mcc", mccProfile: "cus_konal" }]);
+  mccOnPath(t);
+  mccProfiles([{ name: "cus_konal", provider: "claude", is_default: true, usage: { status: "ok" } }, ...MCC_USAGE.filter((m) => !m.is_default)]);
+  setupGitHub("issues");
+  screen(() => key("s"));
+  await picked(() => key("i"));
+  for (const cols of [28, 30]) {
+    const lines = screenAt(cols, 24, draw);
+    const row = lines.find((l) => /^▌ /.test(l ?? ""));
+    assert.ok(width(row) <= cols, `${cols}: ${row}`);
+    // "default · imported" is cut, not the name.
+    assert.match(row, /^▌ cus_konal +default · im.*…$/, `${cols}:\n${lines.join("\n")}`);
+  }
+  // Wide enough, both are whole.
+  const lines = screenAt(40, 24, draw);
+  assert.ok(lines.some((l) => /^▌ cus_konal +default · imported$/.test(l ?? "")), lines.join("\n"));
   screen(() => key("\x1b\x1b"));
 });
 
