@@ -807,6 +807,30 @@ test("an API-key profile's row shows its spend in place of the windows, at every
   assert.match(strip(p.row(apiRow({ budget: null }), wide, null, NOW)), /api +api est\. \$3\.32 this month +$/);
 });
 
+test("a compact API-key row marks 80% and 95% of the budget with ! and !!, not by color alone", () => {
+  const compact = p.columns(26, 7);
+  assert.equal(compact.compact, true);
+  const text = (usage) => strip(p.row(apiRow(usage), compact, null, NOW));
+  // No room for "(82%)" in 10 columns: the marker the subscription rows have.
+  assert.match(text({ cost: 41 }), /api +\$41\.00!$/);
+  assert.match(text({ cost: 48.5 }), /api +\$48\.50!!$/);
+  assert.match(text({ cost: 60 }), /api +\$60\.00!!$/);
+  assert.match(text({ cost: 1234.56, budget: 1272.74 }), /api +\$1234\.56!!$/);
+  // Under 80%, and with no budget to be a share of: the amount alone, as before.
+  assert.match(text({ cost: 30 }), /api +\$30\.00$/);
+  assert.match(text({}), /api +\$3\.32 \(7%\)$/);
+  assert.match(text({ cost: 48.5, budget: null }), /api +\$48\.50$/);
+  assert.match(text({ cost: 48.5, budget: 0 }), /api +\$48\.50$/);
+  // The marker goes with the color, which rounds the share as the row prints it.
+  assert.equal(p.spendTexts(apiRow({ cost: 39.8 })).at(-2), "$39.80!");
+  assert.equal(p.spendTexts(apiRow({ cost: 39.7 })).at(-1), "$39.70");
+  assert.ok(p.spendTexts(apiRow({ cost: 39.7 })).every((t) => !t.includes("!")));
+  // The longer forms say the share, so they carry no marker: the same at 97% as at 7%.
+  assert.deepEqual(p.spendTexts(apiRow({ cost: 48.5 })), ["est. $48.50 this month of $50.00 budget (97%)", "$48.50 this month of $50.00 (97%)", "$48.50 of $50.00 (97%)", "$48.50 (97%)", "$48.50!!", "$48.50"]);
+  assert.match(strip(p.row(apiRow({ cost: 48.5 }), p.columns(40, 7), null, NOW)), /api +api \$48\.50 \(97%\) *$/);
+  assert.match(strip(p.row(apiRow({ cost: 48.5 }), p.detailColumns(100, 7), null, NOW)), /api \$48\.50 of \$50\.00 \(97%\) *$/);
+});
+
 test("an API-key profile's row keeps the extra columns in line", () => {
   const [d, a] = p.parse(API_DOC);
   const layout = p.columns(120, 7, 1, { active: true, login: true, stale: false });

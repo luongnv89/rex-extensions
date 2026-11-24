@@ -195,7 +195,11 @@ function spendTexts(p) {
   const c = dollars(p.cost);
   if (p.budget == null) return [`est. ${c} this month`, `${c} this month`, c];
   const b = dollars(p.budget);
-  return [`est. ${c} this month of ${b} budget${share}`, `${c} this month of ${b}${share}`, `${c} of ${b}${share}`, `${c}${share}`, c];
+  // Without room for the share, the amount keeps mcc's `!`/`!!` (flag) from 80% of
+  // the budget, so the color isn't the only sign of it; the bare amount is what's
+  // left when even that doesn't fit.
+  const mark = pct == null ? "" : flag(Math.round(pct));
+  return [`est. ${c} this month of ${b} budget${share}`, `${c} this month of ${b}${share}`, `${c} of ${b}${share}`, `${c}${share}`, ...(mark ? [`${c}${mark}`] : []), c];
 }
 const spendText = (p, max) => spendTexts(p).find((t) => width(t) <= max) ?? fit(spendTexts(p).at(-1), max);
 
