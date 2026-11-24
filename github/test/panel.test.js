@@ -2171,6 +2171,148 @@ test("a custom prompt from the profiles view is what Resolve then sends", async 
   assert.ok(text(after).includes("Started Claude Code in a new pane: Resolve issue 12 with tests first"), after.join("\n"));
 });
 
+// ── Settings' tabs (#67) ────────────────────────────────────────────────────
+
+// The rows a Settings tab lists, by their names: each row's first line starts
+// with its bar or a space, then its name.
+const tabRows = (lines) => lines.slice(4).filter((l) => /^[▌ ] \S/.test(l ?? "")).map((l) => l.slice(2).split(/ {2,}/)[0].trim());
+// The name of the tab showing: the strip's inverted cell.
+const activeTab = (raw) => strip(raw[2].match(/\x1b\[7m(.*?)\x1b\[0m/)?.[1] ?? "").trim();
+
+test("Settings' tabs each list only their own area's settings, and every setting of before is under exactly one (#67)", (t) => {
+  const dir = home(t);
+  useProfiles(dir, [CC, CX]);
+  setupGitHub("issues");
+  screenAt(60, 40, () => key("s"));
+  // Each tab, by its key: its rows, and no other tab's.
+  const shown = {};
+  for (const [k, tab] of [["1", "Profiles"], ["2", "Prompts"], ["3", "Button labels"], ["4", "Merging"]]) {
+    const lines = screenAt(60, 40, () => key(k));
+    assert.equal(lines[2].trim().split(/ {2,}/).length, 4, lines.join("\n"));
+    shown[tab] = tabRows(lines);
+  }
+  // The four sections of before, the same rows in the same order: none lost, none twice.
+  assert.deepEqual(shown, {
+    Profiles: ["Claude Code via mcc run", "Claude Code", "Codex quick"],
+    Prompts: ["Resolve", "Review", "Auto-pilot"],
+    "Button labels": ["Resolve", "Review", "Auto-pilot"],
+    Merging: ["After a merge"],
+  });
+  screen(() => key("\x1b"));
+});
+
+test("the tab showing is inverted, and the strip fits at 28, 30 and 40 cells with each tab there, with and without mcc (#67)", (t) => {
+  for (const withMcc of [false, true]) {
+    const dir = home(t);
+    useProfiles(dir, [CC]);
+    if (withMcc) mccOnPath(t);
+    for (const cols of [28, 30, 40, 60]) {
+      setupGitHub("issues");
+      screenAt(cols, 24, () => key("s"));
+      for (const [k, name] of [["1", "Profiles"], ["2", "Prompts"], ["3", "Button labels"], ["4", "Merging"]]) {
+        let raw;
+        const lines = screenAt(cols, 24, () => { key(k); raw = rawScreen(draw); });
+        const where = `${cols} mcc=${withMcc} ${k}:\n${lines.join("\n")}`;
+        for (const l of lines) assert.ok(width(l ?? "") <= cols, `${where}\n${l}`);
+        const strip2 = lines[2];
+        assert.ok(!strip2.includes("…"), where);
+        // The tab showing, named in full or by its short name, and the only one inverted.
+        const active = activeTab(raw);
+        assert.ok(cols >= 60 ? active === name : [name, "Labels"].includes(active), `${active}\n${where}`);
+        assert.equal(raw[2].split("\x1b[7m").length, 2, where);
+        // Every tab is there: named while the line has room, else by its number, its key.
+        const others = [["1", "Profiles"], ["2", "Prompts"], ["3", "Labels"], ["4", "Merging"]].filter(([n]) => n !== k);
+        for (const [n, other] of others) assert.ok(cols >= 40 ? new RegExp(other, "i").test(strip2) : strip2.includes(` ${n} `), `${other}\n${where}`);
+      }
+      screenAt(cols, 24, () => key("\x1b"));
+    }
+  }
+});
+
+test("1 to 4, ⇥, ⇧⇥, ← → h l and a click switch Settings' tabs, ⇥ going round, and ↓ stops at a tab's last row (#67)", (t) => {
+  const dir = home(t);
+  useProfiles(dir, [CC]);
+  setupGitHub("issues");
+  screen(() => key("sj"));
+  assert.deepEqual([ui.settings.promptSel, ui.settings.sel], [null, 1]);
+  const tabIs = (name) => assert.equal(activeTab(rawScreen(draw)), name);
+  // ⇥ and → and l: the next tab, on its first row; past Merging back to Profiles.
+  for (const [k, name, row] of [["\t", "Prompts", "resolve"], ["\x1b[C", "Button labels", "label:resolve"], ["l", "Merging", "merge"], ["\t", "Profiles", null]]) {
+    screen(() => key(k));
+    assert.equal(ui.settings.promptSel, row, JSON.stringify(k));
+    tabIs(name);
+  }
+  // Back on Profiles, the profile selected before.
+  assert.equal(ui.settings.sel, 1);
+  // ⇧⇥, ← and h: the previous tab, before Profiles Merging.
+  for (const [k, row] of [["\x1b[Z", "merge"], ["\x1b[D", "label:resolve"], ["h", "resolve"], ["h", null]]) {
+    screen(() => key(k));
+    assert.equal(ui.settings.promptSel, row, JSON.stringify(k));
+  }
+  // ↓ stops at Prompts' last row, Auto-pilot's: Button labels is a key away.
+  screen(() => key("2jjjj"));
+  assert.equal(ui.settings.promptSel, "autopilot");
+  // 5 and 0 are no tab's.
+  screen(() => key("50"));
+  assert.equal(ui.settings.promptSel, "autopilot");
+  // A click on a tab's name opens it; the + New and + Import of the header show on
+  // Profiles only.
+  let lines = screen(draw);
+  assert.ok(!lines[0].includes("+ New"), lines[0]);
+  lines = screen(() => click(...find(lines, "Merging")));
+  assert.equal(ui.settings.promptSel, "merge");
+  lines = screen(() => click(...find(lines, "Profiles")));
+  assert.equal(ui.settings.promptSel, null);
+  assert.ok(lines[0].includes("+ New"), lines[0]);
+  // A delete still asking is taken back by a click on another tab: y then deletes nothing.
+  screen(() => key("d"));
+  assert.equal(ui.settings.mode, "confirm");
+  lines = screen(() => click(...find(screen(draw), "Prompts")));
+  assert.equal(ui.settings.mode, "list");
+  screen(() => key("y"));
+  assert.deepEqual(readStore().store.profiles.map((p) => p.id), ["cc"]);
+  // The other tabs' hints name ⇥ and not the profiles' keys; Profiles' stay as they were.
+  lines = screen(() => key("2"));
+  assert.equal(lines.at(-1).trim(), "↑↓ select · ⇥ tab · ? keys · e edit · esc back");
+  lines = screen(() => key("4"));
+  assert.equal(lines.at(-1).trim(), "⇥ tab · ? keys · e change · esc back");
+  lines = screen(() => key("1"));
+  assert.equal(text(lines.slice(-2)), "↑↓ select · ? keys · n new · e edit · d delete · R/V assign esc back");
+  // n still adds a profile from another tab; saved, it shows on Profiles.
+  screen(() => key("3n"));
+  assert.equal(ui.settings.mode, "edit");
+  screen(() => { key("Tabbed"); key("\x1b[B"); key("tabbed"); key("\r"); });
+  assert.equal(ui.settings.mode, "list");
+  assert.equal(ui.settings.promptSel, null);
+  assert.ok(text(screen(draw)).includes("Tabbed"));
+  screen(() => key("\x1b"));
+});
+
+test("a change made in one tab is saved, and still applied after switching tabs and reopening Settings (#67)", (t) => {
+  const dir = home(t);
+  useProfiles(dir, [CC]);
+  mergeModeFile(t, null);
+  setupGitHub("issues");
+  // A label on Button labels, then the merge mode on Merging.
+  screen(() => key("s3e"));
+  screen(() => key("Fix it\r"));
+  screen(() => key("4e"));
+  assert.equal(fs.readFileSync(MERGE_FILE, "utf8"), "keep");
+  // Other tabs, then Settings closed.
+  screen(() => key("21"));
+  screen(() => key("\x1b"));
+  assert.equal(ui.settings, null);
+  assert.equal(JSON.parse(fs.readFileSync(storeFile(), "utf8")).labels.resolve, "Fix it");
+  // The rows' button reads it, and Settings opened again shows both.
+  let lines = screen(draw);
+  assert.ok(lines.some((l) => l?.replace(/^▌/, "").trim() === "Fix it #12   Close #12"), lines.join("\n"));
+  lines = screen(() => key("s3"));
+  assert.ok(lines.some((l) => /^▌ Resolve +custom  Edit $/.test(l ?? "")), lines.join("\n"));
+  lines = screen(() => key("4"));
+  assert.ok(lines.some((l) => l?.replace(/^▌/, "").trim() === "Keep the branch"), lines.join("\n"));
+  screen(() => key("\x1b"));
+});
+
 // ── The profile menu ────────────────────────────────────────────────────────
 
 const CC = { id: "cc", name: "Claude Code", harness: "claude" }, CX = { id: "cx", name: "Codex quick", harness: "codex" };
