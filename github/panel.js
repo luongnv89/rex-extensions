@@ -1553,7 +1553,9 @@ const KEYMAP = {
   ],
   import: [
     binding("↑ ↓ j k", "select an mcc profile"),
-    binding("⏎", "Import it, with the model and thinking level of its settings"),
+    binding("␣", "Mark or unmark it, to import several at once"),
+    binding("a", "Mark every one not imported yet, or none"),
+    binding("⏎", "Import the marked ones, or with none marked the selected one, with the model and thinking level of their settings"),
     binding("?", "these keys"),
     binding("q esc", "✕ back to Settings"),
   ],
@@ -1894,7 +1896,8 @@ const FIRST_ROWS = [BELOW_ROWS[0], LABEL_ROWS[0], MERGE_ROW];
 // the prompt or the label being edited: { action, kind, text }, kind "prompt" or "label".
 // `scroll` is how far the wheel moved the form or the prompt from where it shows.
 // `mcc` is the mcc binary, found once as Settings opens, or null: + Import shows
-// only with it (#63). `picker` is the import's list of mcc profiles while it shows.
+// only with it (#63). `picker` is the import's list of mcc profiles while it shows,
+// `marked` the names of those to import together.
 function openSettings() {
   ui.settings = { mode: "list", sel: 0, promptSel: null, form: null, prompt: null, picker: null, field: 0, scroll: 0, error: null, fieldErrors: {}, info: null, mcc: findMcc(), ...readStore() };
   draw();
@@ -2212,7 +2215,7 @@ const mccFailed = (e) => ({ code: -1, stdout: "", stderr: e.killed || e.signal ?
 // choose one from. It runs only now, not as Settings opens, and its answer is
 // dropped if the picker closed meanwhile.
 async function openImport() {
-  const st = ui.settings, picker = { loading: true, list: [], sel: 0, importing: null };
+  const st = ui.settings, picker = { loading: true, list: [], sel: 0, marked: new Set(), importing: null };
   Object.assign(st, { mode: "import", picker, error: null, info: null });
   draw();
   const r = await run(st.mcc, ["usage", "--json-v2"], { timeout: MCC_MS }).catch(mccFailed);
@@ -2231,46 +2234,100 @@ async function openImport() {
 // The profile here that starts mcc profile `name`, if one does.
 const importedAs = (st, name) => st.store.profiles.find((p) => p.mccProfile === name) ?? null;
 
-// The picker's Import, or enter: the chosen mcc profile becomes a profile here that
-// starts it with `mcc run --profile`. Its model and thinking level are those of its
-// settings.json, in the folder `mcc env <name>` names (never one made from the name:
-// mcc keeps some elsewhere), as a plain `mcc run` of it reads them. One imported
-// already isn't imported twice, and a read-only file isn't written.
+// The picker's Import, or enter: the marked mcc profiles, or with none marked the
+// selected one, become profiles here that start them with `mcc run --profile`. Each
+// one's model and thinking level are those of its settings.json, in the folder `mcc
+// env <name>` names (never one made from the name: mcc keeps some elsewhere), as a
+// plain `mcc run` of it reads them. One imported already isn't imported twice, and a
+// read-only file isn't written.
 async function importSelected() {
   const st = ui.settings, picker = st.picker, chosen = picker?.list[picker.sel];
   if (!chosen || picker.importing) return;
+  // In the list's order, so what it says and the profile selected after don't
+  // depend on the order they were marked in.
+  const names = picker.marked.size ? picker.list.filter((m) => picker.marked.has(m.name)).map((m) => m.name) : [chosen.name];
   const have = importedAs(st, chosen.name);
-  if (have) {
+  if (!picker.marked.size && have) {
     Object.assign(st, { error: `${chosen.name} is imported already, as ${have.name}: edit that profile instead`, info: null });
     return draw();
   }
-  picker.importing = `Importing ${chosen.name} from mcc…`;
   Object.assign(st, { error: null, info: null });
-  draw();
-  const r = await run(st.mcc, ["env", "-q", "--shell", "bash", chosen.name], { timeout: MCC_MS }).catch(mccFailed);
-  picker.importing = null;
-  if (ui.settings !== st || st.picker !== picker) return;
-  const dir = r.code === 0 ? P.parseMccEnv(r.stdout, os.homedir()) : null;
-  if (!dir) {
-    const why = r.code === 0 ? "mcc env didn't name its Claude Code folder" : `mcc env failed: ${oneLine(r.stderr) || `exit ${r.code}`}`;
-    Object.assign(st, { error: `Can't import ${chosen.name}: ${why}`, info: null });
+  // One at a time, so the progress says which; nothing is saved until all answered.
+  const found = [], failed = [];
+  for (const [i, name] of names.entries()) {
+    picker.importing = `Importing ${name} from mcc…${names.length > 1 ? ` (${i + 1} of ${names.length})` : ""}`;
+    draw();
+    const r = await run(st.mcc, ["env", "-q", "--shell", "bash", name], { timeout: MCC_MS }).catch(mccFailed);
+    picker.importing = null;
+    if (ui.settings !== st || st.picker !== picker) return;
+    const dir = r.code === 0 ? P.parseMccEnv(r.stdout, os.homedir()) : null;
+    if (dir) found.push([name, dir]);
+    else failed.push(`${name}: ${r.code === 0 ? "mcc env didn't name its Claude Code folder" : `mcc env failed: ${oneLine(r.stderr) || `exit ${r.code}`}`}`);
+  }
+  // Each against the store as it grows, so ids taken earlier in the batch aren't reused.
+  let store = st.store;
+  const made = [];
+  for (const [name, dir] of found) {
+    if (importedAs(st, name)) continue;
+    try {
+      const profile = P.importedProfile(name, json(path.join(dir, "settings.json")), store);
+      store = P.upsertProfile(store, profile);
+      made.push(profile);
+    } catch (e) { failed.push(`${name}: ${e.message}`); }
+  }
+  const why = failed.length ? `Can't import ${failed.join("; ")}` : null;
+  if (!made.length) {
+    Object.assign(st, { error: why, info: null });
     return draw();
   }
-  const profile = P.importedProfile(chosen.name, json(path.join(dir, "settings.json")), st.store);
+  const info = made.length === 1 ? `Imported ${made[0].mccProfile} as ${made[0].name}: ${describe(made[0])}`
+    : `Imported ${made.length} profiles from mcc: ${made.map((p) => p.mccProfile).join(", ")}`;
+  // All in one write. With some failed, the picker stays, those still marked.
+  let saved = false;
   change(() => {
-    saveStore(P.upsertProfile(st.store, profile));
+    saveStore(store);
+    saved = true;
+    for (const p of made) picker.marked.delete(p.mccProfile);
+    if (why) return;
     Object.assign(st, { mode: "list", picker: null, promptSel: null });
-    st.sel = Math.max(0, entries().findIndex((p) => p.id === profile.id));
-  }, `Imported ${chosen.name} as ${profile.name}: ${describe(profile)}`);
+    st.sel = Math.max(0, entries().findIndex((p) => p.id === made[0].id));
+  }, info);
+  // change() clears the error; a refused save keeps its own reason instead.
+  if (saved && why) {
+    st.error = why;
+    draw();
+  }
 }
 
-// Keys in the picker: ↑↓ (or k and j) choose, enter imports, esc or q go back to the
-// list, and ? lists these keys.
+// Space, or Mark: marks the selected mcc profile to import with the others marked,
+// or unmarks it. One imported already can't be marked, as it can't be imported.
+function toggleMark(st) {
+  const picker = st.picker, m = picker.list[picker.sel];
+  if (!m || picker.importing) return;
+  const have = importedAs(st, m.name);
+  if (have) return Object.assign(st, { error: `${m.name} is imported already, as ${have.name}: edit that profile instead`, info: null });
+  if (!picker.marked.delete(m.name)) picker.marked.add(m.name);
+  Object.assign(st, { error: null, info: null });
+}
+
+// a: marks every mcc profile not imported yet, or none when they all are marked.
+function markAll(st) {
+  const picker = st.picker;
+  if (picker.importing) return;
+  const free = picker.list.filter((m) => !importedAs(st, m.name)).map((m) => m.name);
+  picker.marked = new Set(free.every((n) => picker.marked.has(n)) ? [] : free);
+  Object.assign(st, { error: null, info: null });
+}
+
+// Keys in the picker: ↑↓ (or k and j) choose, space and a mark, enter imports, esc
+// or q go back to the list, and ? lists these keys.
 function importKey(st, k) {
   const picker = st.picker;
   if (k === "\x1b" || k === "q") return settingsBack();
   if (UP.includes(k) || k === "k") pickStep(picker, -1);
   else if (DOWN.includes(k) || k === "j") pickStep(picker, 1);
+  else if (k === " ") toggleMark(st);
+  else if (k === "a") markAll(st);
   else if (k === "\r" || k === "\n") return importSelected();
   else if (k === "?") return openHelp("import");
   else return;
@@ -2487,11 +2544,12 @@ function settingsLines(cols, rows) {
   if (st.mode === "edit" && st.form.harness === "opencode" && st.form.thinking) notes.push([yellow, OPENCODE_NOTE]);
   // The form's and the prompt's key hints come from their KEYMAP tables (#37). + Import's
   // is "i mcc", short enough to keep "esc back" on the third line at 28 cells (#63).
+  // The picker's "␣ mark" comes last, so the rest stay as they were.
   const footer = hintLines(st.mode === "edit" ? (st.form.adding !== null ? ["type the model", "⏎ add", "esc cancel"]
     : KEYMAP.form.filter((e) => e.model === undefined || e.model === (st.field === MODEL_FIELD)).map((e) => e.hint))
     : st.mode === "prompt" ? KEYMAP.prompt.filter((e) => !e.custom || hasCustom(st)).map((e) => e.hint)
     : st.mode === "confirm" ? ["y delete", "any other key keeps it"]
-    : picking ? ["↑↓ select", "⏎ import", "? keys", "esc back"]
+    : picking ? ["↑↓ select", "⏎ import", "? keys", "esc back", "␣ mark"]
       : ["↑↓ select", "? keys", "n new", ...(st.mcc ? ["i mcc"] : []), st.promptSel === MERGE_ROW ? "e change" : "e edit", "d delete", "R/V assign", "esc back"], cols);
   const room = Math.max(0, rows - out.length - footer.length - 1);
   const said = notes.flatMap(([tone, text]) => wrap(text, cols - 2, Infinity).map((l) => [tone, l]));
@@ -2578,9 +2636,10 @@ function settingsLines(cols, rows) {
     body.push(""); owner.push(null);
     addButtons([["Save", () => savePrompt()], ...(hasCustom(st) ? [["Use default", useDefault]] : []), ["Cancel", () => settingsBack()]], "  ", 2, null);
   } else if (picking) {
-    // mcc's Claude Code profiles (#63), each with its tags at the right edge: mcc's
-    // default, and imported once a profile here starts it. The selected one has
-    // its Import button on a line of its own, as a profile has its buttons.
+    // mcc's Claude Code profiles (#63), each after its box, [x] when marked and ✓
+    // once imported, with its tags at the right edge: mcc's default, and imported
+    // once a profile here starts it. The selected one has its Import and Mark
+    // buttons on a line of their own, as a profile has its buttons.
     const picker = st.picker;
     const about = "Each becomes a profile here that starts it with mcc run --profile, with the model and thinking level of its own settings.";
     for (const l of wrap(about, cols - 4, Infinity)) { body.push("  " + dim(l)); owner.push(null); }
@@ -2588,15 +2647,19 @@ function settingsLines(cols, rows) {
       body.push(""); owner.push(null);
       const on = i === picker.sel, bar = on ? accent("▌") : " ", have = importedAs(st, m.name);
       const select = () => { picker.sel = i; Object.assign(st, { error: null }); draw(); };
-      // The name says which profile it is: it keeps up to 10 cells, and the tags give first.
+      // The name says which profile it is: it keeps up to 10 cells, and the tags give
+      // first. The box takes 4 cells before it.
+      const marked = picker.marked.has(m.name), box = have ? accent(" ✓ ") : marked ? accent("[x]") : dim("[ ]");
       const keep = Math.min(10, width(m.name));
-      const tag = fit([m.isDefault && "default", have && "imported"].filter(Boolean).join(" · "), Math.max(0, cols - 5 - keep));
-      const name = fit(m.name, Math.max(4, cols - width(tag) - 5));
+      const tag = fit([m.isDefault && "default", have && "imported"].filter(Boolean).join(" · "), Math.max(0, cols - 9 - keep));
+      const name = fit(m.name, Math.max(4, cols - width(tag) - 9));
       if (on) selStart = body.length;
-      body.push(`${bar} ${on ? bold(name) : name}${" ".repeat(Math.max(1, cols - 3 - width(name) - width(tag)))}${have ? accent(tag) : dim(tag)}`);
+      body.push(`${bar} ${box} ${on ? bold(name) : name}${" ".repeat(Math.max(1, cols - 7 - width(name) - width(tag)))}${have ? accent(tag) : dim(tag)}`);
       owner.push(select);
       if (on) {
-        addButtons([have ? ["Imported ✓", () => {}] : ["Import", () => importSelected()]], `${bar}   `, 4, select);
+        const n = picker.marked.size;
+        const mark = () => { toggleMark(st); draw(); };
+        addButtons(have ? [["Imported ✓", () => {}]] : [[n ? `Import ${n}` : "Import", () => importSelected()], [marked ? "Unmark" : "Mark", mark]], `${bar}   `, 4, select);
         selEnd = body.length;
       }
     });

@@ -5217,7 +5217,7 @@ const BUTTON_KEYS = {
   autopilot: [[/^☑/, "p"], [/^⚙/, "s"], [/^↻/, "r"], [/^↗/, "o"], [/^((Pull|Merge) requests|Issues)/, "1"], [/^▶ Start/, "⏎"], [/^✕ Cancel$/, "esc"]],
   menu: [[/^│/, "⏎"]],
   settings: [[/^\+ New$/, "n"], [/^\+ Import$/, "i"], [/^✕$/, "esc"], [/^(Use for Resolve|Resolve ✓)$/, "R"], [/^(Use for Review|Review ✓)$/, "V"], [/^Edit$/, "e"], [/^Delete$/, "d"], [/^Change$/, "e"]],
-  import: [[/^(Import|Imported ✓)$/, "⏎"], [/^✕$/, "esc"]],
+  import: [[/^(Import( \d+)?|Imported ✓)$/, "⏎"], [/^(Mark|Unmark)$/, "␣"], [/^✕$/, "esc"]],
   form: [[/^Save$/, "⏎"], [/^Test$/, "^T"], [/^(Cancel|✕)$/, "esc"]],
   prompt: [[/^Save$/, "⏎"], [/^Use default$/, "^R"], [/^(Cancel|✕)$/, "esc"]],
 };
@@ -5254,7 +5254,9 @@ test("every view's key table names each key once, and every button drawn in it h
       setupGitHub("issues");
       screen(() => key("s"));
       await picked(() => key("i"));
-    }, () => screen(() => key("jj"))],
+    }, () => screen(() => key("jj")),
+    // With profiles marked: Import 2, and Unmark on a marked one (#63).
+    () => screen(() => key("k k "))],
   };
   for (const [mode, setups] of Object.entries(frames)) {
     for (const [n, set] of setups.entries()) {
@@ -5909,14 +5911,14 @@ test("i lists mcc's Claude Code profiles to import, not Devin's, tagging mcc's d
   let lines = await picked(() => key("i"));
   assert.deepEqual(mccCalls(), ["usage --json-v2"]);
   assert.match(lines[0], /^ Import from mcc +✕ $/, lines.join("\n"));
-  const row = (name) => lines.find((l) => new RegExp(`^[▌ ] ${name} `).test(l ?? ""))?.trimEnd();
-  assert.match(row("cskonal"), /^▌ cskonal$/, lines.join("\n"));
-  assert.match(row("default"), /^ {2}default +default$/, lines.join("\n"));
-  assert.match(row("work"), /^ {2}work +imported$/, lines.join("\n"));
+  const row = (name) => lines.find((l) => new RegExp(`^[▌ ] (\\[[ x]\\]| ✓ ) ${name} `).test(l ?? ""))?.trimEnd();
+  assert.match(row("cskonal"), /^▌ \[ \] cskonal$/, lines.join("\n"));
+  assert.match(row("default"), /^ {2}\[ \] default +default$/, lines.join("\n"));
+  assert.match(row("work"), /^ {2} ✓ {2}work +imported$/, lines.join("\n"));
   assert.equal(row("devin"), undefined, lines.join("\n"));
-  // The selected one has its Import button; one imported already, Imported ✓.
-  assert.ok(lines.some((l) => /^▌ {4}Import\s*$/.test(l ?? "")), lines.join("\n"));
-  assert.match(lines.at(-1), /↑↓ select · ⏎ import · \? keys · esc back/);
+  // The selected one has its Import and Mark buttons; one imported already, Imported ✓.
+  assert.ok(lines.some((l) => /^▌ {4}Import {3}Mark\s*$/.test(l ?? "")), lines.join("\n"));
+  assert.match(lines.at(-1), /↑↓ select · ⏎ import · \? keys · esc back · ␣ mark/);
   lines = screen(() => key("jj"));
   assert.ok(lines.some((l) => /^▌ {4}Imported ✓\s*$/.test(l ?? "")), lines.join("\n"));
   // Enter on it imports nothing more, and runs nothing.
@@ -5993,7 +5995,7 @@ test("mcc's list of profiles, answering after the picker closed or opened again,
   lines = screen(draw);
   assert.equal(ui.settings.picker.loading, false);
   assert.equal(ui.settings.error, null);
-  assert.ok(lines.some((l) => /^▌ cskonal/.test(l ?? "")), lines.join("\n"));
+  assert.ok(lines.some((l) => /^▌ \[ \] cskonal/.test(l ?? "")), lines.join("\n"));
   assert.equal(storeText(), before);
   screen(() => key("\x1b\x1b"));
 });
@@ -6209,12 +6211,208 @@ test("in a narrow import picker, a profile's name stays readable and its tags gi
     const row = lines.find((l) => /^▌ /.test(l ?? ""));
     assert.ok(width(row) <= cols, `${cols}: ${row}`);
     // "default · imported" is cut, not the name.
-    assert.match(row, /^▌ cus_konal +default · im.*…$/, `${cols}:\n${lines.join("\n")}`);
+    assert.match(row, /^▌ {2}✓ {2}cus_konal +default.*…$/, `${cols}:\n${lines.join("\n")}`);
   }
   // Wide enough, both are whole.
   const lines = screenAt(40, 24, draw);
-  assert.ok(lines.some((l) => /^▌ cus_konal +default · imported$/.test(l ?? "")), lines.join("\n"));
+  assert.ok(lines.some((l) => /^▌ {2}✓ {2}cus_konal +default · imported$/.test(l ?? "")), lines.join("\n"));
   screen(() => key("\x1b\x1b"));
+});
+
+// ── Importing several mcc profiles at once (#63) ──
+// A picker row, without its trailing spaces: the box, then the name.
+const pickRow = (lines, name) => lines.find((l) => new RegExp(`^[▌ ] (\\[[ x]\\]| ✓ ) ${name}( |$)`).test(l ?? ""))?.trimEnd();
+// The store's writes: each save renames its temporary file onto it once.
+const storeWrites = (t) => {
+  const rename = t.mock.method(fs, "renameSync");
+  return () => rename.mock.calls.filter((c) => c.arguments[1] === storeFile()).length;
+};
+
+test("space marks and unmarks mcc profiles, a marks every one not imported or none, and one imported can't be marked (#63)", async (t) => {
+  const dir = home(t);
+  useProfiles(dir, [{ id: "w", name: "My work", harness: "mcc", mccProfile: "work" }]);
+  mccOnPath(t);
+  mccProfiles(MCC_USAGE);
+  setupGitHub("issues");
+  screen(() => key("s"));
+  await picked(() => key("i"));
+  let lines = screen(() => key(" "));
+  assert.deepEqual([...ui.settings.picker.marked], ["cskonal"]);
+  assert.match(pickRow(lines, "cskonal"), /^▌ \[x\] cskonal$/, lines.join("\n"));
+  assert.match(pickRow(lines, "default"), /^ {2}\[ \] default +default$/, lines.join("\n"));
+  assert.match(pickRow(lines, "work"), /^ {3}✓ {2}work +imported$/, lines.join("\n"));
+  // The button says how many enter imports, and the other one unmarks.
+  assert.ok(lines.some((l) => /^▌ {4}Import 1 {3}Unmark\s*$/.test(l ?? "")), lines.join("\n"));
+  lines = screen(() => key(" "));
+  assert.equal(ui.settings.picker.marked.size, 0);
+  assert.match(pickRow(lines, "cskonal"), /^▌ \[ \] cskonal$/, lines.join("\n"));
+  assert.ok(lines.some((l) => /^▌ {4}Import {3}Mark\s*$/.test(l ?? "")), lines.join("\n"));
+  // a: every one not imported, from one marked too; then, all marked, none.
+  screen(() => key(" "));
+  lines = screen(() => key("a"));
+  assert.deepEqual([...ui.settings.picker.marked].sort(), ["cskonal", "default"]);
+  assert.match(pickRow(lines, "default"), /^ {2}\[x\] default/, lines.join("\n"));
+  assert.ok(lines.some((l) => /^▌ {4}Import 2 {3}Unmark\s*$/.test(l ?? "")), lines.join("\n"));
+  screen(() => key("a"));
+  assert.equal(ui.settings.picker.marked.size, 0);
+  // One imported already: refused, as enter refuses it, and still Imported ✓ alone.
+  screen(() => key("a"));
+  lines = screen(() => key("jj "));
+  assert.ok(text(lines).includes("work is imported already, as My work: edit that profile instead"), lines.join("\n"));
+  assert.deepEqual([...ui.settings.picker.marked].sort(), ["cskonal", "default"]);
+  assert.ok(lines.some((l) => /^▌ {4}Imported ✓\s*$/.test(l ?? "")), lines.join("\n"));
+  // The key hints and ? name both keys.
+  assert.ok(text(lines.slice(-2)).includes("␣ mark"), lines.join("\n"));
+  lines = screenAt(60, 40, () => key("?"));
+  assert.ok(shows(lines, "␣ Mark or unmark it, to import several at once"), lines.join("\n"));
+  assert.ok(shows(lines, "a Mark every one not imported yet, or none"), lines.join("\n"));
+  screen(() => key("\x1b"));
+  assert.deepEqual(mccCalls(), ["usage --json-v2"]);
+  screen(() => key("\x1b\x1b"));
+});
+
+test("with profiles marked, no picker row is wider than the pane at 28, 30, 32 and 40 cells, and names stay readable (#63)", async (t) => {
+  const dir = home(t);
+  useProfiles(dir, [{ id: "cus-konal", name: "mcc cus_konal", harness: "mcc", mccProfile: "cus_konal" }]);
+  mccOnPath(t);
+  mccProfiles([{ name: "cus_konal", provider: "claude", is_default: true, usage: { status: "ok" } }, ...MCC_USAGE.filter((m) => !m.is_default),
+    { name: "a-rather-long-profile-name", provider: "claude", is_default: false, usage: { status: "ok" } }]);
+  setupGitHub("issues");
+  screen(() => key("s"));
+  await picked(() => key("i"));
+  screen(() => key("a"));
+  for (const cols of [28, 30, 32, 40]) {
+    const lines = screenAt(cols, 30, draw);
+    for (const l of lines) assert.ok(width(l ?? "") <= cols, `${cols}: ${l}`);
+    assert.match(pickRow(lines, "cus_konal"), /^▌ {2}✓ {2}cus_konal +default/, `${cols}:\n${lines.join("\n")}`);
+    assert.match(pickRow(lines, "cskonal"), /^ {2}\[x\] cskonal$/, `${cols}:\n${lines.join("\n")}`);
+    assert.ok(lines.some((l) => /^ {2}\[x\] a-rather-l/.test(l ?? "")), `${cols}:\n${lines.join("\n")}`);
+    assert.ok(text(lines.slice(-3)).includes("esc back"), `${cols}:\n${lines.join("\n")}`);
+  }
+  screen(() => key("\x1b\x1b"));
+});
+
+test("enter imports every marked mcc profile in one write, each id its own, then selects the first (#63)", async (t) => {
+  const dir = home(t, {
+    ".mcc/profiles/a/settings.json": JSON.stringify({ model: "opus", effortLevel: "high" }),
+    ".mcc/profiles/b/settings.json": JSON.stringify({ model: "sonnet" }),
+    ".mcc/profiles/w/settings.json": JSON.stringify({}),
+  });
+  useProfiles(dir, [CC]);
+  mccOnPath(t);
+  // Two names that make the same id, and one more.
+  const list = ["cus_konal", "cus-konal", "work"].map((name) => ({ name, provider: "claude", is_default: false, usage: { status: "ok" } }));
+  mccProfiles(list, { cus_konal: path.join(dir, ".mcc/profiles/a"), "cus-konal": path.join(dir, ".mcc/profiles/b"), work: path.join(dir, ".mcc/profiles/w") });
+  setupGitHub("issues");
+  screen(() => key("s"));
+  await picked(() => key("i"));
+  // Marked out of order, imported in the list's.
+  screen(() => key("j k "));
+  calls.length = 0;
+  const writes = storeWrites(t);
+  let lines = await picked(() => key("\r"));
+  assert.deepEqual(mccCalls(), ["env -q --shell bash cus_konal", "env -q --shell bash cus-konal"]);
+  assert.equal(writes(), 1);
+  assert.deepEqual(JSON.parse(storeText()).profiles, [CC,
+    { id: "cus-konal", name: "mcc cus_konal", harness: "mcc", mccProfile: "cus_konal", model: "opus", thinking: "high" },
+    { id: "cus-konal-2", name: "mcc cus-konal", harness: "mcc", mccProfile: "cus-konal", model: "sonnet" }]);
+  assert.ok(text(lines).includes("Imported 2 profiles from mcc: cus_konal, cus-konal"), lines.join("\n"));
+  assert.equal(ui.settings.mode, "list");
+  assert.ok(lines.some((l) => /^▌ mcc cus_konal +cus-konal$/.test(l?.trimEnd() ?? "")), lines.join("\n"));
+  // With none marked, enter imports the selected one alone, as before.
+  await picked(() => key("i"));
+  assert.equal(ui.settings.picker.marked.size, 0);
+  lines = await picked(() => key("jj\r"));
+  assert.equal(writes(), 2);
+  assert.ok(text(lines).includes("Imported work as mcc work: mcc profile work"), lines.join("\n"));
+  assert.deepEqual(JSON.parse(storeText()).profiles.map((p) => p.id), ["cc", "cus-konal", "cus-konal-2", "work"]);
+});
+
+test("when some marked mcc profiles fail, the others are saved, and the failed ones say why and stay marked (#63)", async (t) => {
+  const dir = home(t, { ".mcc/profiles/cus_konal/settings.json": JSON.stringify({ model: "opus" }), ".claude/settings.json": JSON.stringify({ effortLevel: "low" }) });
+  useProfiles(dir, [CC]);
+  mccOnPath(t);
+  // work has no folder: its mcc env fails. devin isn't listed.
+  mccProfiles(MCC_USAGE, { cskonal: path.join(dir, ".mcc/profiles/cus_konal"), default: null });
+  setupGitHub("issues");
+  screen(() => key("s"));
+  await picked(() => key("i"));
+  screen(() => key("a"));
+  const writes = storeWrites(t);
+  let lines = await picked(() => key("\r"));
+  assert.equal(writes(), 1);
+  assert.deepEqual(JSON.parse(storeText()).profiles.map((p) => p.mccProfile), [undefined, "cskonal", "default"]);
+  assert.ok(text(lines).includes("Can't import work: mcc env failed: ✗ error: no profile named \"work\""), lines.join("\n"));
+  assert.ok(text(lines).includes("Imported 2 profiles from mcc: cskonal, default"), lines.join("\n"));
+  // The picker stays, with what's left marked and the others ✓.
+  assert.equal(ui.settings.mode, "import");
+  assert.deepEqual([...ui.settings.picker.marked], ["work"]);
+  assert.match(pickRow(lines, "cskonal"), /^▌ {2}✓ {2}cskonal +imported$/, lines.join("\n"));
+  assert.match(pickRow(lines, "work"), /^ {2}\[x\] work$/, lines.join("\n"));
+  assert.ok(lines.some((l) => /^▌ {4}Imported ✓\s*$/.test(l ?? "")), lines.join("\n"));
+  // All failing: nothing written, each named.
+  mccProfiles(MCC_USAGE, {});
+  screen(() => key("jj"));
+  lines = await picked(() => key("\r"));
+  assert.equal(writes(), 1);
+  assert.ok(text(lines).includes("Can't import work: mcc env failed"), lines.join("\n"));
+  screen(() => key("\x1b\x1b"));
+});
+
+test("a read-only profiles file isn't written by importing several, and they stay marked (#63)", async (t) => {
+  const dir = home(t);
+  const newer = JSON.stringify({ version: 8, profiles: [], assign: {} });
+  fs.writeFileSync(useProfiles(dir, []), newer);
+  mccOnPath(t);
+  mccProfiles(MCC_USAGE, { cskonal: path.join(dir, ".claude"), default: null });
+  setupGitHub("issues");
+  screen(() => key("s"));
+  await picked(() => key("i"));
+  screen(() => key(" j "));
+  const lines = await picked(() => key("\r"));
+  assert.ok(shows(lines, "Not saved: The profiles file is version 8, not 1, 2, 3, 4, 5, 6 or 7: it is read only here"), lines.join("\n"));
+  assert.ok(!text(lines).includes("Imported"), lines.join("\n"));
+  assert.equal(storeText(), newer);
+  assert.equal(ui.settings.mode, "import");
+  assert.deepEqual([...ui.settings.picker.marked], ["cskonal", "default"]);
+  screen(() => key("\x1b\x1b"));
+});
+
+test("importing several says which one it waits for, and stops, saving nothing, when the picker closes meanwhile (#63)", async (t) => {
+  const dir = home(t, { ".mcc/profiles/cus_konal/settings.json": JSON.stringify({ model: "opus" }) });
+  useProfiles(dir, [CC]);
+  mccOnPath(t);
+  mccProfiles(MCC_USAGE, { cskonal: path.join(dir, ".mcc/profiles/cus_konal"), default: null, work: null });
+  holdMcc(t, (args) => args[0] === "env");
+  const before = storeText();
+  const env = { code: 0, stdout: `export CLAUDE_CONFIG_DIR='${path.join(dir, ".mcc/profiles/cus_konal")}'\nunset MCC_PROFILE\n` };
+  setupGitHub("issues");
+  screen(() => key("s"));
+  await picked(() => key("i"));
+  screen(() => key("a"));
+  let lines = screen(() => key("\r"));
+  await heldCount(1);
+  lines = screen(draw);
+  assert.ok(text(lines).includes("Importing cskonal from mcc… (1 of 3)"), lines.join("\n"));
+  // Marks wait too, as enter does.
+  screen(() => key(" a"));
+  assert.equal(ui.settings.picker.marked.size, 3);
+  held[0].answer(env);
+  await heldCount(2);
+  lines = screen(draw);
+  assert.ok(text(lines).includes("Importing default from mcc… (2 of 3)"), lines.join("\n"));
+  // Closed before the second answers: the third isn't asked for, and nothing is saved.
+  screen(() => key("\x1b"));
+  held[1].answer(env);
+  await settle();
+  lines = screen(draw);
+  assert.equal(held.length, 2);
+  assert.equal(ui.settings.mode, "list");
+  assert.equal(ui.settings.error, null);
+  assert.equal(ui.settings.info, null);
+  assert.ok(!text(lines).includes("Imported"), lines.join("\n"));
+  assert.equal(storeText(), before);
+  screen(() => key("\x1b"));
 });
 
 test("with mcc found, Settings and the import picker keep their title and key hints whole at 28, 30, 31, 32 and 40 cells (#63)", async (t) => {
@@ -6239,9 +6437,9 @@ test("with mcc found, Settings and the import picker keep their title and key hi
     await picked(() => key("i"));
     lines = at(draw);
     foot = text(lines.slice(-2));
-    for (const hint of ["↑↓ select", "⏎ import", "? keys", "esc back"]) assert.ok(foot.includes(hint), `${cols}: ${foot}`);
+    for (const hint of ["↑↓ select", "⏎ import", "? keys", "esc back", "␣ mark"]) assert.ok(foot.includes(hint), `${cols}: ${foot}`);
     assert.ok(!foot.includes("…"), `${cols}: ${foot}`);
-    assert.ok(lines.some((l) => /^▌ cskonal/.test(l ?? "")) && lines.some((l) => /^ {2}work/.test(l ?? "")), `${cols}:\n${lines.join("\n")}`);
+    assert.ok(lines.some((l) => /^▌ \[ \] cskonal/.test(l ?? "")) && lines.some((l) => /^ {2}\[ \] work/.test(l ?? "")), `${cols}:\n${lines.join("\n")}`);
     screen(() => key("\x1b\x1b"));
   }
 });
