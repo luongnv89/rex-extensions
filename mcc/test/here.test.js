@@ -230,14 +230,16 @@ test("no mark, and the usage rows as before, when mcc here fails in any way (#64
     "names a profile that isn't in the list": ok(here.set("gone", "/code/work")),
   };
   for (const [why, reply] of Object.entries(cases)) {
-    scene(t, { dirs: { "block:top": "/code/work" }, answers: { "/code/work": reply } });
-    await p.load();
-    await p.follow();
-    assert.equal(hereCalls().length, 1, why);
-    assert.deepEqual(marked(), [], why);
-    assert.equal(p.ui.error, null, why);
-    assert.equal(screen().length, 3, `${why}: every account still shows`);
-    assert.deepEqual(screen().map((l) => l[0]), [" ", " ", " "], why);
+    await t.test(why, async (t) => {
+      scene(t, { dirs: { "block:top": "/code/work" }, answers: { "/code/work": reply } });
+      await p.load();
+      await p.follow();
+      assert.equal(hereCalls().length, 1);
+      assert.deepEqual(marked(), []);
+      assert.equal(p.ui.error, null);
+      assert.equal(screen().length, 3, "every account still shows");
+      assert.deepEqual(screen().map((l) => l[0]), [" ", " ", " "]);
+    });
   }
 });
 
