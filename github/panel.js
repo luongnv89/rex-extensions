@@ -1541,7 +1541,10 @@ const KEYMAP = {
     binding("q esc", "close the menu"),
   ],
   settings: [
-    binding("↑ ↓ j k", "select a profile, a prompt, a button label or the merge mode"),
+    binding("1 2 3 4", "the Profiles, Prompts, Button labels or Merging tab"),
+    binding("⇥ → l", "the next tab, from the last to the first"),
+    binding("⇧⇥ ← h", "the previous tab"),
+    binding("↑ ↓ j k", "select a row in the tab"),
     binding("n", "+ New"),
     binding("i", "+ Import a profile from mcc", { mcc: true }),
     binding("e ⏎", "Edit, or Change the merge mode"),
@@ -1701,12 +1704,7 @@ function draw() {
 
   // The switch: Pull requests (or Merge requests) N / Issues N.
   const half = Math.floor(cols / 2);
-  const segment = (view, label, count, w) => {
-    const text = fit(ui.fetched && !ui.errors[view] ? `${label} ${count}` : label, w - 2);
-    const padL = Math.floor((w - width(text)) / 2), padR = w - width(text) - padL;
-    const cell = " ".repeat(padL) + text + " ".repeat(padR);
-    return ui.view === view ? invert(bold(cell)) : muted(cell);
-  };
+  const segment = (view, label, count, w) => tabCell(ui.fetched && !ui.errors[view] ? `${label} ${count}` : label, w, ui.view === view);
   out.push(segment("prs", ui.forge?.prs ?? "Pull requests", ui.prs.length, half) + segment("issues", "Issues", ui.issues.length, cols - half));
   ui.buttons.push({ row: out.length - 1, from: 0, to: half, action: () => pick("prs") });
   ui.buttons.push({ row: out.length - 1, from: half, to: cols, action: () => pick("issues") });
@@ -1881,18 +1879,25 @@ const PROMPT_FIELDS = [
   ...P.PROMPT_KEYS.map((a) => ({ key: "prompt", word: P.PROMPT_LABELS[a] })),
   ...P.LABEL_KEYS.map((a) => ({ key: "label", word: P.LABEL_FIELDS[a] })),
 ];
-// The button label rows, under the prompt rows, and the merge mode's (#39), under
-// them: ↑↓ and the wheel go through BELOW_ROWS in this order after the last profile.
-// A label row is named by its action: label:resolve.
+// A button label row is named by its action: label:resolve. The merge mode's (#39)
+// is MERGE_ROW.
 const LABEL_ROWS = P.LABEL_KEYS.map((a) => `label:${a}`);
 const labelRow = (row) => (LABEL_ROWS.includes(row) ? row.slice("label:".length) : null);
 const MERGE_ROW = "merge";
-const BELOW_ROWS = [...P.PROMPT_KEYS, ...LABEL_ROWS, MERGE_ROW];
-// Each section's first row, which has its heading over it and no blank line before it.
-const FIRST_ROWS = [BELOW_ROWS[0], LABEL_ROWS[0], MERGE_ROW];
+// Settings' tabs (#67), each one area's rows, as promptSel names them: null for the
+// profiles, which st.sel picks between. `short` is the name kept in a narrow pane.
+// The tab showing is the selected row's, so a save that selects a row, or a profile,
+// shows its tab without being told.
+const TABS = [
+  { name: "Profiles", short: "Profiles", rows: [null] },
+  { name: "Prompts", short: "Prompts", rows: P.PROMPT_KEYS },
+  { name: "Button labels", short: "Labels", rows: LABEL_ROWS },
+  { name: "Merging", short: "Merging", rows: [MERGE_ROW] },
+];
+const tabOf = (promptSel) => TABS.findIndex((t) => t.rows.includes(promptSel));
 
-// `promptSel` is the row selected under the profiles: an action's prompt, its button
-// label's, or MERGE_ROW, the merge mode's (#39); null while a profile is. `prompt` is
+// `promptSel` is the row selected in a tab other than Profiles: an action's prompt,
+// its button label's, or MERGE_ROW, the merge mode's (#39); null on Profiles. `prompt` is
 // the prompt or the label being edited: { action, kind, text }, kind "prompt" or "label".
 // `scroll` is how far the wheel moved the form or the prompt from where it shows.
 // `mcc` is the mcc binary, found once as Settings opens, or null: + Import shows
@@ -2361,6 +2366,11 @@ function settingsKey(m) {
   const at = P.PROMPT_KEYS.indexOf(st.promptSel), merge = st.promptSel === MERGE_ROW, label = labelRow(st.promptSel);
   if (UP.includes(k) || k === "k") step(st, -1);
   else if (DOWN.includes(k) || k === "j") step(st, 1);
+  // The tabs (#67): 1 to 4 open one, ⇥ → l the next and ⇧⇥ ← h the previous, past
+  // the last back to the first, as ⇥ goes round the lists.
+  else if (/^\d$/.test(k) && k >= 1 && k <= TABS.length) switchTab(st, Number(k) - 1);
+  else if (k === "\t" || k === "\x1b[C" || k === "l") switchTab(st, (tabOf(st.promptSel) + 1) % TABS.length);
+  else if (k === "\x1b[Z" || k === "\x1b[D" || k === "h") switchTab(st, (tabOf(st.promptSel) + TABS.length - 1) % TABS.length);
   else if (k === "n") return editProfile(null);
   else if (k === "i" && st.mcc) return openImport();
   else if (k === "e" || k === "\r" || k === "\n") return merge ? toggleMergeMode() : label ? editLabel(label) : at >= 0 ? editPrompt(st.promptSel) : editSelected();
@@ -2377,20 +2387,22 @@ function settingsKey(m) {
   draw();
 }
 
-// ↑ and ↓ in the list, and the wheel: from the last profile on to the prompt rows,
-// the button label rows, then the merge mode's (#39), and back.
+// ↑ and ↓ in the list, and the wheel, through the tab's rows only, stopping at
+// either end: the next tab is a key or a click away (#67).
 function step(st, by) {
-  const at = BELOW_ROWS.indexOf(st.promptSel);
-  if (by < 0) {
-    if (at >= 0) st.promptSel = BELOW_ROWS[at - 1] ?? null;
-    else st.sel = Math.max(0, st.sel - 1);
-  } else if (at >= 0) st.promptSel = BELOW_ROWS[Math.min(at + 1, BELOW_ROWS.length - 1)];
-  else if (st.sel === entries().length - 1) st.promptSel = BELOW_ROWS[0];
-  else st.sel += 1;
+  const rows = TABS[tabOf(st.promptSel)].rows;
+  if (rows[0] === null) st.sel = Math.max(0, Math.min(entries().length - 1, st.sel + by));
+  else st.promptSel = rows[Math.max(0, Math.min(rows.length - 1, rows.indexOf(st.promptSel) + by))];
 }
 
-// The wheel: in the list it moves the selection, so it reaches the prompt rows, as
-// it does in the import's list (#63); in the form and the prompt it scrolls, so
+// A tab's key or its click (#67): its first row, or on Profiles the profile selected
+// before. Back in the list, as a row's click is: a delete still asking is taken back.
+function switchTab(st, i) {
+  Object.assign(st, { promptSel: TABS[i].rows[0], mode: "list", error: null });
+}
+
+// The wheel: in the list it moves the selection through the tab's rows, as it does
+// in the import's list (#63); in the form and the prompt it scrolls, so
 // their buttons can be reached in a short pane. A delete question waits for its key.
 function wheel(st, by) {
   if (st.mode === "confirm") return;
@@ -2503,28 +2515,61 @@ function hintLines(hints, cols) {
   return lines.map((l) => dim(fit(` ${l.join(" · ")}`, cols)));
 }
 
+// One cell of a switch, the lists' or Settings' tabs (#67): the text centered in `w`
+// cells, inverted and bold when it is the one showing, muted otherwise.
+function tabCell(label, w, on) {
+  const text = fit(label, w - 2);
+  const padL = Math.floor((w - width(text)) / 2), padR = w - width(text) - padL;
+  const cell = " ".repeat(padL) + text + " ".repeat(padR);
+  return on ? invert(bold(cell)) : muted(cell);
+}
+
+// Settings' tabs (#67), each name with a cell either side and the room left shared
+// out, while every name fits, then with the short names. Narrower, the tabs not
+// showing keep only their number, the key that opens them, and the one showing
+// takes the rest of the line. `row` is the strip's row in the pane, for its clicks.
+function tabStrip(st, cols, row) {
+  const at = tabOf(st.promptSel), n = TABS.length;
+  const names = ["name", "short"].map((k) => TABS.map((t) => t[k])).find((l) => l.reduce((w, t) => w + width(t) + 2, 0) <= cols);
+  let cells;
+  if (names) {
+    const extra = cols - names.reduce((w, t) => w + width(t) + 2, 0);
+    cells = names.map((text, i) => ({ text, w: width(text) + 2 + Math.floor(extra / n) + (i < extra % n ? 1 : 0) }));
+  } else cells = TABS.map((t, i) => (i === at ? { text: t.name, w: cols - 3 * (n - 1) } : { text: String(i + 1), w: 3 }));
+  let x = 0;
+  const line = cells.map(({ text, w }, i) => {
+    ui.buttons.push({ row, from: x, to: x + w, action: () => { switchTab(st, i); draw(); } });
+    x += w;
+    return tabCell(text, w, i === at);
+  }).join("");
+  return [line, dim("─".repeat(cols))];
+}
+
 // The profile views' lines; their own buttons replace the rows' and the header's.
 function settingsLines(cols, rows) {
   const st = ui.settings, out = [];
   ui.rows = [];
   ui.buttons = [];
   const editing = st.mode === "edit" || st.mode === "prompt", picking = st.mode === "import";
-  const p = editing ? null : selectedEntry(st);
-  // Header: the view's name, + New in the list, after + Import while mcc is found
-  // (#63), and ✕ (back) at the right edge. In a pane too narrow for the name to stay
-  // whole beside + Import, + Import gives way: i, in the key hints and ?, still imports.
+  const p = editing ? null : selectedEntry(st), tab = editing || picking ? null : tabOf(st.promptSel);
+  // Header: the view's name, + New on the Profiles tab, after + Import while mcc is
+  // found (#63), and ✕ (back) at the right edge. In a pane too narrow for the name to
+  // stay whole beside + Import, + Import gives way: i, in the key hints and ?, still
+  // imports. n and i work from every tab, and a profile saved shows on Profiles (#67).
   const title = st.mode === "edit" ? (st.form.prev ? `Edit profile ${st.form.prev}` : "New profile")
     : st.mode === "prompt" ? editTarget(st.prompt).title : picking ? "Import from mcc" : "⚙ Settings";
-  const tools = editing || picking ? [] : [[" + Import ", () => openImport()], [" + New ", () => editProfile(null)]];
+  const tools = tab === 0 ? [[" + Import ", () => openImport()], [" + New ", () => editProfile(null)]] : [];
   tools.push([" ✕ ", () => settingsBack()]);
   const toolsWidth = () => tools.reduce((w, [t]) => w + width(t), 0);
-  if (!editing && !picking && (!st.mcc || width(title) + 2 + toolsWidth() > cols)) tools.shift();
+  if (tab === 0 && (!st.mcc || width(title) + 2 + toolsWidth() > cols)) tools.shift();
   const right = toolsWidth();
   const heading = fit(title, cols - right - 2);
   out.push(` ${bold(heading)}${" ".repeat(Math.max(0, cols - 1 - width(heading) - right))}${dim(tools.map(([t]) => t).join(""))}`);
   let x = cols - right;
   for (const [t, action] of tools) { ui.buttons.push({ row: 0, from: x, to: x + width(t), action }); x += width(t); }
   out.push(dim("─".repeat(cols)));
+  // The list's tabs under it (#67); the form, the prompt and the import show alone.
+  if (tab !== null) out.push(...tabStrip(st, cols, out.length));
 
   // What to know or do, most pressing first: the delete question, what a change did
   // or why it failed, then the store's warnings and the OpenCode note. The header,
@@ -2544,13 +2589,15 @@ function settingsLines(cols, rows) {
   if (st.mode === "edit" && st.form.harness === "opencode" && st.form.thinking) notes.push([yellow, OPENCODE_NOTE]);
   // The form's and the prompt's key hints come from their KEYMAP tables (#37). + Import's
   // is "i mcc", short enough to keep "esc back" on the third line at 28 cells (#63).
-  // The picker's "␣ mark" comes last, so the rest stay as they were.
+  // The picker's "␣ mark" comes last, so the rest stay as they were. Tabs other than
+  // Profiles name ⇥ in the room n, d and R/V leave (#67); Merging's one row needs no ↑↓.
   const footer = hintLines(st.mode === "edit" ? (st.form.adding !== null ? ["type the model", "⏎ add", "esc cancel"]
     : KEYMAP.form.filter((e) => e.model === undefined || e.model === (st.field === MODEL_FIELD)).map((e) => e.hint))
     : st.mode === "prompt" ? KEYMAP.prompt.filter((e) => !e.custom || hasCustom(st)).map((e) => e.hint)
     : st.mode === "confirm" ? ["y delete", "any other key keeps it"]
     : picking ? ["↑↓ select", "⏎ import", "? keys", "esc back", "␣ mark"]
-      : ["↑↓ select", "? keys", "n new", ...(st.mcc ? ["i mcc"] : []), st.promptSel === MERGE_ROW ? "e change" : "e edit", "d delete", "R/V assign", "esc back"], cols);
+      : tab === 0 ? ["↑↓ select", "? keys", "n new", ...(st.mcc ? ["i mcc"] : []), "e edit", "d delete", "R/V assign", "esc back"]
+        : [...(TABS[tab].rows.length > 1 ? ["↑↓ select"] : []), "⇥ tab", "? keys", st.promptSel === MERGE_ROW ? "e change" : "e edit", "esc back"], cols);
   const room = Math.max(0, rows - out.length - footer.length - 1);
   const said = notes.flatMap(([tone, text]) => wrap(text, cols - 2, Infinity).map((l) => [tone, l]));
   if (said.length > room) {
@@ -2562,9 +2609,7 @@ function settingsLines(cols, rows) {
 
   // Each line's click: the whole line's, and its buttons' first.
   const body = [], owner = [], hits = [];
-  // `selHead` is the heading over a section's selected first row, kept in view with
-  // the row while both fit; `ownEnd` is where that row's lines end.
-  let selStart = 0, selEnd = 0, selHead = null, ownEnd = 0;
+  let selStart = 0, selEnd = 0;
   const addButtons = (buttons, prefix, at, own) => {
     for (const l of buttonLines(buttons, cols, prefix, at)) { hits[body.length] = l.hits; body.push(l.text); owner.push(own); }
   };
@@ -2664,22 +2709,10 @@ function settingsLines(cols, rows) {
       }
     });
   } else {
-    // Four sections, each under a heading ruled to the right edge: the profiles,
-    // the prompt each action sends, its button's label, and what a merge does. A blank line before each
-    // heading but the first sets them apart; ↑↓ still walks every row in turn.
-    // A section's first row, when selected, keeps its heading in view if they fit.
-    let headAt = 0;
-    const section = (title) => {
-      if (body.length) { body.push(""); owner.push(null); }
-      headAt = body.length;
-      // The rule stops a cell short of the edge, where the rows' right tags end.
-      const t = fit(title, cols - 2);
-      body.push(` ${bold(t)} ${dim("─".repeat(Math.max(0, cols - 3 - width(t))))}`);
-      owner.push(null);
-    };
+    // The tab's rows only (#67): the profiles, the prompt each action sends, its
+    // button's label, or what a merge does. The strip above names the area.
     const using = (id) => P.ACTION_KEYS.filter((a) => (st.store.assign[a] ?? P.DEFAULT_PROFILE.id) === id);
-    section("PROFILES");
-    entries().forEach((q, i) => {
+    if (tab === 0) entries().forEach((q, i) => {
       if (i) { body.push(""); owner.push(null); }
       const on = i === st.sel && !st.promptSel, bar = on ? accent("▌") : " ";
       const select = () => { Object.assign(st, { sel: i, promptSel: null, error: null, mode: "list" }); draw(); };
@@ -2693,7 +2726,7 @@ function settingsLines(cols, rows) {
       const tag = fit(down ? idTag : together, Math.max(1, cols - 5 - keep)), below = down ? fit(tags, cols - 4) : "";
       const shownTag = tag.length > idTag.length && tag.startsWith(idTag) ? dim(idTag) + accent(tag.slice(idTag.length)) : dim(tag);
       const name = fit(q.name, Math.max(4, cols - width(tag) - 5));
-      if (on) { selStart = body.length; if (!i) selHead = headAt; }
+      if (on) selStart = body.length;
       body.push(`${bar} ${on ? bold(name) : name}${" ".repeat(Math.max(1, cols - 3 - width(name) - width(tag)))}${shownTag}`);
       // A description that only repeats the name isn't shown again: with no tags to
       // move down either, the profile is then one line.
@@ -2712,20 +2745,19 @@ function settingsLines(cols, rows) {
             ...(fixed ? [] : [["Edit", () => editSelected()], ["Delete", () => askDelete()]]),
           ];
         addButtons(buttons, `${bar}   `, 4, select);
-        selEnd = ownEnd = body.length;
+        selEnd = body.length;
       }
     });
-    // With the last profile selected, the prompt rows under it show too, as far as
-    // they fit: the wheel or ↓ goes on to them.
-    if (!st.promptSel && st.sel === entries().length - 1) selEnd = Infinity;
-    // Each action's prompt, then Auto-pilot's (#31): your own, or the default it
-    // sends without one; then the merge mode (#39), in plain words. A row's state
-    // ("default" dim, "custom" in the accent) sits at the right edge. The selected
-    // row's button (Edit, or Change) goes there, the state just before it, so which
-    // prompt is in use still shows; a pane too narrow for the whole name, the state
-    // and the button drops the state. A click on the row only selects it.
-    const belowRow = (key, title, value, state, button, press) => {
-      if (!FIRST_ROWS.includes(key)) { body.push(""); owner.push(null); }
+    // A row of the other tabs: on Prompts each action's prompt, then Auto-pilot's
+    // (#31), your own or the default it sends without one; on Merging the merge mode
+    // (#39), in plain words. A blank line sets each apart from the one above. A
+    // row's state ("default" dim, "custom" in the accent) sits at the right edge.
+    // The selected row's button (Edit, or Change) goes there, the state just before
+    // it, so which prompt is in use still shows; a pane too narrow for the whole
+    // name, the state and the button drops the state. A click on the row only
+    // selects it.
+    const settingRow = (key, title, value, state, button, press) => {
+      if (body.length) { body.push(""); owner.push(null); }
       const on = st.promptSel === key && st.mode === "list", bar = on ? accent("▌") : " ", b = ` ${button} `;
       const select = () => { Object.assign(st, { promptSel: key, error: null, mode: "list" }); draw(); };
       const tag = state && (!on || 2 + width(title) + 1 + width(state[1]) + 1 + width(b) <= cols - 1) ? state : null;
@@ -2735,37 +2767,32 @@ function settingsLines(cols, rows) {
       const gap = " ".repeat(Math.max(1, cols - 2 - width(label) - right));
       if (on) {
         selStart = body.length;
-        if (FIRST_ROWS.includes(key)) selHead = headAt;
         const x = cols - 1 - width(b);
         hits[body.length] = [{ from: x, to: x + width(b), action: press }];
         body.push(`${bar} ${bold(label)}${gap}${tag ? tagged + " " : ""}${invert(b)}`);
       } else body.push(`${bar} ${label}${tag ? gap + tagged : ""}`);
       body.push(`${bar}   ${value}`);
       owner.push(select, select);
-      if (on) selEnd = ownEnd = body.length;
+      if (on) selEnd = body.length;
     };
-    section("PROMPTS");
-    for (const a of P.PROMPT_KEYS) {
+    if (tab === 1) for (const a of P.PROMPT_KEYS) {
       const custom = P.resolvePrompt(st.store, a);
-      belowRow(a, actionName(a), custom ? fit(custom, cols - 4) : dim(fit(DEFAULT_PROMPTS[a], cols - 4)),
+      settingRow(a, actionName(a), custom ? fit(custom, cols - 4) : dim(fit(DEFAULT_PROMPTS[a], cols - 4)),
         custom ? [accent, "custom"] : [dim, "default"], "Edit", () => editPrompt(a));
     }
     // Each button's label: under the action's own name, the button as it reads,
     // Resolve #N or ☑ Auto-pilot, with your label or its name.
-    section("BUTTON LABELS");
-    for (const a of P.LABEL_KEYS) {
+    if (tab === 2) for (const a of P.LABEL_KEYS) {
       const custom = P.resolveLabel(st.store, a), name = P.buttonLabel(st.store, a);
       const reads = fit(a === AUTOPILOT.key ? `☑ ${name}` : `${name} #N`, cols - 4);
-      belowRow(`label:${a}`, P.DEFAULT_LABELS[a], custom ? reads : dim(reads),
+      settingRow(`label:${a}`, P.DEFAULT_LABELS[a], custom ? reads : dim(reads),
         custom ? [accent, "custom"] : [dim, "default"], "Edit", () => editLabel(a));
     }
-    section("MERGING");
-    belowRow(MERGE_ROW, "After a merge", fit(MERGE_MODES[mergeMode()], cols - 4), null, "Change", () => toggleMergeMode());
+    if (tab === 3) settingRow(MERGE_ROW, "After a merge", fit(MERGE_MODES[mergeMode()], cols - 4), null, "Change", () => toggleMergeMode());
   }
   // Keep the selected entry (or field) in view. A prompt keeps its end in view: the
   // line you type on, and its reason. The wheel scrolls the form and the prompt
   // from there.
-  if (selHead !== null && ownEnd - selHead <= height) selStart = selHead;
   const most = Math.max(0, body.length - height);
   const shown = st.mode === "prompt" ? Math.max(selStart, selEnd - height) : Math.min(selStart, Math.max(0, Math.min(selEnd, body.length) - height));
   const top = editing ? Math.max(0, Math.min(most, shown + (st.scroll || 0))) : shown;
