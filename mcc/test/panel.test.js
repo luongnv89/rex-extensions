@@ -841,3 +841,23 @@ test("an API-key profile needs no login: no notice, no ⚠, no issue from a refr
   p.ui.issues = {};
   assert.deepEqual(p.noticeLines(NOW).map((n) => n.text), ["work: not logged in · mcc login work"]);
 });
+
+test("accounts are ordered by weekly use, least first, with API-key profiles last", () => {
+  const doc = JSON.stringify({
+    schema: 2,
+    profiles: [
+      { name: "api", auth: "api_key", usage: { status: "unavailable", reason: "no_data", est_cost_usd: 1 } },
+      { name: "heavy", usage: { status: "ok", five_hour: { percent: 5 }, weekly: { percent: 70 } } },
+      { name: "gone", usage: { status: "unavailable", reason: "token_expired" } },
+      { name: "light", is_default: true, usage: { status: "ok", five_hour: { percent: 90 }, weekly: { percent: 10 } } },
+      { name: "devin", provider: "devin", usage: { status: "ok", daily: { percent: 1 }, weekly: { percent: 40 } } },
+      { name: "tied", usage: { status: "ok", weekly: { percent: 70 } } },
+    ],
+  });
+  const rows = p.ordered(p.parse(doc));
+  assert.deepEqual(rows.map((r) => r.name), ["light", "devin", "heavy", "tied", "gone", "api"]);
+  assert.deepEqual(rows.map((r) => r.index), [1, 2, 3, 4, 5, 6]);
+  // parse itself keeps mcc's order and numbers.
+  assert.deepEqual(p.parse(doc).map((r) => r.index), [1, 2, 3, 4, 5, 6]);
+  assert.equal(p.parse(doc)[0].name, "api");
+});

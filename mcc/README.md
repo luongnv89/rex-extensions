@@ -6,11 +6,11 @@ The 5-hour and weekly Claude Code usage of every account [mcc](https://github.co
  ▾ mcc usage                                                            updated 4m ago  ↻ refresh
  cpu 12% · mem 27.0/32.0 GB · disk 822.1/926.4 GB 89% · net ↓1.2 MB/s ↑40 KB/s
 ─────────────────────────────────────────────────────────────────────────────────────────────────
- 1 default  5h █░░░░░░░░░░░░░░░░░░░   5%   3h17    wk ███░░░░░░░░░░░░░░░░░  17%   4d4h
- 2 csdaisy  5h ░░░░░░░░░░░░░░░░░░░░   0%           wk ███░░░░░░░░░░░░░░░░░  13%   21h57  ⚠ 1h ago
+ 1 csdaisy  5h ░░░░░░░░░░░░░░░░░░░░   0%           wk ███░░░░░░░░░░░░░░░░░  13%   21h57  ⚠ 1h ago
+ 2 default  5h █░░░░░░░░░░░░░░░░░░░   5%   3h17    wk ███░░░░░░░░░░░░░░░░░  17%   4d4h
  3 work     5h █████░░░░░░░░░░░░░░░  25%   1h27    wk █████░░░░░░░░░░░░░░░  24%   6d0h
- 4 api      api ██░░░░░░░░░░░░░░░░░ est. $4.60 this month of $50.00 budget (9%)
- 5 devin    1d ····················    —           wk ███████████░░░░░░░░░  54%   3d4h
+ 4 devin    1d ····················    —           wk ███████████░░░░░░░░░  54%   3d4h
+ 5 api      api ██░░░░░░░░░░░░░░░░░ est. $4.60 this month of $50.00 budget (9%)
  csdaisy: login expired · mcc login csdaisy
  devin: overage balance $3.50
  r refresh · c collapse · q close · d details
@@ -19,14 +19,14 @@ The 5-hour and weekly Claude Code usage of every account [mcc](https://github.co
 Press `d` for the details: what else mcc knows about each account, in place of the bars.
 
 ```
- 1 default  seen 1d    login —       upd 4m    5h 01:17      wk Sun 02:00
- 2 csdaisy  seen now   login —       upd 1h    5h —          wk 19:57     ⚠
+ 1 csdaisy  seen now   login —       upd 1h    5h —          wk 19:57     ⚠
+ 2 default  seen 1d    login —       upd 4m    5h 01:17      wk Sun 02:00
  3 work     seen 15m   login 6d0h    upd 4m    5h 23:27      wk Mon 22:00
- 4 api      seen 1m    login —       upd —     api $4.60 of $50.00 (9%)
- 5 devin    seen —     login —       upd 4m    1d —          wk Sat 02:00
+ 4 devin    seen —     login —       upd 4m    1d —          wk Sat 02:00
+ 5 api      seen 1m    login —       upd —     api $4.60 of $50.00 (9%)
 ```
 
-Each row starts with the account's number, in mcc's order, and shows a bar, the percent used and the time until the window resets. As in `mcc usage`, `!` marks 80% or more and `!!` marks 95% or more. The default account's name is in cyan. A ⚠ marks an account whose last live lookup failed or whose login ends soon, with a line under the table naming the `mcc login` command that fixes it. When an account's numbers are more than an hour old, its row says how old they are.
+The rows are in order of weekly use, least first, as `mcc usage` sorts them by default. Devin is included, an account without a weekly number comes after those with one, and API-key profiles come last. Each row starts with its number in that order and shows a bar, the percent used and the time until the window resets. As in `mcc usage`, `!` marks 80% or more and `!!` marks 95% or more. The default account's name is in cyan. A ⚠ marks an account whose last live lookup failed or whose login ends soon, with a line under the table naming the `mcc login` command that fixes it. When an account's numbers are more than an hour old, its row says how old they are.
 
 [Devin](https://devin.ai), which mcc shows when the Devin CLI is signed in, has a daily window instead of a 5-hour one: its row says `1d`, with a dash when its plan hides that window. When its overage balance is above zero, a line under the table shows it. A Devin login that has run out names `devin auth login`, since mcc never touches that login.
 

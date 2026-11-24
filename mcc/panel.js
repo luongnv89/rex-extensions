@@ -167,6 +167,18 @@ const dollars = (v) => `$${v.toFixed(2)}`;
 // without one has (`no_data` from the cache, `not_logged_in` live) only so older
 // readers still understand it. Nothing is wrong with it, and `mcc login` refuses it.
 const hasIssue = (p) => !p.apiKey && p.status !== "ok";
+
+// The table's order: every account with a weekly window, Claude Code or not (Devin),
+// by its weekly use, least to most, as `mcc usage` sorts by default; then those
+// without one; then the API-key profiles, which have no window. Ties keep mcc's
+// order. Each row is numbered again in this order.
+function ordered(profiles) {
+  const rank = (p) => (p.apiKey ? 2 : p.week ? 0 : 1);
+  return profiles
+    .map((p, i) => [p, i])
+    .sort(([a, i], [b, j]) => rank(a) - rank(b) || (rank(a) === 0 ? a.week.percent - b.week.percent : 0) || i - j)
+    .map(([p], i) => ({ ...p, index: i + 1 }));
+}
 // What a refresh found wrong, by account name.
 const liveIssues = (live) => Object.fromEntries(live.filter(hasIssue).map((p) => [p.name, p.reason]));
 
@@ -708,7 +720,7 @@ async function load() {
   if (r.error) ui.error = r.error.killed ? "mcc usage timed out" : `can't run ${mcc}`;
   else {
     try {
-      ui.profiles = withLiveLogins(parse(r.stdout));
+      ui.profiles = ordered(withLiveLogins(parse(r.stdout)));
       ui.error = null;
     } catch (e) { ui.error = firstError(r.stderr) || e.message; }
   }
@@ -1126,7 +1138,7 @@ function main() {
 
 if (require.main === module) main();
 else module.exports = {
-  width, fit, clip, until, since, clock, ago, detailColumns, toggleDetails, flag, parse, loginCommand, liveIssues, spendTexts, extrasFor, extrasWidth, withLiveLogins, firstError, columns, row, cell, cellWidthFor, peak, splitAbove, firstLeaf, ratioFor, reasonText, findMcc, noticeLines, wantedRows, ui, draw,
+  width, fit, clip, until, since, clock, ago, detailColumns, toggleDetails, flag, parse, ordered, loginCommand, liveIssues, spendTexts, extrasFor, extrasWidth, withLiveLogins, firstError, columns, row, cell, cellWidthFor, peak, splitAbove, firstLeaf, ratioFor, reasonText, findMcc, noticeLines, wantedRows, ui, draw,
   // The panel's height after a drag (#55): fit it, when a drag settles, and a reset for tests.
   needsFit, resize, settleResize, refit, resetFit: () => { panes = null; fitted = null; full = null; fitting = false; },
   parseProcStat, cpuPercent, parseMeminfo, parseVmStat, parseNetDev, parseNetstat, rate, step, formatBytes, formatRate, shortBytes, formatPair, memPercent, diskPercent, parseStatfs, readDisk, readout, label,
