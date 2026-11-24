@@ -754,3 +754,135 @@ test("a narrow footer keeps q close", () => {
   }
   assert.match(strip2(out.join("")), /r refresh · c collapse · q close/);
 });
+
+// mcc #132: API-key profiles, billed by the API instead of a Claude subscription. No
+// windows; the spend this month on this machine and an optional budget instead.
+const API_DOC = JSON.stringify({
+  schema: 2,
+  profiles: [
+    { name: "default", is_default: true, provider: "claude", last_activity: "2026-11-03T21:53:00Z", login_expires_at: "2026-11-09T22:00:00Z",
+      usage: { status: "ok", five_hour: { percent: 12, resets_at: "2026-11-04T01:40:00Z" }, weekly: { percent: 30, resets_at: "2026-11-09T14:00:00Z" }, source: "cache", updated_at: "2026-11-03T20:30:00Z" } },
+    { name: "api", is_default: false, provider: "claude", auth: "api_key", last_activity: "2026-11-03T21:00:00Z", login_expires_at: null, login_warning: false,
+      usage: { status: "unavailable", reason: "no_data", five_hour: null, weekly: null, source: "cache", updated_at: null, est_cost_usd: 3.324475100000001, budget_usd: 50 } },
+  ],
+});
+const apiRow = (usage) => ({ ...p.parse(API_DOC)[1], ...usage });
+
+test("parse reads an API-key profile's spend and budget", () => {
+  const [d, a] = p.parse(API_DOC);
+  assert.equal(d.apiKey, false);
+  assert.equal(d.cost, null);
+  assert.equal(a.apiKey, true);
+  assert.equal(a.cost, 3.324475100000001);
+  assert.equal(a.budget, 50);
+  // Older mcc sends no `auth`: every profile is a subscription one, as before.
+  assert.ok(p.parse(DOC).every((r) => !r.apiKey && r.cost == null && r.budget == null));
+});
+
+test("an API-key profile's spend reads as mcc says it", () => {
+  assert.deepEqual(p.spendTexts(apiRow({})).slice(0, 3), ["est. $3.32 this month of $50.00 budget (7%)", "$3.32 this month of $50.00 (7%)", "$3.32 of $50.00 (7%)"]);
+  assert.equal(p.spendTexts(apiRow({ budget: null }))[0], "est. $3.32 this month");
+  assert.equal(p.spendTexts(apiRow({ budget: 0 }))[0], "est. $3.32 this month of $0.00 budget");
+  assert.equal(p.spendTexts(apiRow({ cost: null }))[0], "no cost recorded yet; $50.00 budget");
+  assert.equal(p.spendTexts(apiRow({ cost: null, budget: null }))[0], "no cost recorded yet");
+  assert.deepEqual(p.spendTexts(apiRow({ reason: "disabled" })), ["usage off (MCC_NO_USAGE)"]);
+});
+
+test("an API-key profile's row shows its spend in place of the windows, at every width", () => {
+  const [d, a] = p.parse(API_DOC);
+  const wide = p.columns(100, 7);
+  const row = strip(p.row(a, wide, null, NOW));
+  assert.match(row, /api +api █*░+ est\. \$3\.32 this month of \$50\.00 budget \(7%\)/);
+  assert.doesNotMatch(row, /5h|wk|no usage|⚠/);
+  // Its bar ends where the 5-hour bars end, and the row is as wide as theirs.
+  const end = (r) => r.lastIndexOf("░");
+  assert.equal(end(row), end(strip(p.row({ ...d, five: { percent: 0, resetsAt: null } }, wide, null, NOW)).split(" wk")[0]));
+  assert.equal(p.width(row), p.width(strip(p.row({ ...d, updatedAt: null }, wide, null, NOW))));
+  assert.match(strip(p.row(a, p.columns(60, 7), null, NOW)), /api +api ░+ \$3\.32 this month of \$50\.00 \(7%\)/);
+  assert.match(strip(p.row(a, p.columns(40, 7), null, NOW)), /api +api \$3\.32 \(7%\)/);
+  assert.match(strip(p.row(a, p.columns(22, 7), null, NOW)), /api +\$3\.32 \(7%\)$/);
+  // Over budget: the bar is full.
+  assert.match(strip(p.row(apiRow({ cost: 60 }), wide, null, NOW)), /api █+ .*\(120%!!\)/);
+  // No budget, no bar.
+  assert.match(strip(p.row(apiRow({ budget: null }), wide, null, NOW)), /api +api est\. \$3\.32 this month +$/);
+});
+
+test("a compact API-key row marks 80% and 95% of the budget with ! and !!, not by color alone", () => {
+  const compact = p.columns(26, 7);
+  assert.equal(compact.compact, true);
+  const text = (usage) => strip(p.row(apiRow(usage), compact, null, NOW));
+  // No room for "(82%!)" in 10 columns: the marker the subscription rows have.
+  assert.match(text({ cost: 41 }), /api +\$41\.00!$/);
+  assert.match(text({ cost: 48.5 }), /api +\$48\.50!!$/);
+  assert.match(text({ cost: 60 }), /api +\$60\.00!!$/);
+  assert.match(text({ cost: 1234.56, budget: 1272.74 }), /api +\$1234\.56!!$/);
+  // Under 80%, and with no budget to be a share of: the amount alone, as before.
+  assert.match(text({ cost: 30 }), /api +\$30\.00$/);
+  assert.match(text({}), /api +\$3\.32 \(7%\)$/);
+  assert.match(text({ cost: 48.5, budget: null }), /api +\$48\.50$/);
+  assert.match(text({ cost: 48.5, budget: 0 }), /api +\$48\.50$/);
+  // The marker goes with the color, which rounds the share as the row prints it.
+  assert.equal(p.spendTexts(apiRow({ cost: 39.8 })).at(-2), "$39.80!");
+  assert.equal(p.spendTexts(apiRow({ cost: 39.7 })).at(-1), "$39.70");
+  assert.ok(p.spendTexts(apiRow({ cost: 39.7 })).every((t) => !t.includes("!")));
+  // The forms that say the share carry the marker on it, as `mcc usage` prints it: (82%!), (97%!!).
+  assert.equal(p.spendTexts(apiRow({ cost: 41 }))[0], "est. $41.00 this month of $50.00 budget (82%!)");
+  assert.deepEqual(p.spendTexts(apiRow({ cost: 48.5 })), ["est. $48.50 this month of $50.00 budget (97%!!)", "$48.50 this month of $50.00 (97%!!)", "$48.50 of $50.00 (97%!!)", "$48.50 (97%!!)", "$48.50!!", "$48.50"]);
+  assert.match(strip(p.row(apiRow({ cost: 48.5 }), p.columns(40, 7), null, NOW)), /api +api \$48\.50 \(97%!!\) *$/);
+  assert.match(strip(p.row(apiRow({ cost: 48.5 }), p.detailColumns(100, 7), null, NOW)), /api \$48\.50 \(97%!!\) *$/);
+});
+
+test("an API-key profile's row keeps the extra columns in line", () => {
+  const [d, a] = p.parse(API_DOC);
+  const layout = p.columns(120, 7, 1, { active: true, login: true, stale: false });
+  const at = (r) => strip(p.row(r, layout, null, NOW)).indexOf("seen");
+  assert.ok(at(d) > 0);
+  assert.equal(at(a), at(d));
+});
+
+test("details show an API-key profile's spend where the reset times go", () => {
+  const a = p.parse(API_DOC)[1];
+  const v = strip(p.row(a, p.detailColumns(100, 7), null, NOW));
+  assert.match(v, /api +seen 1h +login — +upd — +api \$3\.32 of \$50\.00 \(7%\)/);
+  assert.doesNotMatch(v, /5h|wk/);
+});
+
+test("an API-key profile needs no login: no notice, no ⚠, no issue from a refresh", () => {
+  const rows = p.parse(API_DOC);
+  p.ui.profiles = rows;
+  p.ui.issues = {};
+  assert.deepEqual(p.noticeLines(NOW), []);
+  // A refresh reports it as not logged in, for older readers.
+  const live = p.parse(API_DOC.replace('"no_data"', '"not_logged_in"').replaceAll('"source":"cache"', '"source":"live"'));
+  assert.equal(live[1].reason, "not_logged_in");
+  assert.deepEqual(p.liveIssues(live), {});
+  p.ui.issues = { api: "not_logged_in" };
+  assert.deepEqual(p.noticeLines(NOW), []);
+  assert.doesNotMatch(strip(p.row(rows[1], p.columns(100, 7), "not_logged_in", NOW)), /⚠/);
+  // A subscription profile that isn't logged in still gets both.
+  const out = { ...rows[0], name: "work", isDefault: false, status: "unavailable", reason: "not_logged_in", five: null, week: null };
+  assert.deepEqual(p.liveIssues([out]), { work: "not_logged_in" });
+  p.ui.profiles = [out];
+  p.ui.issues = {};
+  assert.deepEqual(p.noticeLines(NOW).map((n) => n.text), ["work: not logged in · mcc login work"]);
+});
+
+test("accounts are ordered by weekly use, least first, with API-key profiles last", () => {
+  const doc = JSON.stringify({
+    schema: 2,
+    profiles: [
+      { name: "api", auth: "api_key", usage: { status: "unavailable", reason: "no_data", est_cost_usd: 1 } },
+      { name: "heavy", usage: { status: "ok", five_hour: { percent: 5 }, weekly: { percent: 70 } } },
+      { name: "gone", usage: { status: "unavailable", reason: "token_expired" } },
+      { name: "light", is_default: true, usage: { status: "ok", five_hour: { percent: 90 }, weekly: { percent: 10 } } },
+      { name: "devin", provider: "devin", usage: { status: "ok", daily: { percent: 1 }, weekly: { percent: 40 } } },
+      { name: "tied", usage: { status: "ok", weekly: { percent: 70 } } },
+    ],
+  });
+  const rows = p.ordered(p.parse(doc));
+  assert.deepEqual(rows.map((r) => r.name), ["light", "devin", "heavy", "tied", "gone", "api"]);
+  assert.deepEqual(rows.map((r) => r.index), [1, 2, 3, 4, 5, 6]);
+  // parse itself keeps mcc's order and numbers.
+  assert.deepEqual(p.parse(doc).map((r) => r.index), [1, 2, 3, 4, 5, 6]);
+  assert.equal(p.parse(doc)[0].name, "api");
+});
