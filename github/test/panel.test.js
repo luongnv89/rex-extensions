@@ -2300,6 +2300,47 @@ test("1 to 4, ⇥, ⇧⇥, ← → h l and a click switch Settings' tabs, ⇥ go
   screen(() => key("\x1b"));
 });
 
+test("a tab's key takes back a delete still asking and opens that tab, deleting nothing, as a click on it does (#67)", (t) => {
+  const dir = home(t);
+  useProfiles(dir, [CC]);
+  setupGitHub("issues");
+  screen(() => key("sj"));
+  // Each key that opens a tab from Profiles, the SS3 arrows too, and the row it opens on.
+  for (const [k, row] of [["2", "resolve"], ["4", "merge"], ["\t", "resolve"], ["\x1b[C", "resolve"], ["\x1bOC", "resolve"], ["l", "resolve"],
+    ["\x1b[Z", "merge"], ["\x1b[D", "merge"], ["\x1bOD", "merge"], ["h", "merge"]]) {
+    screen(() => key("1d"));
+    assert.equal(ui.settings.mode, "confirm", JSON.stringify(k));
+    const lines = screen(() => key(k));
+    assert.deepEqual([ui.settings.mode, ui.settings.promptSel], ["list", row], JSON.stringify(k));
+    assert.ok(!text(lines).includes("y delete"), `${JSON.stringify(k)}\n${lines.join("\n")}`);
+    // y now deletes nothing: the question is gone.
+    screen(() => key("y"));
+    assert.deepEqual(readStore().store.profiles.map((p) => p.id), ["cc"], JSON.stringify(k));
+  }
+  // 1, on Profiles already, takes the question back and stays on the profile asked about.
+  screen(() => key("1d"));
+  screen(() => key("1"));
+  assert.deepEqual([ui.settings.mode, ui.settings.promptSel, ui.settings.sel], ["list", null, 1]);
+  // Any other key still only takes it back, and y still deletes.
+  screen(() => key("d5"));
+  assert.deepEqual([ui.settings.mode, ui.settings.promptSel], ["list", null]);
+  screen(() => key("dy"));
+  assert.deepEqual(readStore().store.profiles.map((p) => p.id), []);
+  screen(() => key("\x1b"));
+});
+
+test("the SS3 arrows switch Settings' tabs as → and ← do (#67)", (t) => {
+  const dir = home(t);
+  useProfiles(dir, [CC]);
+  setupGitHub("issues");
+  screen(() => key("s"));
+  for (const [k, row] of [["\x1bOC", "resolve"], ["\x1bOC", "label:resolve"], ["\x1bOD", "resolve"], ["\x1bOD", null], ["\x1bOD", "merge"]]) {
+    screen(() => key(k));
+    assert.equal(ui.settings.promptSel, row, JSON.stringify(k));
+  }
+  screen(() => key("\x1b"));
+});
+
 test("a change made in one tab is saved, and still applied after switching tabs and reopening Settings (#67)", (t) => {
   const dir = home(t);
   useProfiles(dir, [CC]);

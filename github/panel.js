@@ -2357,20 +2357,17 @@ function settingsKey(m) {
   // A key brings the form or the prompt back to where it shows what you type.
   st.scroll = 0;
   if (k === "\x03") return quit();
-  if (st.mode === "confirm") return confirmDelete(k === "y" || k === "Y");
+  // A tab's key takes a delete still asking back and opens that tab, as its click does (#67).
+  if (st.mode === "confirm" && tabKey(st, k) < 0) return confirmDelete(k === "y" || k === "Y");
   if (st.mode === "import") return importKey(st, k);
   if (st.mode === "edit") return formKey(st, k);
   if (st.mode === "prompt") return promptKey(st, k);
   selectedEntry(st);
   if (k === "\x1b" || k === "q" || k === "s") return closeSettings();
-  const at = P.PROMPT_KEYS.indexOf(st.promptSel), merge = st.promptSel === MERGE_ROW, label = labelRow(st.promptSel);
-  if (UP.includes(k) || k === "k") step(st, -1);
+  const at = P.PROMPT_KEYS.indexOf(st.promptSel), merge = st.promptSel === MERGE_ROW, label = labelRow(st.promptSel), to = tabKey(st, k);
+  if (to >= 0) switchTab(st, to);
+  else if (UP.includes(k) || k === "k") step(st, -1);
   else if (DOWN.includes(k) || k === "j") step(st, 1);
-  // The tabs (#67): 1 to 4 open one, ⇥ → l the next and ⇧⇥ ← h the previous, past
-  // the last back to the first, as ⇥ goes round the lists.
-  else if (/^\d$/.test(k) && k >= 1 && k <= TABS.length) switchTab(st, Number(k) - 1);
-  else if (k === "\t" || k === "\x1b[C" || k === "l") switchTab(st, (tabOf(st.promptSel) + 1) % TABS.length);
-  else if (k === "\x1b[Z" || k === "\x1b[D" || k === "h") switchTab(st, (tabOf(st.promptSel) + TABS.length - 1) % TABS.length);
   else if (k === "n") return editProfile(null);
   else if (k === "i" && st.mcc) return openImport();
   else if (k === "e" || k === "\r" || k === "\n") return merge ? toggleMergeMode() : label ? editLabel(label) : at >= 0 ? editPrompt(st.promptSel) : editSelected();
@@ -2393,6 +2390,17 @@ function step(st, by) {
   const rows = TABS[tabOf(st.promptSel)].rows;
   if (rows[0] === null) st.sel = Math.max(0, Math.min(entries().length - 1, st.sel + by));
   else st.promptSel = rows[Math.max(0, Math.min(rows.length - 1, rows.indexOf(st.promptSel) + by))];
+}
+
+// The tab a key opens (#67), or -1: 1 to 4 open one, ⇥ → l the next and ⇧⇥ ← h the
+// previous, past the last back to the first, as ⇥ goes round the lists. The arrows
+// come as CSI or as SS3, which a terminal in application cursor mode sends.
+function tabKey(st, k) {
+  const at = tabOf(st.promptSel), n = TABS.length;
+  if (/^\d$/.test(k) && k >= 1 && k <= n) return Number(k) - 1;
+  if (k === "\t" || k === "\x1b[C" || k === "\x1bOC" || k === "l") return (at + 1) % n;
+  if (k === "\x1b[Z" || k === "\x1b[D" || k === "\x1bOD" || k === "h") return (at + n - 1) % n;
+  return -1;
 }
 
 // A tab's key or its click (#67): its first row, or on Profiles the profile selected
