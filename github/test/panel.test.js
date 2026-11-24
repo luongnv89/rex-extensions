@@ -48,7 +48,17 @@ require("node:child_process").execFile = (cmd, args, opts, cb) => {
 // The panel keeps its state (its view, its width) in a folder of its own, for the run.
 const stateHome = fs.mkdtempSync(path.join(os.tmpdir(), "rex-github-state-"));
 process.on("exit", () => fs.rmSync(stateHome, { recursive: true, force: true }));
-Object.assign(process.env, { REX_GITHUB_REX: "rex", REX_SESSION: "session:s", REX_BLOCK: "block:panel", REX_GITHUB_STARTUP_MS: "1", XDG_STATE_HOME: stateHome });
+// The mcc of the machine running the tests (in /opt/homebrew/bin or ~/.local/bin,
+// say) is never found: MCC_BIN names an mcc that isn't there, which the panel passes
+// over, PATH and HOME are empty folders of the run's own, and the system-wide
+// folders the panel looks in are one that isn't there. A test that wants an mcc sets
+// its own (#63).
+const emptyHome = path.join(stateHome, "home");
+fs.mkdirSync(emptyHome);
+Object.assign(process.env, {
+  REX_GITHUB_REX: "rex", REX_SESSION: "session:s", REX_BLOCK: "block:panel", REX_GITHUB_STARTUP_MS: "1", XDG_STATE_HOME: stateHome,
+  MCC_BIN: path.join(stateHome, "no-mcc"), PATH: path.join(stateHome, "no-bin"), HOME: emptyHome, REX_GITHUB_MCC_SYSTEM_DIRS: path.join(stateHome, "no-system-bin"),
+});
 process.argv.push("--target", "block:agent", "--cwd", "/start");
 const P = require("../profiles.cjs");
 const { width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput, MODES_ON, MODES_OFF, act, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, flags, locate, state, follow, splitLeft, ratioFor, fitWidth, COLUMNS, MAX_SHARE, settleResize, savedWidth, resetWidth, pressMerge, MERGE_GAP, mergeStrategy, mergeArgs, mergeGuard, refresh, pressClose, checkedNumbers, paneLabel, KEYMAP, mergeMode, branchDelete } = require("../panel.js");
@@ -940,8 +950,9 @@ test("agentArgv puts each harness's flags first and the prompt last, as one word
 // ── Profiles: per-row buttons, harnesses, mcc ───────────────────────────────
 
 const PATH = process.env.PATH;
+const MCC_BIN = process.env.MCC_BIN;
 // PATH set to exactly one new folder, holding an executable mcc unless `present`
-// is false; restored after the test.
+// is false, and MCC_BIN to that mcc; restored after the test.
 function mccOnPath(t, present = true) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rex-github-bin-"));
   if (present) {
@@ -949,13 +960,48 @@ function mccOnPath(t, present = true) {
     fs.chmodSync(path.join(dir, "mcc"), 0o755);
   }
   process.env.PATH = dir;
-  t.after(() => { process.env.PATH = PATH; fs.rmSync(dir, { recursive: true, force: true }); });
+  process.env.MCC_BIN = path.join(dir, "mcc");
+  t.after(() => { Object.assign(process.env, { PATH, MCC_BIN }); fs.rmSync(dir, { recursive: true, force: true }); });
   return path.join(dir, "mcc");
 }
 // An mcc whose `env -q --shell bash` prints what it prints for a profile folder.
 const mccEnv = (dir) => { mcc = (args) => args[0] === "env" ? { code: 0, stdout: `export CLAUDE_CONFIG_DIR='${dir}'\nunset MCC_PROFILE\n` } : { code: 1, stderr: "unexpected" }; };
 const mccCalls = () => calls.filter((c) => c[0] === "mcc").map((c) => c.slice(1).join(" "));
 const OPENED_MCC = "Opened mcc in a new pane. If it asks something first, such as about a usage limit, answer it there; Claude Code then works on:";
+
+// ── Importing mcc profiles (#63) ──
+// What `mcc usage --json-v2` lists: Claude Code profiles, mcc's default among them,
+// and a Devin one, which isn't Claude Code.
+const MCC_USAGE = [
+  { name: "cskonal", provider: "claude", is_default: false, usage: { status: "ok" } },
+  { name: "default", provider: "claude", is_default: true, usage: { status: "ok" } },
+  { name: "work", provider: "claude", is_default: false, usage: { status: "ok" } },
+  { name: "devin", provider: "devin", is_default: false, usage: { status: "ok" } },
+];
+// An mcc whose `usage --json-v2` lists `profiles` as schema 2 does, and whose `env
+// -q --shell bash <name>` names the folder `dirs` has for that name (null: ~/.claude,
+// as for mcc's default); for a name it doesn't have, it fails as mcc does.
+function mccProfiles(profiles, dirs = {}) {
+  mcc = (args) => {
+    if (args[0] === "usage") return { code: 0, stdout: JSON.stringify({ schema: 2, profiles, updated_at: "2026-11-24T10:00:00Z", machines: [] }) };
+    if (args[0] === "--version") return { code: 0, stdout: "mcc 0.12.0\n" };
+    if (args[0] !== "env") return { code: 1, stderr: "unexpected" };
+    const name = args[4];
+    if (!Object.hasOwn(dirs, name)) return { code: 2, stderr: `✗ error: no profile named "${name}"\n  hint: run \`mcc list\` to see your profiles\n` };
+    return { code: 0, stdout: dirs[name] === null ? "unset CLAUDE_CONFIG_DIR\nexport MCC_PROFILE=default\n" : `export CLAUDE_CONFIG_DIR='${dirs[name]}'\nunset MCC_PROFILE\n` };
+  };
+}
+// fn, then the frames until the import picker has heard from mcc: the lines drawn then.
+async function picked(fn) {
+  const { write } = process.stdout, cols = process.stdout.columns, rows = process.stdout.rows;
+  process.stdout.write = function (s, ...rest) {
+    if (typeof s === "string" && s.startsWith("\x1b[?2026h")) return true;
+    return write.call(this, s, ...rest);
+  };
+  process.stdout.columns = 60; process.stdout.rows = 24;
+  try { fn(); for (let i = 0; i < 200 && (ui.settings?.picker?.loading || ui.settings?.picker?.importing); i++) await tick(); } finally { Object.assign(process.stdout, { write, columns: cols, rows }); }
+  return screen(draw);
+}
 
 test("with no profile assigned, Resolve starts Claude Code through mcc run, with the skills of mcc's profile", async (t) => {
   const dir = home(t, { ".mcc/profiles/work/skills/issue-resolver/SKILL.md": "x" });
@@ -1192,7 +1238,7 @@ test("s opens the profiles; a new profile is typed, saved and assigned, then use
   }));
   assert.equal(exit, null, "a key in the form closed the panel");
   assert.equal(ui.settings.mode, "edit");
-  assert.deepEqual({ ...ui.settings.form, prev: undefined }, { prev: undefined, name: "Quick job", id: "qj", harness: "codex", model: "gpt-6.1-sol", thinking: "low", args: "", saved: "", adding: null });
+  assert.deepEqual({ ...ui.settings.form, prev: undefined }, { prev: undefined, name: "Quick job", id: "qj", harness: "codex", mccProfile: "", model: "gpt-6.1-sol", thinking: "low", args: "", saved: "", adding: null });
   lines = screen(() => onInput(Buffer.from("\r")));
   assert.equal(ui.settings.mode, "list");
   assert.ok(lines.some((l) => l?.includes("Saved Quick job")), lines.join("\n"));
@@ -1289,7 +1335,7 @@ test("a store changed elsewhere since it was read isn't overwritten", (t) => {
 
 test("a corrupt or newer store is shown read only, and actions use the default", async (t) => {
   const dir = home(t, { ".claude/skills/issue-resolver/SKILL.md": "x" });
-  for (const bad of ["{ not json", JSON.stringify({ version: 7, profiles: [], assign: {} })]) {
+  for (const bad of ["{ not json", JSON.stringify({ version: 8, profiles: [], assign: {} })]) {
     const file = useProfiles(dir, []);
     fs.writeFileSync(file, bad);
     setupGitHub("issues");
@@ -1580,11 +1626,11 @@ test("at 28, 30 and 40 cells the profiles show each warning, note and question w
     assert.ok(lines.at(-1).trimEnd().endsWith("esc back"), `${cols}:\n${lines.join("\n")}`);
     at(() => onInput(Buffer.from("\x1b")));
 
-    // A file from another version: 1 to 6 are read (2 since #20's prompts, 3 since #24's models, 4 since #31's Auto-pilot prompt, 5 since #48's args, 6 since button labels).
-    fs.writeFileSync(useProfiles(dir, []), JSON.stringify({ version: 7, profiles: [], assign: {} }));
+    // A file from another version: 1 to 7 are read (2 since #20's prompts, 3 since #24's models, 4 since #31's Auto-pilot prompt, 5 since #48's args, 6 since button labels, 7 since #63's mcc profiles).
+    fs.writeFileSync(useProfiles(dir, []), JSON.stringify({ version: 8, profiles: [], assign: {} }));
     setupGitHub("issues");
     lines = at(() => onInput(Buffer.from("s")));
-    assert.ok(shows(lines, "The profiles file is version 7, not 1, 2, 3, 4, 5 or 6: it is read only here"), `${cols}:\n${lines.join("\n")}`);
+    assert.ok(shows(lines, "The profiles file is version 8, not 1, 2, 3, 4, 5, 6 or 7: it is read only here"), `${cols}:\n${lines.join("\n")}`);
     at(() => onInput(Buffer.from("\x1b")));
 
     // A 40-character name in what a change did, and in the delete question.
@@ -4029,12 +4075,12 @@ test("a model that breaks the MODEL rule, or is already offered, isn't added; - 
 test("a model isn't added to a read-only file, or over a change made elsewhere", (t) => {
   const dir = home(t);
   // Read only: from a newer version, the file kept as it is.
-  const newer = JSON.stringify({ version: 7, profiles: [], assign: {} });
+  const newer = JSON.stringify({ version: 8, profiles: [], assign: {} });
   fs.writeFileSync(useProfiles(dir, []), newer);
   setupGitHub("issues");
   screen(() => onInput(Buffer.from("sn" + TO_MODEL)));
   let lines = screen(() => onInput(Buffer.from("+mine\r")));
-  assert.ok(shows(lines, "Not saved: The profiles file is version 7, not 1, 2, 3, 4, 5 or 6: it is read only here"), lines.join("\n"));
+  assert.ok(shows(lines, "Not saved: The profiles file is version 8, not 1, 2, 3, 4, 5, 6 or 7: it is read only here"), lines.join("\n"));
   assert.equal(fs.readFileSync(storeFile(), "utf8"), newer);
   assert.equal(ui.settings.form.adding, "mine");
   screen(() => onInput(Buffer.from("\x1b\x1b\x1b")));
@@ -5061,7 +5107,8 @@ test("? opens the key list of the view it's pressed in, with every key of that v
       const lines = screenAt(60, 40, () => key("?"));
       assert.equal(ui.help?.mode, mode);
       assert.match(lines[0], /^ Keys: /, lines.join("\n"));
-      for (const e of KEYMAP[mode]) assert.ok(shows(lines, `${e.keys.join(" ")} ${e.does}`), `${mode}: ${e.keys.join(" ")}\n${lines.join("\n")}`);
+      // Without mcc, + Import's key isn't listed: nothing offers it (#63).
+      for (const e of KEYMAP[mode]) assert.equal(shows(lines, `${e.keys.join(" ")} ${e.does}`), !e.mcc, `${mode}: ${e.keys.join(" ")}\n${lines.join("\n")}`);
       assert.match(lines.at(-1), /\?\/esc\/q close/);
       assert.equal(noExit(() => screen(() => key(close))), null, `${mode}: ${JSON.stringify(close)} closed the panel`);
       assert.equal(ui.help, null, `${mode}: ${JSON.stringify(close)}`);
@@ -5169,12 +5216,13 @@ const BUTTON_KEYS = {
     [/^Merg(e|ing) [#!]\d/, "m"], [/^Clos(e|ing) #\d/, "c"], [/^Confirm (merge|close) #/, "y"]],
   autopilot: [[/^☑/, "p"], [/^⚙/, "s"], [/^↻/, "r"], [/^↗/, "o"], [/^((Pull|Merge) requests|Issues)/, "1"], [/^▶ Start/, "⏎"], [/^✕ Cancel$/, "esc"]],
   menu: [[/^│/, "⏎"]],
-  settings: [[/^\+ New$/, "n"], [/^✕$/, "esc"], [/^(Use for Resolve|Resolve ✓)$/, "R"], [/^(Use for Review|Review ✓)$/, "V"], [/^Edit$/, "e"], [/^Delete$/, "d"], [/^Change$/, "e"]],
+  settings: [[/^\+ New$/, "n"], [/^\+ Import$/, "i"], [/^✕$/, "esc"], [/^(Use for Resolve|Resolve ✓)$/, "R"], [/^(Use for Review|Review ✓)$/, "V"], [/^Edit$/, "e"], [/^Delete$/, "d"], [/^Change$/, "e"]],
+  import: [[/^(Import( \d+)?|Imported ✓)$/, "⏎"], [/^(Mark|Unmark)$/, "␣"], [/^✕$/, "esc"]],
   form: [[/^Save$/, "⏎"], [/^Test$/, "^T"], [/^(Cancel|✕)$/, "esc"]],
   prompt: [[/^Save$/, "⏎"], [/^Use default$/, "^R"], [/^(Cancel|✕)$/, "esc"]],
 };
 
-test("every view's key table names each key once, and every button drawn in it has a key there (#37)", (t) => {
+test("every view's key table names each key once, and every button drawn in it has a key there (#37)", async (t) => {
   for (const [mode, table] of Object.entries(KEYMAP)) {
     const keys = table.flatMap((e) => e.keys);
     assert.deepEqual(keys.filter((k, i) => keys.indexOf(k) !== i), [], `${mode} has a key twice`);
@@ -5193,14 +5241,26 @@ test("every view's key table names each key once, and every button drawn in it h
     autopilot: [() => { setupGitHub("issues"); screen(() => key("p")); ui.autopilot.checked.add(12); }],
     menu: [() => { setupGitHub("issues"); screen(() => key("a")); }],
     // The last: the merge mode's row (#39), past the prompt rows.
-    settings: [() => { setupGitHub("issues"); screen(() => key("s")); }, () => screen(() => key("j")), () => screen(() => key("jj")), () => screen(() => key("jjjj"))],
+    settings: [() => { setupGitHub("issues"); screen(() => key("s")); }, () => screen(() => key("j")), () => screen(() => key("jj")), () => screen(() => key("jjjj")),
+      // With mcc found, + Import too (#63).
+      () => { mccOnPath(t); setupGitHub("issues"); screen(() => key("s")); }],
     form: [() => screen(() => key("n"))],
     // One key at a time: a chunk that leaves the form drops the text after it, as a paste's.
     prompt: [() => screen(() => { key("\x1b"); key("qsjjje"); })],
+    // The import's picker (#63): an mcc profile to import, then one imported already.
+    import: [async () => {
+      usePrompts(dir, { resolve: "Fix #{number}" }, [CC, CX, { id: "work", name: "mcc work", harness: "mcc", mccProfile: "work" }], {});
+      mccProfiles(MCC_USAGE);
+      setupGitHub("issues");
+      screen(() => key("s"));
+      await picked(() => key("i"));
+    }, () => screen(() => key("jj")),
+    // With profiles marked: Import 2, and Unmark on a marked one (#63).
+    () => screen(() => key("k k "))],
   };
   for (const [mode, setups] of Object.entries(frames)) {
     for (const [n, set] of setups.entries()) {
-      set();
+      await set();
       const lines = screenAt(60, 40, draw), where = `${mode} ${n}`;
       if (mode === "prompt") assert.equal(ui.settings.mode, "prompt", where);
       let seen = 0;
@@ -5767,4 +5827,619 @@ test("a button label at its longest gives before the row's #N and the menu title
   const [sx, sy] = find(start, "▶ Start");
   const ap = screenAt(36, 24, () => click(sx + 1, sy));
   assert.ok(ap.some((l) => /┌ x{17}… 1 issue with/.test(l ?? "")), ap.join("\n"));
+});
+
+// ── Importing mcc profiles (#63) ────────────────────────────────────────────
+
+test("without mcc, Settings offers no import and is as before; with mcc it offers + Import, and opening Settings runs nothing (#63)", (t) => {
+  claudeHome(t);
+  mccOnPath(t, false);
+  setupGitHub("issues");
+  let lines = screen(() => key("s"));
+  assert.match(lines[0], /^ ⚙ Settings +\+ New {2}✕ $/, lines.join("\n"));
+  assert.ok(!/Import|import/.test(text(lines)), lines.join("\n"));
+  // i does nothing, and ? doesn't list it.
+  lines = screen(() => key("i"));
+  assert.equal(ui.settings.mode, "list");
+  assert.ok(!/Import|import/.test(text(lines)), lines.join("\n"));
+  lines = screenAt(60, 40, () => key("?"));
+  assert.ok(!text(lines).includes("Import"), lines.join("\n"));
+  screen(() => key("\x1b\x1b"));
+  assert.deepEqual(calls, []);
+  // With mcc: + Import beside + New, i in the key hints and the key list, and still nothing run.
+  mccOnPath(t);
+  setupGitHub("issues");
+  lines = screen(() => key("s"));
+  assert.match(lines[0], /^ ⚙ Settings +\+ Import {2}\+ New {2}✕ $/, lines.join("\n"));
+  assert.ok(text(lines.slice(-2)).includes("n new · i mcc"), lines.join("\n"));
+  lines = screenAt(60, 40, () => key("?"));
+  assert.ok(shows(lines, "i + Import a profile from mcc"), lines.join("\n"));
+  screen(() => key("\x1b\x1b"));
+  assert.deepEqual(calls, []);
+});
+
+test("mcc is found off a thin PATH, in ~/.local/bin, for Settings and for Resolve (#63)", async (t) => {
+  const dir = home(t, { ".claude/skills/issue-resolver/SKILL.md": "x", ".local/bin/mcc": "#!/bin/sh\nexit 0\n" });
+  const bin = path.join(dir, ".local/bin/mcc");
+  fs.chmodSync(bin, 0o755);
+  // PATH holds no mcc, and MCC_BIN is unset, as Rex's server may start the panel.
+  mccOnPath(t, false);
+  delete process.env.MCC_BIN;
+  mccEnv(path.join(dir, ".claude"));
+  setupGitHub("issues");
+  const lines = screen(() => key("s"));
+  assert.match(lines[0], /\+ Import {2}\+ New/, lines.join("\n"));
+  screen(() => key("\x1b"));
+  setupGitHub("issues");
+  fakeRex(agentHere());
+  await screenAsync(() => key("a"));
+  assert.deepEqual(splitCommand(), [bin, "run", "--", "/issue-resolver 12"]);
+});
+
+test("an MCC_BIN that is stale or relative is passed over: mcc is found on PATH, else in ~/.local/bin (#63)", async (t) => {
+  const dir = home(t, { ".claude/skills/issue-resolver/SKILL.md": "x", ".local/bin/mcc": "#!/bin/sh\nexit 0\n" });
+  const local = path.join(dir, ".local/bin/mcc");
+  fs.chmodSync(local, 0o755);
+  mccEnv(path.join(dir, ".claude"));
+  const resolves = async () => {
+    setupGitHub("issues");
+    fakeRex(agentHere());
+    await screenAsync(() => key("a"));
+    return splitCommand()[0];
+  };
+  // On PATH, with MCC_BIN naming an mcc that was moved away.
+  const onPath = mccOnPath(t);
+  process.env.MCC_BIN = path.join(dir, "gone", "mcc");
+  assert.equal(await resolves(), onPath);
+  // Off PATH, with MCC_BIN stale, then relative: the one in ~/.local/bin.
+  fs.rmSync(onPath);
+  assert.equal(await resolves(), local);
+  process.env.MCC_BIN = "mcc";
+  assert.equal(await resolves(), local);
+  const lines = screen(() => key("s"));
+  assert.match(lines[0], /\+ Import {2}\+ New/, lines.join("\n"));
+  screen(() => key("\x1b\x1b"));
+});
+
+test("i lists mcc's Claude Code profiles to import, not Devin's, tagging mcc's default and those imported (#63)", async (t) => {
+  const dir = home(t);
+  useProfiles(dir, [{ id: "w", name: "My work", harness: "mcc", mccProfile: "work" }]);
+  mccOnPath(t);
+  mccProfiles(MCC_USAGE);
+  setupGitHub("issues");
+  screen(() => key("s"));
+  let lines = await picked(() => key("i"));
+  assert.deepEqual(mccCalls(), ["usage --json-v2"]);
+  assert.match(lines[0], /^ Import from mcc +✕ $/, lines.join("\n"));
+  const row = (name) => lines.find((l) => new RegExp(`^[▌ ] (\\[[ x]\\]| ✓ ) ${name} `).test(l ?? ""))?.trimEnd();
+  assert.match(row("cskonal"), /^▌ \[ \] cskonal$/, lines.join("\n"));
+  assert.match(row("default"), /^ {2}\[ \] default +default$/, lines.join("\n"));
+  assert.match(row("work"), /^ {2} ✓ {2}work +imported$/, lines.join("\n"));
+  assert.equal(row("devin"), undefined, lines.join("\n"));
+  // The selected one has its Import and Mark buttons; one imported already, Imported ✓.
+  assert.ok(lines.some((l) => /^▌ {4}Import {3}Mark\s*$/.test(l ?? "")), lines.join("\n"));
+  assert.match(lines.at(-1), /↑↓ select · ⏎ import · \? keys · esc back · ␣ mark/);
+  lines = screen(() => key("jj"));
+  assert.ok(lines.some((l) => /^▌ {4}Imported ✓\s*$/.test(l ?? "")), lines.join("\n"));
+  // Enter on it imports nothing more, and runs nothing.
+  calls.length = 0;
+  const before = storeText();
+  lines = await picked(() => key("\r"));
+  assert.ok(text(lines).includes("work is imported already, as My work: edit that profile instead"), lines.join("\n"));
+  assert.deepEqual(calls, []);
+  assert.equal(storeText(), before);
+  // ? lists its keys; esc goes back to the list.
+  lines = screenAt(60, 40, () => key("?"));
+  assert.match(lines[0], /Keys: Import from mcc/);
+  for (const e of KEYMAP.import) assert.ok(shows(lines, `${e.keys.join(" ")} ${e.does}`), lines.join("\n"));
+  screen(() => key("\x1b"));
+  screen(() => key("\x1b"));
+  assert.equal(ui.settings.mode, "list");
+});
+
+// Holds the mcc calls `which` picks until a test answers them from held.
+function holdMcc(t, which) {
+  hold = (name, args) => name === "mcc" && which(args);
+  t.after(() => { hold = () => false; held.length = 0; });
+}
+// The ticks until `n` calls are held.
+async function heldCount(n) {
+  for (let i = 0; i < 200 && held.length < n; i++) await tick();
+  assert.equal(held.length, n);
+}
+// A few ticks, drawing nowhere: the time an answer takes to be heard.
+const settle = () => quietly(async () => { for (let i = 0; i < 10; i++) await tick(); });
+
+test("mcc's list of profiles, answering after the picker closed or opened again, is dropped (#63)", async (t) => {
+  claudeHome(t);
+  mccOnPath(t);
+  holdMcc(t, (args) => args[0] === "usage");
+  const before = storeText();
+  // Closed: esc before mcc answers. An answer that would say why it failed says nothing.
+  setupGitHub("issues");
+  screen(() => key("s"));
+  screen(() => key("i"));
+  await heldCount(1);
+  screen(() => key("\x1b"));
+  held[0].answer({ code: 1, stderr: "✗ error: can't read ~/.mcc\n" });
+  await settle();
+  let lines = screen(draw);
+  assert.equal(ui.settings.mode, "list");
+  assert.equal(ui.settings.picker, null);
+  assert.equal(ui.settings.error, null);
+  assert.equal(ui.settings.info, null);
+  assert.ok(!text(lines).includes("Can't list"), lines.join("\n"));
+  assert.equal(storeText(), before);
+  // Nor one that lists nothing, which would say so.
+  screen(() => key("i"));
+  await heldCount(2);
+  screen(() => key("\x1b"));
+  held[1].answer({ code: 0, stdout: JSON.stringify({ schema: 2, profiles: [] }) });
+  await settle();
+  assert.equal(ui.settings.mode, "list");
+  assert.equal(ui.settings.info, null);
+  // Opened again before the first answer: the first is dropped, the second shown.
+  held.length = 0;
+  screen(() => key("i"));
+  await heldCount(1);
+  screen(() => key("\x1b"));
+  screen(() => key("i"));
+  await heldCount(2);
+  held[0].answer({ code: 1, stderr: "✗ error: stale\n" });
+  await settle();
+  assert.equal(ui.settings.mode, "import");
+  assert.equal(ui.settings.picker.loading, true);
+  assert.equal(ui.settings.error, null);
+  held[1].answer({ code: 0, stdout: JSON.stringify({ schema: 2, profiles: MCC_USAGE }) });
+  await settle();
+  lines = screen(draw);
+  assert.equal(ui.settings.picker.loading, false);
+  assert.equal(ui.settings.error, null);
+  assert.ok(lines.some((l) => /^▌ \[ \] cskonal/.test(l ?? "")), lines.join("\n"));
+  assert.equal(storeText(), before);
+  screen(() => key("\x1b\x1b"));
+});
+
+test("an import whose mcc env answers after the picker closed or opened again saves nothing (#63)", async (t) => {
+  const dir = home(t, { ".mcc/profiles/cus_konal/settings.json": JSON.stringify({ model: "opus", effortLevel: "high" }) });
+  useProfiles(dir, [CC]);
+  mccOnPath(t);
+  mccProfiles(MCC_USAGE, { cskonal: path.join(dir, ".mcc/profiles/cus_konal") });
+  holdMcc(t, (args) => args[0] === "env");
+  const before = storeText();
+  const env = { code: 0, stdout: `export CLAUDE_CONFIG_DIR='${path.join(dir, ".mcc/profiles/cus_konal")}'\nunset MCC_PROFILE\n` };
+  // Closed: enter on cskonal, then esc before mcc env answers.
+  setupGitHub("issues");
+  screen(() => key("s"));
+  await picked(() => key("i"));
+  screen(() => key("\r"));
+  await heldCount(1);
+  screen(() => key("\x1b"));
+  held[0].answer(env);
+  await settle();
+  let lines = screen(draw);
+  assert.equal(ui.settings.mode, "list");
+  assert.equal(ui.settings.error, null);
+  assert.equal(ui.settings.info, null);
+  assert.ok(!text(lines).includes("Imported"), lines.join("\n"));
+  assert.equal(storeText(), before);
+  // Opened again before it answers: the new picker stays, and nothing is saved.
+  held.length = 0;
+  await picked(() => key("i"));
+  screen(() => key("\r"));
+  await heldCount(1);
+  screen(() => key("\x1b"));
+  await picked(() => key("i"));
+  held[0].answer(env);
+  await settle();
+  lines = screen(draw);
+  assert.equal(ui.settings.mode, "import");
+  assert.equal(ui.settings.picker.importing, null);
+  assert.equal(ui.settings.error, null);
+  assert.equal(ui.settings.info, null);
+  assert.ok(!text(lines).includes("Imported cskonal"), lines.join("\n"));
+  assert.equal(storeText(), before);
+  screen(() => key("\x1b\x1b"));
+});
+
+test("the import says why when mcc can't list its profiles, or has none to import (#63)", async (t) => {
+  claudeHome(t);
+  mccOnPath(t);
+  for (const [answer, says] of [
+    [{ code: 1, stderr: "\x1b[31m✗ error: can't read ~/.mcc\x1b[0m\nmore\n" }, "Can't list mcc's profiles: `mcc usage --json-v2` failed: ✗ error: can't read ~/.mcc"],
+    [{ code: 0, stdout: JSON.stringify({ schema: 1, accounts: [] }) }, "Can't list mcc's profiles: unexpected mcc output (schema 1); update mcc"],
+    [{ code: 0, stdout: JSON.stringify({ schema: 2, profiles: [MCC_USAGE[3]] }) }, "mcc has no Claude Code profile to import"],
+  ]) {
+    mcc = () => answer;
+    setupGitHub("issues");
+    screen(() => key("s"));
+    const lines = await picked(() => key("i"));
+    assert.ok(text(lines).includes(says), lines.join("\n"));
+    // Enter imports nothing, with nothing listed.
+    calls.length = 0;
+    await picked(() => key("\r"));
+    assert.deepEqual(calls, []);
+    screen(() => key("\x1b\x1b"));
+  }
+});
+
+test("importing an mcc profile adds a profile with the model and thinking level of its own settings (#63)", async (t) => {
+  const dir = home(t, {
+    // cskonal's folder isn't named after it: it is the one mcc env names.
+    ".mcc/profiles/cus_konal/settings.json": JSON.stringify({ model: "opus", effortLevel: "high", theme: "dark" }),
+    ".claude/settings.json": JSON.stringify({ model: "opus[1m]", effortLevel: "medium" }),
+  });
+  useProfiles(dir, [CC]);
+  mccOnPath(t);
+  mccProfiles(MCC_USAGE, { cskonal: path.join(dir, ".mcc/profiles/cus_konal"), default: null });
+  setupGitHub("issues");
+  screen(() => key("s"));
+  await picked(() => key("i"));
+  calls.length = 0;
+  let lines = await picked(() => key("\r"));
+  assert.deepEqual(mccCalls(), ["env -q --shell bash cskonal"]);
+  let stored = JSON.parse(storeText());
+  assert.equal(stored.version, 7);
+  assert.deepEqual(stored.profiles, [CC, { id: "cskonal", name: "mcc cskonal", harness: "mcc", mccProfile: "cskonal", model: "opus", thinking: "high" }]);
+  assert.ok(text(lines).includes("Imported cskonal as mcc cskonal: mcc profile cskonal · opus · thinking high"), lines.join("\n"));
+  // Back in the list, the new profile selected, its description naming its mcc profile.
+  assert.equal(ui.settings.mode, "list");
+  assert.ok(lines.some((l) => /^▌ mcc cskonal +cskonal$/.test(l?.trimEnd() ?? "")), lines.join("\n"));
+  // mcc's default lives in ~/.claude: its model can't be passed on (opus[1m]), so it
+  // is left empty, which starts the profile's own; its thinking level is kept.
+  await picked(() => key("i"));
+  lines = await picked(() => key("j\r"));
+  stored = JSON.parse(storeText());
+  assert.deepEqual(stored.profiles.at(-1), { id: "mcc-default", name: "mcc default", harness: "mcc", mccProfile: "default", thinking: "medium" });
+  // One mcc env fails for: it says why, and nothing is saved.
+  const before = storeText();
+  await picked(() => key("i"));
+  lines = await picked(() => key("jj\r"));
+  assert.ok(text(lines).includes("Can't import work: mcc env failed: ✗ error: no profile named \"work\""), lines.join("\n"));
+  assert.equal(storeText(), before);
+  assert.equal(ui.settings.mode, "import");
+  screen(() => key("\x1b\x1b"));
+});
+
+test("a read-only profiles file isn't written by an import (#63)", async (t) => {
+  const dir = home(t);
+  const newer = JSON.stringify({ version: 8, profiles: [], assign: {} });
+  fs.writeFileSync(useProfiles(dir, []), newer);
+  mccOnPath(t);
+  mccProfiles(MCC_USAGE, { cskonal: path.join(dir, ".claude") });
+  setupGitHub("issues");
+  screen(() => key("s"));
+  await picked(() => key("i"));
+  const lines = await picked(() => key("\r"));
+  assert.ok(shows(lines, "Not saved: The profiles file is version 8, not 1, 2, 3, 4, 5, 6 or 7: it is read only here"), lines.join("\n"));
+  assert.equal(storeText(), newer);
+  screen(() => key("\x1b\x1b"));
+});
+
+test("an imported profile keeps its mcc profile when edited, and leaves it behind on another harness (#63)", (t) => {
+  const dir = home(t);
+  useProfiles(dir, [{ id: "work", name: "mcc work", harness: "mcc", mccProfile: "work", model: "opus" }]);
+  mccOnPath(t);
+  setupGitHub("issues");
+  let lines = screen(() => key("sj"));
+  assert.ok(text(lines).includes("mcc profile work · opus"), lines.join("\n"));
+  assert.ok(!text(lines).includes("Claude Code via mcc run · mcc profile"), lines.join("\n"));
+  // The mcc profile comes first, so a narrow Settings list still shows it whole.
+  lines = screenAt(32, 24, draw);
+  assert.ok(lines.some((l) => /^▌ {3}mcc profile work/.test(l ?? "")), lines.join("\n"));
+  lines = screen(() => key("e"));
+  assert.ok(text(lines).includes("Starts the mcc profile work, imported from mcc. Another harness leaves it behind."), lines.join("\n"));
+  screen(() => key("!"));
+  screen(() => key("\r"));
+  let stored = JSON.parse(storeText());
+  assert.equal(stored.version, 7);
+  assert.deepEqual(stored.profiles, [{ id: "work", name: "mcc work!", harness: "mcc", mccProfile: "work", model: "opus" }]);
+  // Claude Code itself starts no mcc profile: saved without it, the file goes back to version 1.
+  screen(() => key("e"));
+  lines = screen(() => key("\x1b[B\x1b[B\x1b[C"));
+  assert.equal(ui.settings.form.harness, "claude");
+  assert.ok(!text(lines).includes("Starts the mcc profile"), lines.join("\n"));
+  screen(() => key("\r"));
+  stored = JSON.parse(storeText());
+  assert.equal(stored.version, 1);
+  assert.deepEqual(stored.profiles, [{ id: "work", name: "mcc work!", harness: "claude", model: "opus" }]);
+});
+
+test("an imported profile is in the profile menu, and starts mcc run --profile with its own skills (#63)", async (t) => {
+  // The skill is only in the imported profile's own folder, not in ~/.claude.
+  const dir = home(t, { ".mcc/profiles/cus_konal/skills/issue-resolver/SKILL.md": "x" });
+  useProfiles(dir, [{ id: "cskonal", name: "mcc cskonal", harness: "mcc", mccProfile: "cskonal", model: "opus", thinking: "high" }], { resolve: "cskonal" });
+  const bin = mccOnPath(t);
+  mccProfiles([], { cskonal: path.join(dir, ".mcc/profiles/cus_konal") });
+  setupGitHub("issues");
+  fakeRex(agentHere());
+  const menu = screen(() => key("a"));
+  assert.ok(menu.some((l) => l?.includes("mcc cskonal")), menu.join("\n"));
+  assert.deepEqual(ui.menu.entries.map((e) => e.id), ["default", "cskonal"]);
+  const after = await screenAsync(() => key("\r"));
+  assert.deepEqual(splitCommand(), [bin, "run", "--profile", "cskonal", "--", "--model", "opus", "--effort", "high", "/issue-resolver 12"]);
+  assert.deepEqual(mccCalls(), ["env -q --shell bash cskonal"]);
+  assert.ok(text(after).includes(`${OPENED_MCC} /issue-resolver 12`), after.join("\n"));
+});
+
+test("an imported profile whose mcc profile is gone says so, not that the skill is missing (#63)", async (t) => {
+  const dir = home(t, { ".mcc/profiles/cus_konal/skills/issue-resolver/SKILL.md": "x" });
+  useProfiles(dir, [{ id: "cskonal", name: "mcc cskonal", harness: "mcc", mccProfile: "cskonal" }], { resolve: "cskonal" });
+  mccOnPath(t);
+  // Renamed or deleted in mcc since it was imported.
+  mccProfiles([], {});
+  setupGitHub("issues");
+  fakeRex(agentHere());
+  screen(() => key("a"));
+  const after = await screenAsync(() => key("\r"));
+  assert.deepEqual(mccCalls(), ["env -q --shell bash cskonal"]);
+  assert.deepEqual(rexCalls(), ["view", "process block:agent"]);
+  assert.ok(text(after).includes("mcc can't find the mcc profile cskonal (mcc env failed: ✗ error: no profile named \"cskonal\"): press s to import it again, or to pick another profile for"), after.join("\n"));
+  assert.ok(!text(after).includes("skill isn't found"), after.join("\n"));
+  assert.ok(!after.some((l) => l?.trim() === IDD), after.join("\n"));
+});
+
+test("Test of an imported profile checks mcc finds its own mcc profile (#63)", async (t) => {
+  const dir = home(t);
+  useProfiles(dir, [{ id: "cskonal", name: "mcc cskonal", harness: "mcc", mccProfile: "cskonal" }]);
+  mccOnPath(t);
+  mccProfiles([], { cskonal: path.join(dir, ".mcc/profiles/cus_konal") });
+  setupGitHub("issues");
+  screen(() => key("sje"));
+  const before = storeText();
+  calls.length = 0;
+  let lines = await tested(() => key("\x14"));
+  assert.deepEqual(mccCalls(), ["--version", "env -q --shell bash cskonal"]);
+  assert.ok(text(lines).includes("Test passed: mcc runs (mcc 0.12.0), and mcc finds the mcc profile cskonal. Nothing was saved."), lines.join("\n"));
+  mccProfiles([], {});
+  lines = await tested(() => key("\x14"));
+  assert.ok(text(lines).includes("Test failed: `mcc env -q --shell bash cskonal` failed: ✗ error: no profile named \"cskonal\""), lines.join("\n"));
+  assert.equal(storeText(), before);
+  screen(() => key("\x1b\x1b"));
+});
+
+test("in a narrow import picker, a profile's name stays readable and its tags give first (#63)", async (t) => {
+  const dir = home(t);
+  useProfiles(dir, [{ id: "cus-konal", name: "mcc cus_konal", harness: "mcc", mccProfile: "cus_konal" }]);
+  mccOnPath(t);
+  mccProfiles([{ name: "cus_konal", provider: "claude", is_default: true, usage: { status: "ok" } }, ...MCC_USAGE.filter((m) => !m.is_default)]);
+  setupGitHub("issues");
+  screen(() => key("s"));
+  await picked(() => key("i"));
+  for (const cols of [28, 30]) {
+    const lines = screenAt(cols, 24, draw);
+    const row = lines.find((l) => /^▌ /.test(l ?? ""));
+    assert.ok(width(row) <= cols, `${cols}: ${row}`);
+    // "default · imported" is cut, not the name.
+    assert.match(row, /^▌ {2}✓ {2}cus_konal +default.*…$/, `${cols}:\n${lines.join("\n")}`);
+  }
+  // Wide enough, both are whole.
+  const lines = screenAt(40, 24, draw);
+  assert.ok(lines.some((l) => /^▌ {2}✓ {2}cus_konal +default · imported$/.test(l ?? "")), lines.join("\n"));
+  screen(() => key("\x1b\x1b"));
+});
+
+// ── Importing several mcc profiles at once (#63) ──
+// A picker row, without its trailing spaces: the box, then the name.
+const pickRow = (lines, name) => lines.find((l) => new RegExp(`^[▌ ] (\\[[ x]\\]| ✓ ) ${name}( |$)`).test(l ?? ""))?.trimEnd();
+// The store's writes: each save renames its temporary file onto it once.
+const storeWrites = (t) => {
+  const rename = t.mock.method(fs, "renameSync");
+  return () => rename.mock.calls.filter((c) => c.arguments[1] === storeFile()).length;
+};
+
+test("space marks and unmarks mcc profiles, a marks every one not imported or none, and one imported can't be marked (#63)", async (t) => {
+  const dir = home(t);
+  useProfiles(dir, [{ id: "w", name: "My work", harness: "mcc", mccProfile: "work" }]);
+  mccOnPath(t);
+  mccProfiles(MCC_USAGE);
+  setupGitHub("issues");
+  screen(() => key("s"));
+  await picked(() => key("i"));
+  let lines = screen(() => key(" "));
+  assert.deepEqual([...ui.settings.picker.marked], ["cskonal"]);
+  assert.match(pickRow(lines, "cskonal"), /^▌ \[x\] cskonal$/, lines.join("\n"));
+  assert.match(pickRow(lines, "default"), /^ {2}\[ \] default +default$/, lines.join("\n"));
+  assert.match(pickRow(lines, "work"), /^ {3}✓ {2}work +imported$/, lines.join("\n"));
+  // The button says how many enter imports, and the other one unmarks.
+  assert.ok(lines.some((l) => /^▌ {4}Import 1 {3}Unmark\s*$/.test(l ?? "")), lines.join("\n"));
+  lines = screen(() => key(" "));
+  assert.equal(ui.settings.picker.marked.size, 0);
+  assert.match(pickRow(lines, "cskonal"), /^▌ \[ \] cskonal$/, lines.join("\n"));
+  assert.ok(lines.some((l) => /^▌ {4}Import {3}Mark\s*$/.test(l ?? "")), lines.join("\n"));
+  // a: every one not imported, from one marked too; then, all marked, none.
+  screen(() => key(" "));
+  lines = screen(() => key("a"));
+  assert.deepEqual([...ui.settings.picker.marked].sort(), ["cskonal", "default"]);
+  assert.match(pickRow(lines, "default"), /^ {2}\[x\] default/, lines.join("\n"));
+  assert.ok(lines.some((l) => /^▌ {4}Import 2 {3}Unmark\s*$/.test(l ?? "")), lines.join("\n"));
+  screen(() => key("a"));
+  assert.equal(ui.settings.picker.marked.size, 0);
+  // One imported already: refused, as enter refuses it, and still Imported ✓ alone.
+  screen(() => key("a"));
+  lines = screen(() => key("jj "));
+  assert.ok(text(lines).includes("work is imported already, as My work: edit that profile instead"), lines.join("\n"));
+  assert.deepEqual([...ui.settings.picker.marked].sort(), ["cskonal", "default"]);
+  assert.ok(lines.some((l) => /^▌ {4}Imported ✓\s*$/.test(l ?? "")), lines.join("\n"));
+  // The key hints and ? name both keys.
+  assert.ok(text(lines.slice(-2)).includes("␣ mark"), lines.join("\n"));
+  lines = screenAt(60, 40, () => key("?"));
+  assert.ok(shows(lines, "␣ Mark or unmark it, to import several at once"), lines.join("\n"));
+  assert.ok(shows(lines, "a Mark every one not imported yet, or none"), lines.join("\n"));
+  screen(() => key("\x1b"));
+  assert.deepEqual(mccCalls(), ["usage --json-v2"]);
+  screen(() => key("\x1b\x1b"));
+});
+
+test("with profiles marked, no picker row is wider than the pane at 28, 30, 32 and 40 cells, and names stay readable (#63)", async (t) => {
+  const dir = home(t);
+  useProfiles(dir, [{ id: "cus-konal", name: "mcc cus_konal", harness: "mcc", mccProfile: "cus_konal" }]);
+  mccOnPath(t);
+  mccProfiles([{ name: "cus_konal", provider: "claude", is_default: true, usage: { status: "ok" } }, ...MCC_USAGE.filter((m) => !m.is_default),
+    { name: "a-rather-long-profile-name", provider: "claude", is_default: false, usage: { status: "ok" } }]);
+  setupGitHub("issues");
+  screen(() => key("s"));
+  await picked(() => key("i"));
+  screen(() => key("a"));
+  for (const cols of [28, 30, 32, 40]) {
+    const lines = screenAt(cols, 30, draw);
+    for (const l of lines) assert.ok(width(l ?? "") <= cols, `${cols}: ${l}`);
+    assert.match(pickRow(lines, "cus_konal"), /^▌ {2}✓ {2}cus_konal +default/, `${cols}:\n${lines.join("\n")}`);
+    assert.match(pickRow(lines, "cskonal"), /^ {2}\[x\] cskonal$/, `${cols}:\n${lines.join("\n")}`);
+    assert.ok(lines.some((l) => /^ {2}\[x\] a-rather-l/.test(l ?? "")), `${cols}:\n${lines.join("\n")}`);
+    assert.ok(text(lines.slice(-3)).includes("esc back"), `${cols}:\n${lines.join("\n")}`);
+  }
+  screen(() => key("\x1b\x1b"));
+});
+
+test("enter imports every marked mcc profile in one write, each id its own, then selects the first (#63)", async (t) => {
+  const dir = home(t, {
+    ".mcc/profiles/a/settings.json": JSON.stringify({ model: "opus", effortLevel: "high" }),
+    ".mcc/profiles/b/settings.json": JSON.stringify({ model: "sonnet" }),
+    ".mcc/profiles/w/settings.json": JSON.stringify({}),
+  });
+  useProfiles(dir, [CC]);
+  mccOnPath(t);
+  // Two names that make the same id, and one more.
+  const list = ["cus_konal", "cus-konal", "work"].map((name) => ({ name, provider: "claude", is_default: false, usage: { status: "ok" } }));
+  mccProfiles(list, { cus_konal: path.join(dir, ".mcc/profiles/a"), "cus-konal": path.join(dir, ".mcc/profiles/b"), work: path.join(dir, ".mcc/profiles/w") });
+  setupGitHub("issues");
+  screen(() => key("s"));
+  await picked(() => key("i"));
+  // Marked out of order, imported in the list's.
+  screen(() => key("j k "));
+  calls.length = 0;
+  const writes = storeWrites(t);
+  let lines = await picked(() => key("\r"));
+  assert.deepEqual(mccCalls(), ["env -q --shell bash cus_konal", "env -q --shell bash cus-konal"]);
+  assert.equal(writes(), 1);
+  assert.deepEqual(JSON.parse(storeText()).profiles, [CC,
+    { id: "cus-konal", name: "mcc cus_konal", harness: "mcc", mccProfile: "cus_konal", model: "opus", thinking: "high" },
+    { id: "cus-konal-2", name: "mcc cus-konal", harness: "mcc", mccProfile: "cus-konal", model: "sonnet" }]);
+  assert.ok(text(lines).includes("Imported 2 profiles from mcc: cus_konal, cus-konal"), lines.join("\n"));
+  assert.equal(ui.settings.mode, "list");
+  assert.ok(lines.some((l) => /^▌ mcc cus_konal +cus-konal$/.test(l?.trimEnd() ?? "")), lines.join("\n"));
+  // With none marked, enter imports the selected one alone, as before.
+  await picked(() => key("i"));
+  assert.equal(ui.settings.picker.marked.size, 0);
+  lines = await picked(() => key("jj\r"));
+  assert.equal(writes(), 2);
+  assert.ok(text(lines).includes("Imported work as mcc work: mcc profile work"), lines.join("\n"));
+  assert.deepEqual(JSON.parse(storeText()).profiles.map((p) => p.id), ["cc", "cus-konal", "cus-konal-2", "work"]);
+});
+
+test("when some marked mcc profiles fail, the others are saved, and the failed ones say why and stay marked (#63)", async (t) => {
+  const dir = home(t, { ".mcc/profiles/cus_konal/settings.json": JSON.stringify({ model: "opus" }), ".claude/settings.json": JSON.stringify({ effortLevel: "low" }) });
+  useProfiles(dir, [CC]);
+  mccOnPath(t);
+  // work has no folder: its mcc env fails. devin isn't listed.
+  mccProfiles(MCC_USAGE, { cskonal: path.join(dir, ".mcc/profiles/cus_konal"), default: null });
+  setupGitHub("issues");
+  screen(() => key("s"));
+  await picked(() => key("i"));
+  screen(() => key("a"));
+  const writes = storeWrites(t);
+  let lines = await picked(() => key("\r"));
+  assert.equal(writes(), 1);
+  assert.deepEqual(JSON.parse(storeText()).profiles.map((p) => p.mccProfile), [undefined, "cskonal", "default"]);
+  assert.ok(text(lines).includes("Can't import work: mcc env failed: ✗ error: no profile named \"work\""), lines.join("\n"));
+  assert.ok(text(lines).includes("Imported 2 profiles from mcc: cskonal, default"), lines.join("\n"));
+  // The picker stays, with what's left marked and the others ✓.
+  assert.equal(ui.settings.mode, "import");
+  assert.deepEqual([...ui.settings.picker.marked], ["work"]);
+  assert.match(pickRow(lines, "cskonal"), /^▌ {2}✓ {2}cskonal +imported$/, lines.join("\n"));
+  assert.match(pickRow(lines, "work"), /^ {2}\[x\] work$/, lines.join("\n"));
+  assert.ok(lines.some((l) => /^▌ {4}Imported ✓\s*$/.test(l ?? "")), lines.join("\n"));
+  // All failing: nothing written, each named.
+  mccProfiles(MCC_USAGE, {});
+  screen(() => key("jj"));
+  lines = await picked(() => key("\r"));
+  assert.equal(writes(), 1);
+  assert.ok(text(lines).includes("Can't import work: mcc env failed"), lines.join("\n"));
+  screen(() => key("\x1b\x1b"));
+});
+
+test("a read-only profiles file isn't written by importing several, and they stay marked (#63)", async (t) => {
+  const dir = home(t);
+  const newer = JSON.stringify({ version: 8, profiles: [], assign: {} });
+  fs.writeFileSync(useProfiles(dir, []), newer);
+  mccOnPath(t);
+  mccProfiles(MCC_USAGE, { cskonal: path.join(dir, ".claude"), default: null });
+  setupGitHub("issues");
+  screen(() => key("s"));
+  await picked(() => key("i"));
+  screen(() => key(" j "));
+  const lines = await picked(() => key("\r"));
+  assert.ok(shows(lines, "Not saved: The profiles file is version 8, not 1, 2, 3, 4, 5, 6 or 7: it is read only here"), lines.join("\n"));
+  assert.ok(!text(lines).includes("Imported"), lines.join("\n"));
+  assert.equal(storeText(), newer);
+  assert.equal(ui.settings.mode, "import");
+  assert.deepEqual([...ui.settings.picker.marked], ["cskonal", "default"]);
+  screen(() => key("\x1b\x1b"));
+});
+
+test("importing several says which one it waits for, and stops, saving nothing, when the picker closes meanwhile (#63)", async (t) => {
+  const dir = home(t, { ".mcc/profiles/cus_konal/settings.json": JSON.stringify({ model: "opus" }) });
+  useProfiles(dir, [CC]);
+  mccOnPath(t);
+  mccProfiles(MCC_USAGE, { cskonal: path.join(dir, ".mcc/profiles/cus_konal"), default: null, work: null });
+  holdMcc(t, (args) => args[0] === "env");
+  const before = storeText();
+  const env = { code: 0, stdout: `export CLAUDE_CONFIG_DIR='${path.join(dir, ".mcc/profiles/cus_konal")}'\nunset MCC_PROFILE\n` };
+  setupGitHub("issues");
+  screen(() => key("s"));
+  await picked(() => key("i"));
+  screen(() => key("a"));
+  let lines = screen(() => key("\r"));
+  await heldCount(1);
+  lines = screen(draw);
+  assert.ok(text(lines).includes("Importing cskonal from mcc… (1 of 3)"), lines.join("\n"));
+  // Marks wait too, as enter does.
+  screen(() => key(" a"));
+  assert.equal(ui.settings.picker.marked.size, 3);
+  held[0].answer(env);
+  await heldCount(2);
+  lines = screen(draw);
+  assert.ok(text(lines).includes("Importing default from mcc… (2 of 3)"), lines.join("\n"));
+  // Closed before the second answers: the third isn't asked for, and nothing is saved.
+  screen(() => key("\x1b"));
+  held[1].answer(env);
+  await settle();
+  lines = screen(draw);
+  assert.equal(held.length, 2);
+  assert.equal(ui.settings.mode, "list");
+  assert.equal(ui.settings.error, null);
+  assert.equal(ui.settings.info, null);
+  assert.ok(!text(lines).includes("Imported"), lines.join("\n"));
+  assert.equal(storeText(), before);
+  screen(() => key("\x1b"));
+});
+
+test("with mcc found, Settings and the import picker keep their title and key hints whole at 28, 30, 31, 32 and 40 cells (#63)", async (t) => {
+  claudeHome(t);
+  mccOnPath(t);
+  mccProfiles(MCC_USAGE);
+  for (const cols of [28, 30, 31, 32, 40]) {
+    const at = (fn) => {
+      const lines = screenAt(cols, 24, fn);
+      for (const l of lines) assert.ok(width(l ?? "") <= cols, `${cols}: ${l}`);
+      return lines;
+    };
+    setupGitHub("issues");
+    let lines = at(() => key("s"));
+    // ⚙ Settings stays whole: + Import shows from 32 cells, where it fits beside it;
+    // narrower, the header is as without mcc, and i still imports.
+    if (cols >= 32) assert.match(lines[0], /^ ⚙ Settings +\+ Import {2}\+ New {2}✕ $/, `${cols}:\n${lines.join("\n")}`);
+    else assert.match(lines[0], /^ ⚙ Settings +\+ New {2}✕ $/, `${cols}:\n${lines.join("\n")}`);
+    let foot = text(lines.slice(-3));
+    for (const hint of ["n new", "i mcc", "e edit", "d delete", "R/V assign", "esc back"]) assert.ok(foot.includes(hint), `${cols}: ${foot}`);
+    assert.ok(!foot.includes("…"), `${cols}: ${foot}`);
+    await picked(() => key("i"));
+    lines = at(draw);
+    foot = text(lines.slice(-2));
+    for (const hint of ["↑↓ select", "⏎ import", "? keys", "esc back", "␣ mark"]) assert.ok(foot.includes(hint), `${cols}: ${foot}`);
+    assert.ok(!foot.includes("…"), `${cols}: ${foot}`);
+    assert.ok(lines.some((l) => /^▌ \[ \] cskonal/.test(l ?? "")) && lines.some((l) => /^ {2}\[ \] work/.test(l ?? "")), `${cols}:\n${lines.join("\n")}`);
+    screen(() => key("\x1b\x1b"));
+  }
 });

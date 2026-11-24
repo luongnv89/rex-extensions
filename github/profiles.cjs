@@ -22,6 +22,10 @@
 // Ahead of herdr-github too (#48): a profile's own launch arguments (args, ARGS_*,
 // validateArgs), which buildLaunch puts after its model and thinking flags, and
 // store version 5 that holds them.
+// Ahead of herdr-github too (#63): profiles imported from mcc. A profile's own mcc
+// profile (mccProfile, MCC_PROFILE), which buildLaunch passes as `mcc run --profile`
+// and buildCheck's account step names; store version 7 that holds it; and the
+// import itself (parseMccUsage, importedProfile).
 "use strict";
 
 // Agent profiles for the Resolve and Review actions: which harness starts, with
@@ -96,10 +100,10 @@ const DEFAULT_PROFILE = Object.freeze({ id: "default", name: "Claude Code via mc
 // The newest store version this reads and writes. A store is written in the
 // lowest version that holds it: 1 without custom prompts or models, 2 with custom
 // prompts, 3 with custom models, 4 with a custom Auto-pilot prompt, 5 with a
-// profile's own launch arguments (#48), 6 with a button label of your own.
-// So an older panel keeps using it until then.
-const STORE_VERSION = 6;
-const READS = [1, 2, 3, 4, 5, 6];
+// profile's own launch arguments (#48), 6 with a button label of your own, 7 with a
+// profile imported from mcc (#63). So an older panel keeps using it until then.
+const STORE_VERSION = 7;
+const READS = [1, 2, 3, 4, 5, 6, 7];
 
 const ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const NAME = /^[^\x00-\x1f\x7f-\x9f\u2028\u2029]{1,40}$/;
@@ -107,6 +111,11 @@ const NAME = /^[^\x00-\x1f\x7f-\x9f\u2028\u2029]{1,40}$/;
 // "-" that a harness would read as a flag. Aliases such as opus[1m] don't fit.
 const MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$/;
 const MODEL_RULE = "Model: letters, digits and . _ : / @ + - only, starting with a letter or digit";
+// The name of an mcc profile a profile starts (#63), as `mcc run --profile` takes
+// it: no spaces, quotes or shell metacharacters, and no leading "-" that mcc would
+// read as a flag. "default" is mcc's own name for ~/.claude.
+const MCC_PROFILE = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$/;
+const MCC_PROFILE_RULE = "Mcc profile: letters, digits and . _ - only, starting with a letter, digit or _";
 // What a prompt can't hold: control, format (bidi, zero-width), private-use,
 // unassigned and surrogate characters, line and paragraph separators, and the
 // backslash, which some shells read inside quotes. Any other text is sent as is:
@@ -159,6 +168,12 @@ function validateProfile(p) {
     }
   }
   if (p.args !== undefined && p.args !== null) errors.push(...validateArgs(p.args));
+  // Only `mcc run` takes an mcc profile: on another harness it would be dropped
+  // without a word, and the profile start another account than it says (#63).
+  if (!blank(p.mccProfile)) {
+    if (typeof p.mccProfile !== "string" || !MCC_PROFILE.test(p.mccProfile)) errors.push(MCC_PROFILE_RULE);
+    else if (p.harness !== "mcc") errors.push(`Mcc profile: only ${HARNESS_NAMES.mcc} starts one`);
+  }
   return errors;
 }
 
@@ -180,11 +195,12 @@ function validateArgs(args) {
   return errors;
 }
 
-// The profile's own fields, with an empty model, thinking level or list of
-// launch arguments left out. Arguments that aren't a list are kept, so
+// The profile's own fields, with an empty mcc profile, model, thinking level or
+// list of launch arguments left out. Arguments that aren't a list are kept, so
 // validateProfile refuses them rather than they quietly go.
 function normalizeProfile(p) {
   const out = { id: p.id, name: p.name, harness: p.harness };
+  if (!blank(p.mccProfile)) out.mccProfile = p.mccProfile;
   if (!blank(p.model)) out.model = p.model;
   if (!blank(p.thinking)) out.thinking = p.thinking;
   if (p.args !== undefined && p.args !== null && !(Array.isArray(p.args) && !p.args.length)) out.args = Array.isArray(p.args) ? [...p.args] : p.args;
@@ -279,6 +295,9 @@ function validateLabel(text) {
 // The profile's own launch arguments (#48) go right after the model and thinking
 // flags, each one word, and before the prompt: before Devin's -- and OpenCode's
 // --prompt, and after vibe and env's variable. With none, nothing changes.
+// An mcc profile imported from mcc (#63) starts its own mcc profile, whatever the
+// project's is: `mcc run --profile <name> -- …`. Its config folder is pinned, so an
+// empty model or thinking level is still what a plain run of that profile uses.
 function buildLaunch(profile, prompt) {
   const errors = validateProfile(profile);
   if (errors.length) throw new Error(`Invalid profile: ${errors.join("; ")}`);
@@ -302,7 +321,7 @@ function buildLaunch(profile, prompt) {
     warnings.push("OpenCode ignores this profile's thinking level: it has no flag for it when it starts");
   }
   flags.push(...args);
-  if (harness === "mcc") return { mode: "command", argv: ["mcc", "run", "--", ...flags, prompt], warnings };
+  if (harness === "mcc") return { mode: "command", argv: ["mcc", "run", ...mccPin(profile), "--", ...flags, prompt], warnings };
   if (harness === "devin") return { mode: "command", argv: ["devin", ...flags, "--", prompt], warnings };
   if (harness === "vibe") return { mode: "command", argv: [...(model ? ["env", `VIBE_ACTIVE_MODEL=${model}`] : []), "vibe", ...flags, prompt], warnings };
   if (harness === "opencode" && model) {
@@ -311,6 +330,10 @@ function buildLaunch(profile, prompt) {
   }
   return { mode: "agent", kind: harness, extraArgs: flags, warnings };
 }
+
+// `--profile <name>` for a profile imported from mcc (#63), else nothing: `mcc run`
+// then starts the project's own profile, as before.
+const mccPin = (profile) => (blank(profile.mccProfile) ? [] : ["--profile", profile.mccProfile]);
 
 // ── Testing a profile (#43) ─────────────────────────────────────────────────
 // What the profile form's Test runs to check that a profile's agent can start,
@@ -321,7 +344,8 @@ function buildLaunch(profile, prompt) {
 // `bin` is the harness's command, found on PATH; each step runs it with `args`:
 //   "version" — `<bin> --version`, for every harness: the command is there and runs;
 //   "account" — `mcc env -q --shell bash`, for mcc: the Claude Code account `mcc
-//     run` would use in the repo, as Resolve and Review read it (parseMccEnv);
+//     run` would use in the repo, as Resolve and Review read it (parseMccEnv); for a
+//     profile imported from mcc (#63), `mcc env -q --shell bash <name>`, its own;
 //   "models" — the models Pi (`pi --list-models`), OpenCode (`opencode models`) or
 //     Devin (`devin models list`, run in-process so it starts no background daemon)
 //     can start, when the profile has a model, which must be among them (listsModel).
@@ -331,11 +355,11 @@ function buildLaunch(profile, prompt) {
 function buildCheck(profile) {
   const p = profile && typeof profile === "object" ? profile : {};
   // Placeholders for the fields that don't change what starts, so only the others' reasons come back.
-  const errors = validateProfile({ id: "test", name: "Test", harness: p.harness, model: p.model, thinking: p.thinking });
+  const errors = validateProfile({ id: "test", name: "Test", harness: p.harness, mccProfile: p.mccProfile, model: p.model, thinking: p.thinking });
   if (errors.length) throw new Error(errors.join("; "));
   const { harness } = p, model = p.model || "";
   const steps = [{ kind: "version", args: ["--version"] }];
-  if (harness === "mcc") steps.push({ kind: "account", args: ["env", "-q", "--shell", "bash"] });
+  if (harness === "mcc") steps.push({ kind: "account", args: ["env", "-q", "--shell", "bash", ...(blank(p.mccProfile) ? [] : [p.mccProfile])] });
   const lists = { pi: ["--list-models"], opencode: ["models"], devin: ["models", "list", "--process-model", "in-process"] }[harness];
   if (model && lists) steps.push({ kind: "models", args: lists });
   return { bin: harness, steps, modelChecked: model ? Boolean(lists) : null };
@@ -375,7 +399,9 @@ function listsModel(harness, text, model) {
 // also holding "args": [word, …] (#48).
 // With a button label of your own, it is version 6: as version 5, also holding
 //   "labels": { "resolve": label | null, "review": label | null, "autopilot": label | null }
-// A panel from before version 2 (or 3, 4, 5 or 6) shows such a file read only, so never loses them.
+// With a profile imported from mcc, it is version 7: as version 6, a profile also
+// holding "mccProfile": name (#63).
+// A panel from before version 2 (or 3, 4, 5, 6 or 7) shows such a file read only, so never loses them.
 
 // Rex's own file, on the machine where the Rex server runs. One fixed path under
 // home, whatever the environment says, so it is always the same file.
@@ -488,7 +514,10 @@ function parseStore(text) {
 // holds one, so a panel that can't run it never drops it by saving (#31). With a
 // profile's own launch arguments, version 5, as version 4 with them in their
 // profiles, for the same reason (#48). With a button label of your own, version 6,
-// as version 5 with its labels last.
+// as version 5 with its labels last. With a profile imported from mcc, version 7, as
+// version 6 with its mccProfile, so an older panel, which shows the file read only,
+// never drops it by saving. That panel still starts an imported profile, but as a
+// plain `mcc run --` with the project's mcc profile (#63).
 function serializeStore(store) {
   const profiles = (store?.profiles ?? []).map(normalizeProfile);
   const assign = {}, prompts = {}, customModels = {};
@@ -502,7 +531,8 @@ function serializeStore(store) {
   }
   const autopilot = resolvePrompt(store, "autopilot");
   const labels = Object.fromEntries(LABEL_KEYS.map((a) => [a, resolveLabel(store, a)]));
-  const data = Object.values(labels).some((l) => l !== null) ? { version: 6, profiles, assign, prompts: { ...prompts, autopilot }, customModels, labels }
+  const data = profiles.some((p) => p.mccProfile) ? { version: 7, profiles, assign, prompts: { ...prompts, autopilot }, customModels, labels }
+    : Object.values(labels).some((l) => l !== null) ? { version: 6, profiles, assign, prompts: { ...prompts, autopilot }, customModels, labels }
     : profiles.some((p) => p.args) ? { version: 5, profiles, assign, prompts: { ...prompts, autopilot }, customModels }
     : autopilot !== null ? { version: 4, profiles, assign, prompts: { ...prompts, autopilot }, customModels }
     : Object.keys(customModels).length ? { version: 3, profiles, assign, prompts, customModels }
@@ -684,4 +714,43 @@ function parseMccEnv(text, home) {
   return null;
 }
 
-module.exports = { HARNESSES, HARNESS_NAMES, THINKING, MODELS, NO_MODEL, ACTION_KEYS, PROMPT_KEYS, DEFAULT_PROFILE, STORE_VERSION, ARGS_MAX_WORDS, ARGS_WORD_MAX, PROMPT_MAX, PROMPT_TOKEN, PROMPT_LIST_TOKEN, PROMPT_TOKENS, PROMPT_LABELS, LABEL_KEYS, DEFAULT_LABELS, LABEL_FIELDS, LABEL_MAX, validateProfile, validateArgs, normalizeProfile, validatePrompt, validatePromptTemplate, validateLabel, expandPrompt, expandNumbers, buildLaunch, buildCheck, listsModel, storePath, emptyStore, parseStore, serializeStore, upsertProfile, removeProfile, assignProfile, resolveProfile, profileChoices, findChoice, setPrompt, resolvePrompt, setLabel, resolveLabel, buttonLabel, modelChoices, addCustomModel, removeCustomModel, shellQuote, shellJoin, parseMccEnv };
+// ── Importing mcc profiles (#63) ────────────────────────────────────────────
+
+// The profiles `mcc usage --json-v2` lists that can be imported, in its order:
+// [{ name, isDefault }]. Devin's (provider "devin") aren't Claude Code, so `mcc run`
+// can't start them, and a name MCC_PROFILE refuses couldn't be passed on safely:
+// both are left out. Throws on output of another schema.
+function parseMccUsage(text) {
+  let doc;
+  try { doc = JSON.parse(text); } catch { doc = null; }
+  if (doc?.schema !== 2 || !Array.isArray(doc.profiles)) {
+    throw new Error(`unexpected mcc output (schema ${typeof doc?.schema === "number" ? doc.schema : "?"}); update mcc`);
+  }
+  return doc.profiles
+    .filter((p) => p && typeof p === "object" && p.provider !== "devin" && typeof p.name === "string" && MCC_PROFILE.test(p.name))
+    .map((p) => ({ name: p.name, isDefault: p.is_default === true }));
+}
+
+// The profile that starts mcc profile `name`: Claude Code via mcc run, pinned to it,
+// with the model and thinking level (effortLevel) of its settings.json, `settings`
+// (null without one), which is what a plain `mcc run` of it starts with. A value
+// this module can't pass on (opus[1m], an unknown level) is left empty, which still
+// starts that profile's own, its folder being pinned. The id is the name in
+// lowercase, other characters as -, at most 32, then -2, -3… while `store` has it;
+// mcc's "default" becomes mcc-default, "default" being the built-in profile's id.
+function importedProfile(name, settings, store) {
+  if (typeof name !== "string" || !MCC_PROFILE.test(name)) throw new Error(MCC_PROFILE_RULE);
+  const taken = new Set([DEFAULT_PROFILE.id, ...(store?.profiles ?? []).map((p) => p.id)]);
+  const slug = name.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+/, "");
+  const base = !slug || slug === DEFAULT_PROFILE.id ? `mcc-${slug || "profile"}` : slug;
+  let id = base.slice(0, 32);
+  for (let n = 2; taken.has(id); n++) id = `${base.slice(0, 31 - String(n).length)}-${n}`;
+  const model = settings?.model, thinking = settings?.effortLevel;
+  return normalizeProfile({
+    id, name: [...`mcc ${name}`].slice(0, 40).join(""), harness: "mcc", mccProfile: name,
+    model: typeof model === "string" && MODEL.test(model) ? model : "",
+    thinking: THINKING.mcc.includes(thinking) ? thinking : "",
+  });
+}
+
+module.exports = { HARNESSES, HARNESS_NAMES, THINKING, MODELS, NO_MODEL, ACTION_KEYS, PROMPT_KEYS, DEFAULT_PROFILE, STORE_VERSION, ARGS_MAX_WORDS, ARGS_WORD_MAX, PROMPT_MAX, PROMPT_TOKEN, PROMPT_LIST_TOKEN, PROMPT_TOKENS, PROMPT_LABELS, LABEL_KEYS, DEFAULT_LABELS, LABEL_FIELDS, LABEL_MAX, validateProfile, validateArgs, normalizeProfile, validatePrompt, validatePromptTemplate, validateLabel, expandPrompt, expandNumbers, buildLaunch, buildCheck, listsModel, storePath, emptyStore, parseStore, serializeStore, upsertProfile, removeProfile, assignProfile, resolveProfile, profileChoices, findChoice, setPrompt, resolvePrompt, setLabel, resolveLabel, buttonLabel, modelChoices, addCustomModel, removeCustomModel, shellQuote, shellJoin, parseMccEnv, parseMccUsage, importedProfile };

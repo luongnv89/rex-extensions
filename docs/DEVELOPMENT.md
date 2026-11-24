@@ -82,7 +82,8 @@ cd github && node --test --experimental-test-coverage
 | `REX_SSHTAB_E2E` | `sshtab/test/restore.e2e.test.js` | Set to `1` to run the agent session restore test on a throwaway Rex server. Needs Rex and zsh as the login shell. |
 | `REX_SESSION`, `REX_BLOCK` | github and mcc `panel.js` | Set by Rex in the panel's pane: the session and block the panel is in. |
 | `REX_GITHUB_STARTUP_MS` | github `panel.js` | How long Resolve/Review waits for the agent to start, in ms. Default 3000. |
-| `MCC_BIN` | mcc `panel.js` | The full path to `mcc`, when it isn't on `PATH` or in the usual install folders. |
+| `MCC_BIN` | mcc and github `panel.js` | The full path to `mcc`, when it isn't on `PATH` or in the usual install folders. The github panel passes over one that isn't the full path of an executable file. |
+| `REX_GITHUB_MCC_SYSTEM_DIRS` | github `panel.js` | Tests only: replaces `/opt/homebrew/bin` and `/usr/local/bin` among the folders the panel looks for `mcc` in, so the tests never find the machine's own mcc. |
 | `FAKE_REX_LOG`, `FAKE_REX_REJECT` | `test/install.test.js` | Control the stand-in `rex`: where it logs its calls, and whether `rex config check` rejects the extension's lines. |
 
 ## Test install.js safely

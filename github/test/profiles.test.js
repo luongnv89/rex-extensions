@@ -204,11 +204,11 @@ test("parseStore: no file is empty; bad JSON or another version is read only", (
     assert.match(r.warnings[0], /isn't valid JSON/);
   }
   // Version 2 holds custom prompts (#20), version 3 custom models (#24), version 4
-  // the Auto-pilot prompt (#31) and version 5 a profile's args (#48), version 6 button labels, and all are
-  // read; a newer one is read only.
-  const newer = P.parseStore(JSON.stringify({ version: 7, profiles: [ok({ harness: "pi" })], assign: { resolve: "p" } }));
+  // the Auto-pilot prompt (#31) and version 5 a profile's args (#48), version 6 button labels, version 7
+  // a profile imported from mcc (#63), and all are read; a newer one is read only.
+  const newer = P.parseStore(JSON.stringify({ version: 8, profiles: [ok({ harness: "pi" })], assign: { resolve: "p" } }));
   assert.equal(newer.readOnly, true);
-  assert.equal(newer.warnings[0], "The profiles file is version 7, not 1, 2, 3, 4, 5 or 6: it is read only here");
+  assert.equal(newer.warnings[0], "The profiles file is version 8, not 1, 2, 3, 4, 5, 6 or 7: it is read only here");
   assert.equal(P.resolveProfile(newer.store, "resolve").harness, "pi");
 });
 
@@ -245,9 +245,9 @@ test("parseStore skips bad, duplicate and reserved profiles, drops a missing ass
   const notList = P.parseStore(JSON.stringify({ version: 1, profiles: { a: 1 } }));
   assert.equal(notList.readOnly, true);
   assert.match(notList.warnings[0], /read only here/);
-  // Another version says so first, and only once (version 2 is read since #20, 3 since #24, 4 since #31, 5 since #48, 6 since button labels).
-  const both = P.parseStore(JSON.stringify({ version: 7, profiles: ["x"] }));
-  assert.match(both.warnings[0], /version 7/);
+  // Another version says so first, and only once (version 2 is read since #20, 3 since #24, 4 since #31, 5 since #48, 6 since button labels, 7 since #63).
+  const both = P.parseStore(JSON.stringify({ version: 8, profiles: ["x"] }));
+  assert.match(both.warnings[0], /version 8/);
   assert.ok(!both.warnings.some((w) => /fix or remove them/.test(w)));
   // What it writes, it reads back the same.
   const again = P.parseStore(P.serializeStore(store));
@@ -366,7 +366,7 @@ test("prompts: version 1 without them, version 2 with them, and a bad one makes 
   assert.match(r.warnings[0], /Some profiles in the file can't be used/);
   assert.ok(!r.warnings.some((w) => /A prompt in the file/.test(w)));
   // A newer version is read only, with its prompts still read.
-  r = hand({ resolve: "Go {number}" }, 7);
+  r = hand({ resolve: "Go {number}" }, 8);
   assert.equal(r.readOnly, true);
   assert.equal(r.store.prompts.resolve, "Go {number}");
 });
@@ -632,12 +632,13 @@ test("a hand-edited Auto-pilot prompt it can't use is skipped and makes the file
   assert.equal(r.store.prompts.autopilot, null);
   r = hand({ autopilot: " Go {numbers} " });
   assert.deepEqual(r, { store: { ...P.emptyStore(), prompts: { resolve: null, review: null, autopilot: "Go {numbers}" } }, warnings: [], readOnly: false });
-  // Version 4 is read, 5 since #48 and 6 since button labels; 7 is newer, read only.
+  // Version 4 is read, 5 since #48, 6 since button labels and 7 since #63; 8 is newer, read only.
   assert.equal(hand({}, 4).readOnly, false);
   assert.equal(hand({}, 5).readOnly, false);
   assert.equal(hand({}, 6).readOnly, false);
-  assert.equal(hand({}, 7).readOnly, true);
-  assert.equal(P.STORE_VERSION, 6);
+  assert.equal(hand({}, 7).readOnly, false);
+  assert.equal(hand({}, 8).readOnly, true);
+  assert.equal(P.STORE_VERSION, 7);
 });
 
 test("buildCheck names the commands that check a profile can start: --version, mcc's account, and Pi's or OpenCode's models (#43)", () => {
@@ -876,9 +877,9 @@ test("args it can't use make their profile skipped and the file read only; a new
   assert.deepEqual(hand([]).store.profiles, [{ id: "a", name: "Profile", harness: "claude" }]);
   assert.equal(hand([]).readOnly, false);
   // A newer version is still read only, its args read.
-  const newer = hand(["--x"], 7);
+  const newer = hand(["--x"], 8);
   assert.equal(newer.readOnly, true);
-  assert.match(newer.warnings[0], /version 7, not 1, 2, 3, 4, 5 or 6/);
+  assert.match(newer.warnings[0], /version 8, not 1, 2, 3, 4, 5, 6 or 7/);
   assert.deepEqual(newer.store.profiles[0].args, ["--x"]);
 });
 
@@ -970,4 +971,113 @@ test("a hand-edited label it can't use is skipped and makes the file read only; 
   // Good ones are read trimmed; empty and null ones are no label.
   const r = hand({ resolve: " Fix ", review: "", autopilot: null });
   assert.deepEqual(r, { store: { ...P.emptyStore(), labels: { resolve: "Fix", review: null, autopilot: null } }, warnings: [], readOnly: false });
+});
+
+// ── Profiles imported from mcc (#63) ────────────────────────────────────────
+
+test("an mcc profile is a safe name on Claude Code via mcc run only; default is mcc's own (#63)", () => {
+  for (const mccProfile of ["work", "default", "cvp-api", "cs_konal", "Lab.2", "_x", "x".repeat(64)]) {
+    assert.deepEqual(P.validateProfile(ok({ harness: "mcc", mccProfile })), [], mccProfile);
+  }
+  assert.deepEqual(P.validateProfile(ok({ harness: "mcc", mccProfile: "" })), [], "empty is none");
+  // Nothing mcc would read as a flag, nothing a shell would read, nothing it can't draw.
+  for (const mccProfile of ["-x", "--all", "a b", "a'b", 'a"b', "$(id)", "a;id", "a/b", "é", "a\x1b[2Jb", "x".repeat(65), 5, ["work"]]) {
+    assert.deepEqual(P.validateProfile(ok({ harness: "mcc", mccProfile })), ["Mcc profile: letters, digits and . _ - only, starting with a letter, digit or _"], JSON.stringify(mccProfile));
+  }
+  // Another harness would start another account than the profile says.
+  for (const harness of P.HARNESSES.filter((h) => h !== "mcc")) {
+    assert.deepEqual(P.validateProfile(ok({ harness, mccProfile: "work" })), ["Mcc profile: only Claude Code via mcc run starts one"], harness);
+  }
+});
+
+test("an imported profile starts mcc run --profile <name>, before -- and its flags; one without starts as before (#63)", () => {
+  const launch = (p) => P.buildLaunch(ok({ harness: "mcc", ...p }), PROMPT).argv;
+  assert.deepEqual(launch({ mccProfile: "work" }), ["mcc", "run", "--profile", "work", "--", PROMPT]);
+  assert.deepEqual(launch({ mccProfile: "default", model: "opus", thinking: "high", args: ["--verbose"] }),
+    ["mcc", "run", "--profile", "default", "--", "--model", "opus", "--effort", "high", "--verbose", PROMPT]);
+  assert.deepEqual(launch({}), ["mcc", "run", "--", PROMPT]);
+  assert.deepEqual(launch({ mccProfile: "" }), ["mcc", "run", "--", PROMPT]);
+  // Checked again: a name that isn't safe never reaches the command line.
+  assert.throws(() => launch({ mccProfile: "--dangerously-skip-permissions" }), /^Error: Invalid profile: Mcc profile: /);
+  assert.throws(() => P.buildLaunch(ok({ harness: "claude", mccProfile: "work" }), PROMPT), /^Error: Invalid profile: Mcc profile: only /);
+});
+
+test("buildCheck's account step names an imported profile's own mcc profile (#63)", () => {
+  const steps = (p) => P.buildCheck(p).steps.map((s) => [s.kind, ...s.args].join(" "));
+  assert.deepEqual(steps({ harness: "mcc", mccProfile: "work" }), ["version --version", "account env -q --shell bash work"]);
+  assert.deepEqual(steps({ harness: "mcc" }), ["version --version", "account env -q --shell bash"]);
+  assert.throws(() => P.buildCheck({ harness: "mcc", mccProfile: "-x" }), /^Error: Mcc profile: /);
+});
+
+test("serializeStore writes version 7 only with an imported profile, a superset of version 6, and goes back down without (#63)", () => {
+  const plain = P.upsertProfile(P.emptyStore(), { id: "a", name: "A", harness: "claude" });
+  const v1 = P.serializeStore(plain);
+  const imported = P.upsertProfile(plain, { id: "work", name: "mcc work", harness: "mcc", mccProfile: "work", model: "opus", thinking: "high" });
+  const text = P.serializeStore(imported);
+  assert.deepEqual(JSON.parse(text), {
+    version: 7,
+    profiles: [{ id: "a", name: "A", harness: "claude" }, { id: "work", name: "mcc work", harness: "mcc", mccProfile: "work", model: "opus", thinking: "high" }],
+    assign: { resolve: null, review: null }, prompts: { resolve: null, review: null, autopilot: null }, customModels: {}, labels: { resolve: null, review: null, autopilot: null },
+  });
+  // Read back as it was, and not read only.
+  const back = P.parseStore(text);
+  assert.deepEqual([back.readOnly, back.warnings], [false, []]);
+  assert.deepEqual(back.store.profiles, imported.profiles);
+  assert.equal(P.serializeStore(back.store), text);
+  // With a label and args too: still version 7, holding them all.
+  const all = P.setLabel(P.upsertProfile(imported, { ...imported.profiles[1], args: ["--x"] }, "work"), "resolve", "Fix");
+  const full = JSON.parse(P.serializeStore(all));
+  assert.equal(full.version, 7);
+  assert.deepEqual([full.profiles[1].mccProfile, full.profiles[1].args, full.labels.resolve], ["work", ["--x"], "Fix"]);
+  // Removed, the file goes back to the version it was, byte for byte.
+  assert.equal(P.serializeStore(P.removeProfile(imported, "work")), v1);
+  // A bad mcc profile in the file skips its profile and makes the file read only.
+  const bad = P.parseStore(text.replace('"mccProfile": "work"', '"mccProfile": "-x"'));
+  assert.equal(bad.readOnly, true);
+  assert.deepEqual(bad.store.profiles.map((p) => p.id), ["a"]);
+  assert.match(bad.warnings[1], /^Skipped profile "work": Mcc profile: /);
+});
+
+test("parseMccUsage lists mcc's Claude Code profiles, without Devin's or a name it can't pass on, and refuses another schema (#63)", () => {
+  const usage = (profiles, schema = 2) => JSON.stringify({ schema, profiles, updated_at: "2026-11-24T10:00:00Z" });
+  assert.deepEqual(P.parseMccUsage(usage([
+    { name: "cskonal", provider: "claude", is_default: false, usage: {} },
+    { name: "default", provider: "claude", is_default: true },
+    { name: "cvp-api", provider: "claude", auth: "api_key" },
+    { name: "devin", provider: "devin", is_default: false },
+    { name: "old" },
+    { name: "-x" }, { name: "a b" }, { name: "x\x1b[2J" }, { name: "日本" }, { name: 5 }, null, "work",
+  ])), [{ name: "cskonal", isDefault: false }, { name: "default", isDefault: true }, { name: "cvp-api", isDefault: false }, { name: "old", isDefault: false }]);
+  assert.deepEqual(P.parseMccUsage(usage([])), []);
+  for (const text of [usage([], 1), usage([], "2"), JSON.stringify({ schema: 2 }), JSON.stringify({ schema: 2, profiles: {} }), "not json", "", "null"]) {
+    assert.throws(() => P.parseMccUsage(text), /^Error: unexpected mcc output \(schema [12?]\); update mcc$/, text);
+  }
+});
+
+test("importedProfile: the mcc profile's model and thinking level from its settings, an id of its name, and none twice (#63)", () => {
+  const store = P.emptyStore();
+  // What a plain mcc run of it starts with: its settings.json's model and effortLevel.
+  assert.deepEqual(P.importedProfile("work", { model: "opus", effortLevel: "high", theme: "dark" }, store),
+    { id: "work", name: "mcc work", harness: "mcc", mccProfile: "work", model: "opus", thinking: "high" });
+  // One it can't pass on is left empty, which still starts the profile's own; so is no settings.json.
+  assert.deepEqual(P.importedProfile("work", { model: "opus[1m]", effortLevel: "ultra" }, store), { id: "work", name: "mcc work", harness: "mcc", mccProfile: "work" });
+  for (const settings of [null, {}, [], "opus", { model: 5, effortLevel: ["high"] }]) {
+    assert.deepEqual(P.importedProfile("work", settings, store), { id: "work", name: "mcc work", harness: "mcc", mccProfile: "work" }, JSON.stringify(settings));
+  }
+  // "default" is the built-in profile's id; other characters become -.
+  assert.equal(P.importedProfile("default", null, store).id, "mcc-default");
+  assert.equal(P.importedProfile("Default", null, store).id, "mcc-default");
+  assert.deepEqual(["Lab.2", "cs_konal", "_x", "__", "A-B"].map((n) => P.importedProfile(n, null, store).id), ["lab-2", "cs-konal", "x", "mcc-profile", "a-b"]);
+  // An id taken already gets -2, -3…, kept within 32 characters.
+  let s = P.upsertProfile(P.upsertProfile(store, { id: "work", name: "Work", harness: "codex" }), { id: "work-2", name: "W2", harness: "pi" });
+  assert.equal(P.importedProfile("work", null, s).id, "work-3");
+  const long = "x".repeat(64);
+  assert.equal(P.importedProfile(long, null, store).id, "x".repeat(32));
+  s = P.upsertProfile(store, { id: "x".repeat(32), name: "X", harness: "pi" });
+  assert.equal(P.importedProfile(long, null, s).id, `${"x".repeat(30)}-2`);
+  // The name is at most 40 characters, and every imported profile is valid.
+  assert.equal(P.importedProfile(long, null, store).name, `mcc ${"x".repeat(36)}`);
+  for (const n of ["work", "default", long, "_x", "Lab.2"]) assert.deepEqual(P.validateProfile(P.importedProfile(n, { model: "sonnet", effortLevel: "max" }, store)), [], n);
+  // A name it can't pass on isn't imported.
+  for (const n of ["-x", "a b", "", null]) assert.throws(() => P.importedProfile(n, null, store), /^Error: Mcc profile: /, String(n));
 });
