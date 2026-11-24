@@ -189,7 +189,9 @@ const spendPercent = (p) => (p.cost != null && p.budget > 0 ? (p.cost / p.budget
 function spendTexts(p) {
   if (p.reason === "disabled") return [reasonText(p.reason)];
   const pct = spendPercent(p);
-  const share = pct == null ? "" : ` (${Math.round(pct)}%)`;
+  const r = pct == null ? null : Math.round(pct);
+  const mark = r == null ? "" : flag(r);
+  const share = r == null ? "" : ` (${r}%${mark})`;
   if (p.cost == null && p.budget != null) return [`no cost recorded yet; ${dollars(p.budget)} budget`, `no cost yet; ${dollars(p.budget)}`, "no cost yet", "—"];
   if (p.cost == null) return ["no cost recorded yet", "no cost yet", "—"];
   const c = dollars(p.cost);
@@ -198,7 +200,6 @@ function spendTexts(p) {
   // Without room for the share, the amount keeps mcc's `!`/`!!` (flag) from 80% of
   // the budget, so the color isn't the only sign of it; the bare amount is what's
   // left when even that doesn't fit.
-  const mark = pct == null ? "" : flag(Math.round(pct));
   return [`est. ${c} this month of ${b} budget${share}`, `${c} this month of ${b}${share}`, `${c} of ${b}${share}`, `${c}${share}`, ...(mark ? [`${c}${mark}`] : []), c];
 }
 const spendText = (p, max) => spendTexts(p).find((t) => width(t) <= max) ?? fit(spendTexts(p).at(-1), max);

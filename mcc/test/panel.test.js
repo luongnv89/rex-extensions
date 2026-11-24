@@ -802,7 +802,7 @@ test("an API-key profile's row shows its spend in place of the windows, at every
   assert.match(strip(p.row(a, p.columns(40, 7), null, NOW)), /api +api \$3\.32 \(7%\)/);
   assert.match(strip(p.row(a, p.columns(22, 7), null, NOW)), /api +\$3\.32 \(7%\)$/);
   // Over budget: the bar is full.
-  assert.match(strip(p.row(apiRow({ cost: 60 }), wide, null, NOW)), /api █+ .*\(120%\)/);
+  assert.match(strip(p.row(apiRow({ cost: 60 }), wide, null, NOW)), /api █+ .*\(120%!!\)/);
   // No budget, no bar.
   assert.match(strip(p.row(apiRow({ budget: null }), wide, null, NOW)), /api +api est\. \$3\.32 this month +$/);
 });
@@ -811,7 +811,7 @@ test("a compact API-key row marks 80% and 95% of the budget with ! and !!, not b
   const compact = p.columns(26, 7);
   assert.equal(compact.compact, true);
   const text = (usage) => strip(p.row(apiRow(usage), compact, null, NOW));
-  // No room for "(82%)" in 10 columns: the marker the subscription rows have.
+  // No room for "(82%!)" in 10 columns: the marker the subscription rows have.
   assert.match(text({ cost: 41 }), /api +\$41\.00!$/);
   assert.match(text({ cost: 48.5 }), /api +\$48\.50!!$/);
   assert.match(text({ cost: 60 }), /api +\$60\.00!!$/);
@@ -825,10 +825,11 @@ test("a compact API-key row marks 80% and 95% of the budget with ! and !!, not b
   assert.equal(p.spendTexts(apiRow({ cost: 39.8 })).at(-2), "$39.80!");
   assert.equal(p.spendTexts(apiRow({ cost: 39.7 })).at(-1), "$39.70");
   assert.ok(p.spendTexts(apiRow({ cost: 39.7 })).every((t) => !t.includes("!")));
-  // The longer forms say the share, so they carry no marker: the same at 97% as at 7%.
-  assert.deepEqual(p.spendTexts(apiRow({ cost: 48.5 })), ["est. $48.50 this month of $50.00 budget (97%)", "$48.50 this month of $50.00 (97%)", "$48.50 of $50.00 (97%)", "$48.50 (97%)", "$48.50!!", "$48.50"]);
-  assert.match(strip(p.row(apiRow({ cost: 48.5 }), p.columns(40, 7), null, NOW)), /api +api \$48\.50 \(97%\) *$/);
-  assert.match(strip(p.row(apiRow({ cost: 48.5 }), p.detailColumns(100, 7), null, NOW)), /api \$48\.50 of \$50\.00 \(97%\) *$/);
+  // The forms that say the share carry the marker on it, as `mcc usage` prints it: (82%!), (97%!!).
+  assert.equal(p.spendTexts(apiRow({ cost: 41 }))[0], "est. $41.00 this month of $50.00 budget (82%!)");
+  assert.deepEqual(p.spendTexts(apiRow({ cost: 48.5 })), ["est. $48.50 this month of $50.00 budget (97%!!)", "$48.50 this month of $50.00 (97%!!)", "$48.50 of $50.00 (97%!!)", "$48.50 (97%!!)", "$48.50!!", "$48.50"]);
+  assert.match(strip(p.row(apiRow({ cost: 48.5 }), p.columns(40, 7), null, NOW)), /api +api \$48\.50 \(97%!!\) *$/);
+  assert.match(strip(p.row(apiRow({ cost: 48.5 }), p.detailColumns(100, 7), null, NOW)), /api \$48\.50 \(97%!!\) *$/);
 });
 
 test("an API-key profile's row keeps the extra columns in line", () => {
