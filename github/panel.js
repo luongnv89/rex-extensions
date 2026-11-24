@@ -1085,17 +1085,21 @@ function which(name) {
   return null;
 }
 
-// The mcc binary, found as the mcc panel finds it (copied from mcc/panel.js, since
-// extensions share no code): $MCC_BIN, else PATH, else the places mcc's installers
-// use, as the PATH Rex's server starts the panel with may be thinner than your
-// shell's (#63). An MCC_BIN that isn't an executable file is no mcc, rather than a
-// command that fails later; relative folders are skipped, as which() skips them.
+// The mcc binary, looked for in the places the mcc panel looks (adapted from
+// mcc/panel.js, since extensions share no code): $MCC_BIN, else PATH, else the
+// places mcc's installers use, as the PATH Rex's server starts the panel with may be
+// thinner than your shell's (#63). An MCC_BIN that isn't the full path of an
+// executable file (a stale or relative one) is passed over for the rest, rather than
+// being a command that fails later; relative folders are skipped, as which() skips
+// them. REX_GITHUB_MCC_SYSTEM_DIRS, set only by the tests, replaces the two
+// system-wide folders, so the tests never find the mcc of the machine running them.
 function findMcc() {
   const runs = (file) => { try { fs.accessSync(file, fs.constants.X_OK); return fs.statSync(file).isFile(); } catch { return false; } };
   const given = process.env.MCC_BIN;
-  if (given) return path.isAbsolute(given) && runs(given) ? given : null;
+  if (given && path.isAbsolute(given) && runs(given)) return given;
   const home = os.homedir();
-  const dirs = [...(process.env.PATH || "").split(path.delimiter), path.join(home, ".local", "bin"), path.join(home, ".cargo", "bin"), "/opt/homebrew/bin", "/usr/local/bin"];
+  const system = process.env.REX_GITHUB_MCC_SYSTEM_DIRS?.split(path.delimiter) ?? ["/opt/homebrew/bin", "/usr/local/bin"];
+  const dirs = [...(process.env.PATH || "").split(path.delimiter), path.join(home, ".local", "bin"), path.join(home, ".cargo", "bin"), ...system];
   for (const dir of dirs) {
     if (dir && path.isAbsolute(dir) && runs(path.join(dir, "mcc"))) return path.join(dir, "mcc");
   }
@@ -2443,12 +2447,16 @@ function settingsLines(cols, rows) {
   const editing = st.mode === "edit" || st.mode === "prompt", picking = st.mode === "import";
   const p = editing ? null : selectedEntry(st);
   // Header: the view's name, + New in the list, after + Import while mcc is found
-  // (#63), and ✕ (back) at the right edge.
-  const tools = editing || picking ? [] : [...(st.mcc ? [[" + Import ", () => openImport()]] : []), [" + New ", () => editProfile(null)]];
+  // (#63), and ✕ (back) at the right edge. In a pane too narrow for the name to stay
+  // whole beside + Import, + Import gives way: i, in the key hints and ?, still imports.
+  const title = st.mode === "edit" ? (st.form.prev ? `Edit profile ${st.form.prev}` : "New profile")
+    : st.mode === "prompt" ? editTarget(st.prompt).title : picking ? "Import from mcc" : "⚙ Settings";
+  const tools = editing || picking ? [] : [[" + Import ", () => openImport()], [" + New ", () => editProfile(null)]];
   tools.push([" ✕ ", () => settingsBack()]);
-  const right = tools.reduce((w, [t]) => w + width(t), 0);
-  const heading = fit(st.mode === "edit" ? (st.form.prev ? `Edit profile ${st.form.prev}` : "New profile")
-    : st.mode === "prompt" ? editTarget(st.prompt).title : picking ? "Import from mcc" : "⚙ Settings", cols - right - 2);
+  const toolsWidth = () => tools.reduce((w, [t]) => w + width(t), 0);
+  if (!editing && !picking && (!st.mcc || width(title) + 2 + toolsWidth() > cols)) tools.shift();
+  const right = toolsWidth();
+  const heading = fit(title, cols - right - 2);
   out.push(` ${bold(heading)}${" ".repeat(Math.max(0, cols - 1 - width(heading) - right))}${dim(tools.map(([t]) => t).join(""))}`);
   let x = cols - right;
   for (const [t, action] of tools) { ui.buttons.push({ row: 0, from: x, to: x + width(t), action }); x += width(t); }

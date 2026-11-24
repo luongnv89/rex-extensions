@@ -515,8 +515,9 @@ function parseStore(text) {
 // profile's own launch arguments, version 5, as version 4 with them in their
 // profiles, for the same reason (#48). With a button label of your own, version 6,
 // as version 5 with its labels last. With a profile imported from mcc, version 7, as
-// version 6 with its mccProfile: an older panel would start the project's mcc
-// profile in its place, or drop it by saving (#63).
+// version 6 with its mccProfile, so an older panel, which shows the file read only,
+// never drops it by saving. That panel still starts an imported profile, but as a
+// plain `mcc run --` with the project's mcc profile (#63).
 function serializeStore(store) {
   const profiles = (store?.profiles ?? []).map(normalizeProfile);
   const assign = {}, prompts = {}, customModels = {};
