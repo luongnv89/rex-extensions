@@ -1,0 +1,8 @@
+# Review by an owner is required only once branch protection asks for it.
+# These files decide what the hooks and CI check, so a change to them needs a second look.
+/.pre-commit-config.yaml  @luongnv89
+/.oxlintrc.json           @luongnv89
+/.github/workflows/       @luongnv89
+/.github/CODEOWNERS       @luongnv89
+/scripts/                 @luongnv89
+/*/test/                  @luongnv89

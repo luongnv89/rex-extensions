@@ -8,6 +8,7 @@
 //   node install.js ctrl+alt+p bind this key
 //   node install.js --remove   take the panel out of init.lua again
 "use strict";
+// oxlint-disable no-control-regex -- matching terminal escapes and control characters is on purpose here
 const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");

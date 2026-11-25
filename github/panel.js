@@ -9,6 +9,7 @@
 // is resolved under the $HOME of the machine the pane runs on, through `sh -c`.
 // Rex sets REX_BLOCK, the panel's pane; older Rex also set REX_SESSION.
 "use strict";
+// oxlint-disable no-control-regex -- matching terminal escapes and control characters is on purpose here
 const { execFile, spawn } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -1123,7 +1124,7 @@ function findMcc() {
 }
 
 // A command's output on one line, without its colors or any other control character.
-const oneLine = (text) => fit(clean(firstLine(String(text ?? "").replace(/\x1b\[[0-?]*[ -\/]*[@-~]/g, ""))).trim(), 160);
+const oneLine = (text) => fit(clean(firstLine(String(text ?? "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, ""))).trim(), 160);
 
 // The profile store, read again on every use: the app may have changed it.
 function readStore() {

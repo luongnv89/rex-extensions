@@ -1,4 +1,5 @@
 "use strict";
+// oxlint-disable no-control-regex -- matching terminal escapes and control characters is on purpose here
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const p = require("../panel.js");

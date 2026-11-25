@@ -1,4 +1,5 @@
 "use strict";
+// oxlint-disable no-control-regex -- matching terminal escapes and control characters is on purpose here
 // Rex sets only REX_BLOCK in the panel's pane, not REX_SESSION: the panel asks Rex
 // for the session holding its pane, then follows you and marks the profile mcc
 // would start there. panel.js reads both when it loads, so this file is its own.

@@ -1,4 +1,5 @@
 "use strict";
+// oxlint-disable no-control-regex -- matching terminal escapes and control characters is on purpose here
 // The mark on the profile mcc would start in the folder of the pane you work in (#64),
 // against a scripted Rex and mcc. panel.js reads execFile, REX_SESSION and REX_BLOCK
 // when it loads, so they're set before the require below, in a test file of its own.

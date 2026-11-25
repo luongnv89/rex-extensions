@@ -12,6 +12,7 @@
 //   node install.js --remove   stop the watcher, delete the agent sessions it
 //                              recorded and take it out of init.lua
 "use strict";
+// oxlint-disable no-control-regex -- matching terminal escapes and control characters is on purpose here
 const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");

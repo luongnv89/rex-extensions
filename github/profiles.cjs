@@ -27,6 +27,7 @@
 // and buildCheck's account step names; store version 7 that holds it; and the
 // import itself (parseMccUsage, importedProfile).
 "use strict";
+// oxlint-disable no-control-regex -- matching terminal escapes and control characters is on purpose here
 
 // Agent profiles for the Resolve and Review actions: which harness starts, with
 // which model and thinking level. Plain JavaScript with no imports.

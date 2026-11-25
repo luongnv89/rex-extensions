@@ -4,35 +4,130 @@ on:
   push:
     branches: [main]
   pull_request:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# A new push to a PR cancels its superseded run. Other events have no PR number,
+# fall back to their unique run ID, and are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
-  test:
+  # PRs are where bypassed commits enter. Gating the job on `pull_request` also
+  # avoids `github.event.before`, which is all zeros on a branch's first push.
+  hooks:
+    name: Verify hooks were not bypassed
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
+      fail-fast: false
       matrix:
-        node: [20, 22, 24]
+        # Public repos run free: one parallel leg per stage. Anything not
+        # provably public pays per job: one leg, commit stage first.
+        stages: ${{ fromJSON(github.event.repository.visibility == 'public' && '["pre-commit", "pre-push"]' || '["pre-commit pre-push"]') }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
         with:
-          node-version: ${{ matrix.node }}
-      - name: JavaScript syntax
-        run: for f in $(git ls-files '*.js'); do node --check "$f" || exit 1; done
-      # Lua 5.1, the version Rex runs, built by the action and cached
-      # between runs, so the job doesn't depend on Ubuntu's package mirrors.
+          # --from-ref needs the base SHA in the object store.
+          fetch-depth: 0
+          # Blobless: every commit and tree, file contents only for this commit.
+          filter: blob:none
+
+      # The toolchain the `language: system` hooks shell out to. Node 20 is
+      # the floor CONTRIBUTING.md promises, so PRs still run on it.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      # Lua 5.1, the version Rex runs, built by the action and cached between
+      # runs. Without it the Lua specs would be skipped, not failed.
       - uses: leafo/gh-actions-lua@v13
         with:
           luaVersion: "5.1.5"
-      - name: Lua syntax
-        run: for f in $(git ls-files '*.lua'); do luac -p "$f" || exit 1; done
-      - name: Tests
-        # Every extension folder with a test/ folder runs its own tests.
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Cache pre-commit environments
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ env.pythonLocation }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      # A PR must not loosen the rules that judge it. When it changes hook
+      # config, a workflow or a hook script, run the stage(s) with the base
+      # branch's config first, before any hook the PR controls can run.
+      - name: Re-run the base branch's hooks if the PR changes them
         run: |
-          for d in */; do
-            [ -d "$d/test" ] || continue
-            echo "== $d"
-            (cd "$d" && node --test) || exit 1
+          export GIT_NO_REPLACE_OBJECTS=1
+          pip install pre-commit
+          base="${{ github.event.pull_request.base.sha }}"
+          gate="$RUNNER_TEMP/base-hook-gate.py"
+          git show "$base:scripts/base-hook-gate.py" > "$gate" 2>/dev/null || cp scripts/base-hook-gate.py "$gate"
+          python "$gate" --base "$base" ${{ matrix.stages || 'pre-commit pre-push' }}
+
+      # The only overlap with pre-commit, scoped to the PR diff. Every stage
+      # runs in some leg: `pre-commit run` alone skips the pre-push suite.
+      - name: Run the hook stage(s) over the PR diff
+        run: |
+          pip install pre-commit
+          base="${{ github.event.pull_request.base.sha }}"
+          for stage in ${{ matrix.stages || 'pre-commit pre-push' }}; do
+            pre-commit run --hook-stage "$stage" --from-ref "$base" --to-ref HEAD
           done
+
+  # The Node version matrix on every merge (free on a public repo): the
+  # versions a laptop doesn't run. One leg writes the coverage summary and
+  # seeds the pre-commit cache every PR restores.
+  matrix-test:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: leafo/gh-actions-lua@v13
+        with:
+          luaVersion: "5.1.5"
+
+      - name: Tests
+        if: matrix.node != 24
+        run: bash scripts/run-tests.sh
+
+      # Coverage stays on GitHub: no third-party upload.
+      - name: Tests with coverage
+        if: matrix.node == 24
+        run: |
+          set -o pipefail
+          bash scripts/run-tests.sh --experimental-test-coverage | tee "$RUNNER_TEMP/tests.log"
+      - name: Coverage summary
+        if: always() && matrix.node == 24
+        run: |
+          {
+            echo '### Coverage (line % | branch % | funcs %)'
+            awk '/^== /{ext=$2} /all files/{print "- " ext " " $0}' "$RUNNER_TEMP/tests.log"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - if: matrix.node == 24
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - if: matrix.node == 24
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ env.pythonLocation }}-${{ hashFiles('.pre-commit-config.yaml') }}
+      - if: matrix.node == 24
+        run: pip install pre-commit && pre-commit install-hooks
