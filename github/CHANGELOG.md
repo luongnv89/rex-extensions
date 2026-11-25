@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- **The panel follows your pane again, and sizes itself, under a Rex that sets only `REX_BLOCK`.** Rex 0.1.0-preview.23 no longer sets `REX_SESSION` in a pane, and the panel made no Rex call without it: it stayed on the folder it opened in, kept no width, and Resolve, Review and Auto-pilot said to open the panel in Rex. It now asks Rex once for the session holding its own pane (`rex api call -s $REX_BLOCK session.view`) and uses that, and still takes `REX_SESSION` when Rex sets it.
+
 ## 0.1.0 (2026-11-25)
 
 The first public release of the GitHub panel for Rex, ported from [herdr-github](https://github.com/luongnv89/herdr-github) 0.4.0. It also brings the panel up to date with [herdr-github](https://github.com/luongnv89/herdr-github)'s unreleased changes after 0.4.0 ([luongnv89/herdr-github#18](https://github.com/luongnv89/herdr-github/issues/18), [#20](https://github.com/luongnv89/herdr-github/issues/20), [#25](https://github.com/luongnv89/herdr-github/issues/25)).

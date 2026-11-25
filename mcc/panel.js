@@ -11,7 +11,7 @@
 //
 // rex-mcc.lua starts it as `node panel.js`. When panel.js is under $HOME, the path
 // is resolved under the $HOME of the machine the pane runs on, through `sh -c`.
-// Rex sets REX_SESSION and REX_BLOCK.
+// Rex sets REX_BLOCK, the panel's pane; older Rex also set REX_SESSION.
 "use strict";
 const { execFile } = require("node:child_process");
 const fs = require("node:fs");
@@ -19,7 +19,6 @@ const os = require("node:os");
 const path = require("node:path");
 
 const REX = process.env.REX_MCC_REX || "rex";
-const SESSION = process.env.REX_SESSION || null;
 const SELF = process.env.REX_BLOCK || null;
 const STATE = path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state"), "rex-mcc");
 // Reading the cache is a local file read, so it is cheap to repeat; the live lookup
@@ -813,10 +812,26 @@ function saveCollapsed() {
 
 // ── Pane height ─────────────────────────────────────────────────────────────
 
+// The session the panel is in: $REX_SESSION, which Rex no longer sets, else the one
+// holding the panel's pane, asked of Rex once (`-s` takes a block too). Null while
+// Rex doesn't answer, and asked again on the next call.
+let session = process.env.REX_SESSION || null;
+async function sessionId() {
+  if (session || !SELF) return session;
+  const r = await run(REX, ["api", "call", "-s", SELF, "session.view", "{}"], 5000);
+  if (r.error || r.code !== 0) return null;
+  try {
+    const id = JSON.parse(r.stdout)?.session_id;
+    if (typeof id === "string" && id.startsWith("session:")) session = id;
+  } catch {}
+  return session;
+}
+
 // One Rex API call: its JSON result, or null.
 async function rexApi(method, args = {}) {
-  if (!SESSION) return null;
-  const r = await run(REX, ["api", "call", "-s", SESSION, method, JSON.stringify({ session_id: SESSION, ...args })], 5000);
+  const id = await sessionId();
+  if (!id) return null;
+  const r = await run(REX, ["api", "call", "-s", id, method, JSON.stringify({ session_id: id, ...args })], 5000);
   if (r.error || r.code !== 0) return null;
   try { return JSON.parse(r.stdout); } catch { return null; }
 }
@@ -916,7 +931,7 @@ const needsFit = (rows, want, last) => rows > 0 && rows < want && rows !== last;
 let fitting = false;
 async function resize({ grow = false, fill = false } = {}) {
   ui.sized = wantedRows();
-  if (!SELF || !SESSION || fitting) return;
+  if (!SELF || fitting) return;
   fitting = true;
   try {
     // Aim off by what the last move missed: the frame is a guess, and rows round.
@@ -954,7 +969,7 @@ async function resize({ grow = false, fill = false } = {}) {
 // them, up to GROW_SHARE of the split (#55), once if the split can't hold them all. Rex can't stop a drag midway, so the
 // panel moves the border back once the drag settles. True when it fit the panel.
 async function settleResize() {
-  if (fitting || !SELF || !SESSION) return false;
+  if (fitting || !SELF) return false;
   const window = myWindow(await rexApi("session.view"));
   if (!window || panes == null) return false;
   if (panesOf(window) !== panes) await resize();
@@ -1009,7 +1024,7 @@ async function lookHere(dir = hereDir) {
 
 // One look at where you work: asks mcc only when the folder changed.
 async function follow() {
-  if (!SELF || !SESSION || !mcc || locating) return;
+  if (!SELF || !mcc || locating) return;
   locating = true;
   let dir;
   try { dir = await locate(); } finally { locating = false; }
