@@ -1,0 +1,89 @@
+<!doctype html>
+<!-- Draft for legal review: confirm every statement before publishing. -->
+<html lang="en" class="doc">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy · rex-extensions</title>
+<meta name="description" content="What this site and the rex-extensions read, store and send.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#d6d6d6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#262626" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brandline">
+      <a class="brand" href="index.html">rex-extensions</a>
+      <p class="tagline">Extensions for Rex, the terminal multiplexer. One install.js each.</p>
+    </div>
+    <div class="top-controls">
+      <a class="cta" href="https://github.com/luongnv89/rex-extensions#quick-start">Install from GitHub</a>
+    </div>
+  </header>
+  <main class="doc-main">
+
+    <h1>Privacy Policy</h1>
+    <p class="meta">Product: rex-extensions and this site</p>
+    <p class="lede">This site is a static page with no analytics, cookies or forms of its own. The extensions run on your machine as your user; they send data only through the tools they call, which this page names.</p>
+
+    <h2 id="collect">1. Information we collect</h2>
+    <p>This site has no sign-in, form, analytics script or cookie. GitHub Pages serves it, and handles each request under <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub's privacy statement</a>.</p>
+    <p>The extensions send nothing to their author. On your machine they read and write:</p>
+    <ul>
+      <li><strong>github:</strong> the repo of the focused pane, through <code>git</code>, and its pull requests and issues, through <code>gh</code> or <code>glab</code>. It keeps its profiles in <code>~/.config/rex-github/profiles.json</code>, and which list you chose, the panel's width and the merge mode in <code>~/.local/state/rex-github/</code>.</li>
+      <li><strong>mcc:</strong> mcc's usage cache, through <code>mcc usage</code>, and this machine's CPU, memory, disk and network figures. It keeps whether the panel was collapsed in <code>~/.local/state/rex-mcc/collapsed</code>.</li>
+      <li><strong>sshtab:</strong> the command line of the program in a pane, and from an agent's environment only <code>CLAUDE_CONFIG_DIR</code>, <code>CODEX_HOME</code>, <code>EDITOR</code> and <code>VISUAL</code>. In <code>~/.cache/rex-sshtab/</code> it keeps a log and, for each pane with an agent, the agent's name, session id and folder; no prompt is kept.</li>
+      <li><strong>tabs:</strong> the folder and title of each tab, to name sessions and tabs. It keeps its watcher's pid, and whether you turned it off, in <code>~/.cache/rex-tabs/</code>.</li>
+    </ul>
+
+    <h2 id="use">2. How we use it</h2>
+    <p>Only to show the panels and names you see, and to type the ssh and resume commands sshtab types. Nothing leaves your machine for the author.</p>
+
+    <h2 id="cookies">3. Cookies and analytics</h2>
+    <p>None on this site. The slideshow stores nothing in your browser.</p>
+
+    <h2 id="sharing">4. Sharing and processors</h2>
+    <ul>
+      <li><strong>GitHub or GitLab</strong>, through <code>gh</code> or <code>glab</code>, when the github panel reads, merges or closes; and your repo's remote, when it runs <code>git pull</code> or <code>git fetch</code> after a merge.</li>
+      <li><strong>Anthropic</strong>, when you press refresh in the mcc panel: mcc sends each account's login to Anthropic's usage endpoint.</li>
+      <li><strong>Your other machines</strong>, over SSH, when mcc is set up to reach them: every 30 seconds while the mcc panel is open.</li>
+      <li><strong>GitHub Pages</strong>, which hosts this site.</li>
+    </ul>
+
+    <h2 id="retention">5. Retention</h2>
+    <p>The files the extensions write stay on your machine until you delete them. sshtab deletes its record of agent sessions when you turn Restore Agent Sessions off.</p>
+
+    <h2 id="choices">6. Your choices</h2>
+    <p>Remove an extension with <code>node ~/.config/rex/rex-extensions/&lt;extension&gt;/install.js --remove</code>, and delete the files listed above. The author holds no data about you to access, correct or export.</p>
+
+    <h2 id="changes">7. Changes to this policy</h2>
+    <p>This page is in the public repo; each change to it is a commit in <a href="https://github.com/luongnv89/rex-extensions/commits/main/landing-page/privacy.html">its history</a>.</p>
+
+    <h2 id="contact">8. Contact</h2>
+    <p>Email <a href="mailto:contact@luongnv.com">contact@luongnv.com</a>, or open an issue on <a href="https://github.com/luongnv89/rex-extensions/issues">GitHub</a>.</p>
+  </main>
+  <footer class="foot">
+    <a href="LICENSE">MIT © Luong NGUYEN</a>
+    <a href="https://github.com/luongnv89/rex-extensions">GitHub</a>
+    <a href="privacy.html" aria-current="page">Privacy</a>
+    <a href="changelog.html">Changelog</a>
+    <a href="docs.html">Docs</a>
+    <details id="credits" class="credits">
+      <summary>Credits</summary>
+      <div class="credits-panel" role="group" aria-label="Credits" tabindex="0">
+        <p>rex-extensions and this site are under the <a href="LICENSE">MIT licence</a>, © Luong NGUYEN.</p>
+        <p>The Rex windows on the slides are simulations drawn in HTML. The repos, people, accounts and numbers in them are examples.</p>
+        <p>The fonts are under the SIL OFL 1.1: <a href="fonts/OFL-PlayfairDisplay.txt">Playfair Display</a> and <a href="fonts/OFL-OldStandardTT.txt">Old Standard TT</a>. The design follows the <a href="https://github.com/luongnv89/printer-cli">printer-cli</a> site.</p>
+      </div>
+    </details>
+  </footer>
+<script>
+  // The credits close on Escape and on a click outside them, as on the slideshow.
+  const credits = document.getElementById("credits");
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && credits.open) { credits.open = false; credits.querySelector("summary").focus(); } });
+  document.addEventListener("click", (e) => { if (credits.open && !credits.contains(e.target)) credits.open = false; });
+</script>
+</body>
+</html>

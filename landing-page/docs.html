@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en" class="doc">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Docs · rex-extensions</title>
+<meta name="description" content="Install, use, configure and remove the Rex extensions: github, mcc, tabs and sshtab.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#d6d6d6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#262626" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brandline">
+      <a class="brand" href="index.html">rex-extensions</a>
+      <p class="tagline">Extensions for Rex, the terminal multiplexer. One install.js each.</p>
+    </div>
+    <div class="top-controls">
+      <a class="cta" href="https://github.com/luongnv89/rex-extensions#quick-start">Install from GitHub</a>
+    </div>
+  </header>
+  <main class="doc-main">
+
+    <h1>Docs</h1>
+    <p class="lede">Install an extension, press its key, and configure or remove it later. Each extension's README covers every feature in full.</p>
+
+    <h2 id="requirements">Requirements</h2>
+    <ul>
+      <li>Rex on macOS or Linux.</li>
+      <li>Node 20 or later, as <code>node</code> on the <code>PATH</code> your login shell sets.</li>
+      <li>Whatever an extension lists in its own README: the github panel needs <a href="https://cli.github.com"><code>gh</code></a> or <a href="https://gitlab.com/gitlab-org/cli"><code>glab</code></a>, logged in; the mcc panel needs <a href="https://github.com/luongnv89/mcc">mcc</a>.</li>
+    </ul>
+
+    <h2 id="install">Install</h2>
+    <p>Rex has no plugin manager. An extension is enabled when the <code>init.lua</code> Rex reads loads its Lua file and binds a key to its action. Each extension's <code>install.js</code> makes that edit for you.</p>
+    <h3>1. Clone the repo once</h3>
+<pre class="code"><code>git clone https://github.com/luongnv89/rex-extensions ~/.config/rex/rex-extensions</code></pre>
+    <p>Any folder works. <code>init.lua</code> loads the extensions from where you cloned them, so keep the clone there.</p>
+    <h3>2. Install the extensions you want</h3>
+<pre class="code"><code>node ~/.config/rex/rex-extensions/github/install.js
+node ~/.config/rex/rex-extensions/mcc/install.js
+node ~/.config/rex/rex-extensions/tabs/install.js
+node ~/.config/rex/rex-extensions/sshtab/install.js</code></pre>
+    <p>Each one:</p>
+    <ol>
+      <li>adds three lines to <code>init.lua</code>: a comment, a <code>dofile</code> that loads the extension, and a <code>rex.bind</code> for its key;</li>
+      <li>checks the result with <code>rex config check</code>, and puts the old file back if the check fails;</li>
+      <li>saves the old file as <code>init.lua.bak-rex-&lt;extension&gt;</code>;</li>
+      <li>runs <code>rex config reload</code>, so the key works at once, with no restart.</li>
+    </ol>
+    <p>The file it edits is <code>REX_CONFIG</code> when that's set, else <code>$XDG_CONFIG_HOME/rex/init.lua</code>, else <code>~/.config/rex/init.lua</code>. It's created if it doesn't exist. Running <code>install.js</code> again when the extension is already there changes nothing.</p>
+    <h3>3. Use it</h3>
+    <p>Press the extension's key in any Rex pane:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Extension</th><th>Key</th><th>Action</th><th>In the command palette</th></tr></thead>
+      <tbody>
+        <tr><td>github</td><td><code>cmd+shift+g</code></td><td><code>github_panel</code></td><td>PR and Issue Panel</td></tr>
+        <tr><td>mcc</td><td><code>cmd+shift+u</code></td><td><code>mcc_usage</code></td><td>mcc Usage Panel</td></tr>
+        <tr><td>tabs</td><td><code>cmd+shift+l</code></td><td><code>tab_locations</code></td><td>Tab Locations (turns it off or on; it runs on its own)</td></tr>
+        <tr><td>sshtab</td><td><code>cmd+alt+t</code></td><td><code>same_host_tabs</code></td><td>Same-Machine Tabs (turns it off or on; it runs on its own). <code>restore_agent_sessions</code>, Restore Agent Sessions, turns agent session restore alone off or on.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Without the key, pick the extension in Rex's command palette, or run its action from a shell with <code>rex do ACTION</code>, such as <code>rex do mcc_usage</code>. To check that an extension is enabled:</p>
+<pre class="code"><code>rex config check                  # init.lua loads without errors
+rex keymap | grep mcc_usage       # the key is bound to the action</code></pre>
+
+    <h2 id="first-run">First run</h2>
+    <p>The shortest way to a working panel: clone, install the github panel, then press its key in a Rex pane inside a GitHub or GitLab repo.</p>
+<pre class="code"><code>git clone https://github.com/luongnv89/rex-extensions ~/.config/rex/rex-extensions
+node ~/.config/rex/rex-extensions/github/install.js</code></pre>
+    <p><code>install.js</code> says which key it bound and where, such as <code>PR and issue panel on cmd+shift+g: added to /Users/you/.config/rex/init.lua (backup: init.lua.bak-rex-github)</code>. Press that key: the panel of open pull requests and issues opens on the right of the tab.</p>
+
+    <h2 id="pick-another-key">Pick another key</h2>
+    <p>When the default key is already bound in your <code>init.lua</code>, <code>install.js</code> takes the first free key from its own list and says which one it picked. To choose a key yourself, pass it:</p>
+<pre class="code"><code>node ~/.config/rex/rex-extensions/mcc/install.js ctrl+alt+u</code></pre>
+    <p>It refuses a key your <code>init.lua</code> already binds. It can't see the shortcuts built into the Rex app, so if the key does something else there, remove the extension and install it again with another key.</p>
+
+    <h2 id="update-or-remove">Update, disable or remove</h2>
+    <ul>
+      <li><strong>Update:</strong> run <code>git pull</code> in the clone. Every extension updates at once. A change to a pane's script shows the next time the pane opens; a change to an extension's Lua file needs <code>rex config reload</code>.</li>
+      <li><strong>Disable or remove:</strong> <code>node ~/.config/rex/rex-extensions/mcc/install.js --remove</code> takes the extension's lines out of <code>init.lua</code> and reloads the config. Run <code>install.js</code> again to bring it back.</li>
+    </ul>
+
+    <h2 id="troubleshooting">Troubleshooting</h2>
+    <ul>
+      <li><strong><code>install.js</code> says <code>Not installed: … already has problems</code>:</strong> <code>rex config check</code> already reports a problem with your <code>init.lua</code>, so it changed nothing. Fix the problem it quotes, then run it again.</li>
+      <li><strong><code>Not installed: Rex rejected it</code>:</strong> the check rejected the edited file, and <code>install.js</code> put the old one back.</li>
+      <li><strong>The key does something else:</strong> <code>install.js</code> can't see the shortcuts built into the Rex app. Remove the extension and install it again with another key.</li>
+      <li>Each extension's README has a Troubleshooting section for its own messages: <a href="https://github.com/luongnv89/rex-extensions/blob/HEAD/github/README.md#troubleshooting">github</a>, <a href="https://github.com/luongnv89/rex-extensions/blob/HEAD/mcc/README.md#troubleshooting">mcc</a>.</li>
+    </ul>
+
+    <h2 id="configuration">Configuration</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Variable</th><th>Used by</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>REX_CONFIG</code></td><td>every <code>install.js</code></td><td>The <code>init.lua</code> to edit. Else <code>$XDG_CONFIG_HOME/rex/init.lua</code>, else <code>~/.config/rex/init.lua</code>.</td></tr>
+        <tr><td><code>XDG_STATE_HOME</code></td><td>github and mcc panels</td><td>Where the panel keeps its state files. Default <code>~/.local/state</code>.</td></tr>
+        <tr><td><code>MCC_BIN</code></td><td>mcc and github panels</td><td>The full path to <code>mcc</code>, when it isn't on <code>PATH</code> or in the usual install folders.</td></tr>
+        <tr><td><code>REX_GITHUB_STARTUP_MS</code></td><td>github panel</td><td>How long Resolve/Review waits for the agent to start, in ms. Default 3000.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="more">Every feature, per extension</h2>
+    <ul>
+      <li><a href="https://github.com/luongnv89/rex-extensions/blob/HEAD/github/README.md">github</a>: the pull requests and issues side pane, agent profiles, custom prompts, Auto-pilot, Merge and Close.</li>
+      <li><a href="https://github.com/luongnv89/rex-extensions/blob/HEAD/mcc/README.md">mcc</a>: the usage strip, API-key profiles, login warnings, details and machine stats.</li>
+      <li><a href="https://github.com/luongnv89/rex-extensions/blob/HEAD/tabs/README.md">tabs</a>: the machine in session names and the folder in tab names.</li>
+      <li><a href="https://github.com/luongnv89/rex-extensions/blob/HEAD/sshtab/README.md">sshtab</a>: same-machine tabs and splits, and agent sessions after a restart.</li>
+      <li><a href="https://github.com/luongnv89/rex-extensions/blob/HEAD/docs/DEVELOPMENT.md">Development guide</a> and <a href="https://github.com/luongnv89/rex-extensions/blob/HEAD/docs/ARCHITECTURE.md">architecture</a>.</li>
+    </ul>
+  </main>
+  <footer class="foot">
+    <a href="LICENSE">MIT © Luong NGUYEN</a>
+    <a href="https://github.com/luongnv89/rex-extensions">GitHub</a>
+    <a href="privacy.html">Privacy</a>
+    <a href="changelog.html">Changelog</a>
+    <a href="docs.html" aria-current="page">Docs</a>
+    <details id="credits" class="credits">
+      <summary>Credits</summary>
+      <div class="credits-panel" role="group" aria-label="Credits" tabindex="0">
+        <p>rex-extensions and this site are under the <a href="LICENSE">MIT licence</a>, © Luong NGUYEN.</p>
+        <p>The Rex windows on the slides are simulations drawn in HTML. The repos, people, accounts and numbers in them are examples.</p>
+        <p>The fonts are under the SIL OFL 1.1: <a href="fonts/OFL-PlayfairDisplay.txt">Playfair Display</a> and <a href="fonts/OFL-OldStandardTT.txt">Old Standard TT</a>. The design follows the <a href="https://github.com/luongnv89/printer-cli">printer-cli</a> site.</p>
+      </div>
+    </details>
+  </footer>
+<script>
+  // The credits close on Escape and on a click outside them, as on the slideshow.
+  const credits = document.getElementById("credits");
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && credits.open) { credits.open = false; credits.querySelector("summary").focus(); } });
+  document.addEventListener("click", (e) => { if (credits.open && !credits.contains(e.target)) credits.open = false; });
+</script>
+</body>
+</html>

@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en" class="doc">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Changelog · rex-extensions</title>
+<meta name="description" content="What changed in each rex-extensions release, newest first.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#d6d6d6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#262626" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brandline">
+      <a class="brand" href="index.html">rex-extensions</a>
+      <p class="tagline">Extensions for Rex, the terminal multiplexer. One install.js each.</p>
+    </div>
+    <div class="top-controls">
+      <a class="cta" href="https://github.com/luongnv89/rex-extensions#quick-start">Install from GitHub</a>
+    </div>
+  </header>
+  <main class="doc-main">
+
+    <h1>Changelog</h1>
+    <p class="lede">Each extension is versioned on its own. Newest first; the per-extension changelogs in the repo hold every detail.</p>
+
+    <h2 id="unreleased">Unreleased</h2>
+    <p class="meta">On <code>main</code>, not yet in a tagged release.</p>
+    <h3>New</h3>
+    <ul>
+      <li><strong>sshtab:</strong> a tab or split pane opened from one that's ssh'd into a machine connects to that machine too, with the same ssh options.</li>
+      <li><strong>sshtab:</strong> Claude Code sessions, and Codex, OpenCode, Cursor Agent and pi sessions started with a session id, resume in their panes and folders after Rex restarts.</li>
+      <li><strong>sshtab:</strong> Restore Agent Sessions in the command palette turns agent session restore off or on, apart from same-machine tabs.</li>
+      <li><strong>tabs:</strong> the sidebar shows the machine in each session's name and the folder in each tab's name, including tabs that run ssh, and keeps the names you give them.</li>
+      <li><strong>mcc:</strong> a ► marks the profile <code>mcc run</code> would start in the folder of the pane you work in.</li>
+      <li><strong>mcc:</strong> API-key profiles show what mcc estimates they spent this month, with a bar against the budget when one is set.</li>
+    </ul>
+    <h3>Improved</h3>
+    <ul>
+      <li><strong>mcc:</strong> accounts are listed by weekly use, least first, as <code>mcc usage</code> sorts them.</li>
+    </ul>
+    <h3>Fixed</h3>
+    <ul>
+      <li><strong>github and mcc:</strong> the panels follow your pane and size themselves again under a Rex that sets only <code>REX_BLOCK</code>.</li>
+      <li><strong>mcc:</strong> the ► mark shows for a profile with an account label.</li>
+      <li><strong>mcc:</strong> a moved or upgraded mcc no longer leaves the panel stuck on old numbers.</li>
+      <li><strong>mcc:</strong> the panel stays tall enough for every account after you drag the border above it.</li>
+    </ul>
+    <h3>Action needed</h3>
+    <ul>
+      <li><strong>sshtab:</strong> if you installed its first version, which bound <code>cmd+t</code>, run <code>install.js</code> again to give <code>cmd+t</code> back to Rex's New Tab.</li>
+    </ul>
+
+    <h2 id="github-0-1-0">github 0.1.0</h2>
+    <p class="meta">2026-11-25 · the first public release of the PR and issue panel</p>
+    <h3>New</h3>
+    <ul>
+      <li>See the open pull requests and issues of the repo you're in, from GitHub or GitLab, in a pane on the right of the tab.</li>
+      <li>Start an agent on an issue or a pull request with its Resolve or Review button, in a new pane beside yours.</li>
+      <li>Choose the agent, model and thinking level with agent profiles for seven harnesses, test a profile before you use it, and import profiles from mcc.</li>
+      <li>Send a prompt of your own from each button, and rename the button to match.</li>
+      <li>Run one agent on several issues with Auto-pilot.</li>
+      <li>Merge a pull request or close an issue from its row, with a second press to confirm.</li>
+      <li>Use every button from the keyboard, with a key for each.</li>
+      <li>Edit profiles, button labels and prompts, and the merge mode in a Settings view with three tabs.</li>
+    </ul>
+    <h3>Improved</h3>
+    <ul>
+      <li>The panel keeps the width you drag it to, also after Rex restarts.</li>
+      <li>Resolve and Review open the agent's pane beside your agent, side by side.</li>
+    </ul>
+    <h3>Fixed</h3>
+    <ul>
+      <li>The panel works in a session on a remote host.</li>
+      <li>A profiles file saved by a newer version of the panel now says so.</li>
+    </ul>
+    <h3>Action needed</h3>
+    <ul>
+      <li>With no profile assigned, Resolve and Review start Claude Code through <code>mcc run</code>. Assign a profile to keep using another agent.</li>
+    </ul>
+
+    <h2 id="mcc-0-1-0">mcc 0.1.0</h2>
+    <p class="meta">2026-11-05 · the first release of the mcc usage panel</p>
+    <h3>New</h3>
+    <ul>
+      <li>See the 5-hour and weekly Claude Code usage of every mcc account in a strip along the bottom of the tab.</li>
+      <li>Look every account up live with the refresh button or <code>r</code>; between refreshes the panel rereads mcc's cache every 30 seconds.</li>
+      <li>The panel fits its height to its rows, and collapses to one line that shows the highest percent of each window.</li>
+    </ul>
+
+    <p class="meta">Full history: <a href="https://github.com/luongnv89/rex-extensions/blob/HEAD/github/CHANGELOG.md">github</a> · <a href="https://github.com/luongnv89/rex-extensions/blob/HEAD/mcc/CHANGELOG.md">mcc</a> · <a href="https://github.com/luongnv89/rex-extensions/blob/HEAD/tabs/CHANGELOG.md">tabs</a> · <a href="https://github.com/luongnv89/rex-extensions/blob/HEAD/sshtab/CHANGELOG.md">sshtab</a></p>
+  </main>
+  <footer class="foot">
+    <a href="LICENSE">MIT © Luong NGUYEN</a>
+    <a href="https://github.com/luongnv89/rex-extensions">GitHub</a>
+    <a href="privacy.html">Privacy</a>
+    <a href="changelog.html" aria-current="page">Changelog</a>
+    <a href="docs.html">Docs</a>
+    <details id="credits" class="credits">
+      <summary>Credits</summary>
+      <div class="credits-panel" role="group" aria-label="Credits" tabindex="0">
+        <p>rex-extensions and this site are under the <a href="LICENSE">MIT licence</a>, © Luong NGUYEN.</p>
+        <p>The Rex windows on the slides are simulations drawn in HTML. The repos, people, accounts and numbers in them are examples.</p>
+        <p>The fonts are under the SIL OFL 1.1: <a href="fonts/OFL-PlayfairDisplay.txt">Playfair Display</a> and <a href="fonts/OFL-OldStandardTT.txt">Old Standard TT</a>. The design follows the <a href="https://github.com/luongnv89/printer-cli">printer-cli</a> site.</p>
+      </div>
+    </details>
+  </footer>
+<script>
+  // The credits close on Escape and on a click outside them, as on the slideshow.
+  const credits = document.getElementById("credits");
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && credits.open) { credits.open = false; credits.querySelector("summary").focus(); } });
+  document.addEventListener("click", (e) => { if (credits.open && !credits.contains(e.target)) credits.open = false; });
+</script>
+</body>
+</html>
