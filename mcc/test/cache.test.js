@@ -65,3 +65,29 @@ test("a cache read re-resolves mcc after the binary moves", async (t) => {
   assert.equal(p.ui.profiles[0]?.status, "unavailable");
   assert.equal(p.ui.profiles[0]?.reason, "no_data");
 });
+
+test("a cache read names the mcc it ran, even when another read starts meanwhile", async (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "rex-mcc-cache-"));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const gone = path.join(tmp, "gone", "mcc");
+  const slow = path.join(tmp, "slow", "mcc");
+  fs.mkdirSync(path.dirname(slow), { recursive: true });
+  fs.writeFileSync(slow, `#!/bin/sh\nsleep 0.5\nprintf '%s\\n' '${doc("ok", 12)}'\n`);
+  fs.chmodSync(slow, 0o755);
+
+  const p = require("../panel.js");
+  const write = process.stdout.write;
+  // Only the panel's frames: the test runner reports through stdout too.
+  process.stdout.write = function (s, ...rest) { return (typeof s === "string" && s.startsWith("\x1b[?2026h")) || write.call(this, s, ...rest); };
+  t.after(() => { process.stdout.write = write; });
+
+  env(t, { MCC_BIN: gone });
+  const first = p.load();
+  process.env.MCC_BIN = slow;
+  const second = p.load();
+  await first;
+  assert.equal(p.ui.error, `can't run ${gone}`);
+  await second;
+  assert.equal(p.ui.error, null);
+  assert.equal(p.ui.profiles[0]?.week?.percent, 12);
+});
