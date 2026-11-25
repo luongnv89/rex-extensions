@@ -44,6 +44,12 @@ const here = {
   inherited: (name, dir) => `Here: \`${name}\` — inherited from parent folder ${dir}\n  directory  ${dir}/sub\n`,
   none: "Here: `default` — no project default here or in a parent folder\n  directory  /tmp\n",
 };
+// The same lines for a profile with an account label, as mcc 0.13 prints them (#75).
+const labelled = {
+  set: (name, label, dir) => `Here: \`${name}\` (${label}) — the default for ${dir}\n  directory  ${dir}\n`,
+  inherited: (name, label, dir) => `Here: \`${name}\` (${label}) — inherited from parent folder ${dir}\n  directory  ${dir}/sub\n`,
+  none: (label) => `Here: \`default\` (${label}) — no project default here or in a parent folder\n  directory  /tmp\n`,
+};
 
 // A tab of block:top and block:other above the panel, `focus` focused, each pane in
 // the folder `dirs` gives it. `blocks` lists the tab's panes, and Rex fails each
@@ -117,6 +123,14 @@ test("parseHere: no project default, or a line it doesn't know, names nothing", 
   assert.equal(p.parseHere("  directory  ~/x\nHere: `work` — the default for ~/x\n"), null, "only the first line counts");
 });
 
+test("parseHere: a profile's account label after its name doesn't hide it (#75)", () => {
+  assert.equal(p.parseHere(labelled.set("work", "Acme", "~/code/work")), "work");
+  assert.equal(p.parseHere(labelled.inherited("twbin", "TextWiz AI", "~/code")), "twbin");
+  assert.equal(p.parseHere(labelled.set("work", "Acme (EU) — team", "~/x")), "work", "brackets and a dash inside the label");
+  assert.equal(p.parseHere(labelled.none("Acme")), null, "mcc's fallback with a label is still no default");
+  assert.equal(p.parseHere("Here: `work` (Acme) - the default for ~/x\n"), null, "a hyphen, not mcc's dash");
+});
+
 test("parseHere: names with unusual text come back as mcc printed them, control codes made spaces", () => {
   assert.equal(p.parseHere(here.set("日本-é's \"x\"", "~/x")), "日本-é's \"x\"");
   assert.equal(p.parseHere(here.set("a\x1b[31mb", "~/x")), "a [31mb");
@@ -171,6 +185,14 @@ test("the profile mcc would start in the focused pane's folder is marked, and on
   await p.load();
   await p.follow();
   assert.deepEqual(hereCalls().map((c) => [c.args, c.cwd]), [[["here"], "/code/work"]], "mcc here runs in the pane's folder");
+  assert.equal(marked().length, 1);
+  assert.match(marked()[0], /^►\d work /);
+});
+
+test("a profile with an account label is marked too (#75)", async (t) => {
+  scene(t, { dirs: { "block:top": "/code/work/app" }, answers: { "/code/work/app": labelled.inherited("work", "mic", "/code/work") } });
+  await p.load();
+  await p.follow();
   assert.equal(marked().length, 1);
   assert.match(marked()[0], /^►\d work /);
 });
