@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rex-extensions: extensions for Rex, the terminal multiplexer</title>
+<meta name="description" content="Three extensions for Rex, each shown from install to use: a side pane of pull requests and issues, a strip of Claude Code usage per mcc account, and new tabs that follow ssh.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#d6d6d6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#262626" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+<script src="app.js" defer></script>
+</head>
+<body>
+<div class="shell">
+  <header class="top">
+    <div class="brandline">
+      <a class="brand" href="./">rex-extensions</a>
+      <p class="tagline">Extensions for Rex, the terminal multiplexer. One install.js each.</p>
+    </div>
+    <h1 class="sr-only">rex-extensions: three extensions for Rex, the terminal multiplexer, each shown from install to use</h1>
+    <div class="top-controls">
+      <a class="cta" href="https://github.com/luongnv89/rex-extensions#quick-start">Install from GitHub</a>
+      <p class="counter"><span id="current">01</span> / <span id="total">03</span></p>
+      <button id="autoplay" class="ctl" type="button" aria-label="Autoplay" aria-pressed="true" title="Autoplay (Space)">
+        <svg class="icon icon-pause" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor"/></svg>
+        <svg class="icon icon-play" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main id="stage" class="stage" aria-roledescription="carousel" aria-label="rex-extensions, from install to use">
+    <noscript><p class="noscript">This slideshow needs JavaScript. Every extension is also in the <a href="https://github.com/luongnv89/rex-extensions#readme">rex-extensions README</a>.</p></noscript>
+  </main>
+
+  <nav class="bar" aria-label="Slides">
+    <div class="progress" aria-hidden="true"><span id="progress"></span></div>
+    <div class="nav-row">
+      <button id="prev" class="ctl" type="button" aria-label="Previous slide">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+      </button>
+      <div id="dots" class="dots"></div>
+      <button id="next" class="ctl" type="button" aria-label="Next slide">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+      </button>
+    </div>
+  </nav>
+
+  <footer class="foot">
+    <a href="LICENSE">MIT © Luong NGUYEN</a>
+    <a href="https://github.com/luongnv89/rex-extensions">GitHub</a>
+    <a href="privacy.html">Privacy</a>
+    <a href="changelog.html">Changelog</a>
+    <a href="docs.html">Docs</a>
+    <details id="credits" class="credits">
+      <summary>Credits</summary>
+      <div class="credits-panel" role="group" aria-label="Credits" tabindex="0">
+        <p>rex-extensions and this site are under the <a href="LICENSE">MIT licence</a>, © Luong NGUYEN.</p>
+        <p>The Rex windows on the slides are simulations drawn in HTML. The repos, people, accounts and numbers in them are examples.</p>
+        <p>The fonts are under the SIL OFL 1.1: <a href="fonts/OFL-PlayfairDisplay.txt">Playfair Display</a> and <a href="fonts/OFL-OldStandardTT.txt">Old Standard TT</a>. The design follows the <a href="https://github.com/luongnv89/printer-cli">printer-cli</a> site.</p>
+      </div>
+    </details>
+  </footer>
+
+  <p id="announce" class="sr-only" aria-live="polite"></p>
+  <p id="copy-status" class="sr-only" role="status"></p>
+</div>
+<script type="application/json" id="slides">
+[
+ {
+  "id": "github",
+  "scene": "github",
+  "duration": 16500,
+  "group": "github · cmd+shift+g",
+  "title": "Pull requests and issues beside your code",
+  "blurb": "The open pull requests and issues of the repo you're in, from GitHub or GitLab, in a side pane. Press Resolve on an issue and an agent starts on it in a new pane beside yours.",
+  "command": "git clone https://github.com/luongnv89/rex-extensions ~/.config/rex/rex-extensions\nnode ~/.config/rex/rex-extensions/github/install.js",
+  "prompt": "Clone https://github.com/luongnv89/rex-extensions into ~/.config/rex/rex-extensions, then run node ~/.config/rex/rex-extensions/github/install.js to add the PR and issue panel to my Rex config.",
+  "alt": "A simulated Rex window: the github extension is cloned and installed, cmd+shift+g opens the panel of pull requests and issues on the right, and Resolve #42 starts Claude Code on that issue in a new pane.",
+  "steps": [
+   {
+    "at": 0,
+    "label": "Install"
+   },
+   {
+    "at": 5900,
+    "label": "Press <kbd>⌘⇧G</kbd>"
+   },
+   {
+    "at": 9900,
+    "label": "Resolve #42"
+   }
+  ]
+ },
+ {
+  "id": "mcc",
+  "scene": "mcc",
+  "duration": 15500,
+  "group": "mcc · cmd+shift+u",
+  "title": "Every Claude Code account's usage, in one strip",
+  "blurb": "The 5-hour and weekly usage of every mcc account, with the time to each reset, along the bottom of the tab. Press r to look every account up live, and d for when each window resets.",
+  "command": "node ~/.config/rex/rex-extensions/mcc/install.js",
+  "prompt": "Run node ~/.config/rex/rex-extensions/mcc/install.js to add the mcc usage panel to my Rex config. If that folder doesn't exist, clone https://github.com/luongnv89/rex-extensions into it first.",
+  "alt": "A simulated Rex window: the mcc extension is installed, cmd+shift+u opens a strip of usage bars for four accounts along the bottom, r refreshes them and d shows each account's reset times.",
+  "steps": [
+   {
+    "at": 0,
+    "label": "Install"
+   },
+   {
+    "at": 4200,
+    "label": "Press <kbd>⌘⇧U</kbd>"
+   },
+   {
+    "at": 8200,
+    "label": "Refresh with <kbd>r</kbd>"
+   },
+   {
+    "at": 11300,
+    "label": "Details with <kbd>d</kbd>"
+   }
+  ]
+ },
+ {
+  "id": "sshtab",
+  "scene": "sshtab",
+  "duration": 18000,
+  "group": "sshtab · cmd+alt+t",
+  "title": "New tabs follow ssh; agents return after restarts",
+  "blurb": "A tab or split opened from one that's ssh'd into a machine connects to that machine too, with the same ssh options. After Rex restarts, Claude Code sessions resume in their panes and folders.",
+  "command": "node ~/.config/rex/rex-extensions/sshtab/install.js",
+  "prompt": "Run node ~/.config/rex/rex-extensions/sshtab/install.js to add same-machine tabs to my Rex config. If that folder doesn't exist, clone https://github.com/luongnv89/rex-extensions into it first.",
+  "alt": "A simulated Rex window: the sshtab extension is installed, cmd+t in a tab ssh'd into devbox opens a new tab that types the same ssh command, and after Rex restarts a pane types claude --resume to bring its session back.",
+  "steps": [
+   {
+    "at": 0,
+    "label": "Install"
+   },
+   {
+    "at": 5600,
+    "label": "<kbd>⌘T</kbd> in an ssh tab"
+   },
+   {
+    "at": 11000,
+    "label": "Rex restarts"
+   }
+  ]
+ }
+]
+</script>
+</body>
+</html>
