@@ -208,7 +208,7 @@ test("parseStore: no file is empty; bad JSON or another version is read only", (
   // a profile imported from mcc (#63), and all are read; a newer one is read only.
   const newer = P.parseStore(JSON.stringify({ version: 8, profiles: [ok({ harness: "pi" })], assign: { resolve: "p" } }));
   assert.equal(newer.readOnly, true);
-  assert.equal(newer.warnings[0], "The profiles file is version 8, saved by a newer rex-github than this panel, which reads up to version 7: close and reopen the panel to edit it. Until then it is read only here");
+  assert.equal(newer.warnings[0], "The profiles file is version 8, saved by a newer rex-github than this panel, which reads up to version 7: update rex-github if needed, then close and reopen the panel to edit it. Until then it is read only here");
   assert.equal(P.resolveProfile(newer.store, "resolve").harness, "pi");
 });
 
@@ -1088,7 +1088,7 @@ test("a file from a newer rex-github says to reopen the panel, and is read only;
   const next = P.STORE_VERSION + 1;
   const newer = P.parseStore(JSON.stringify({ version: next, profiles: [ok({ harness: "pi" })] }));
   assert.equal(newer.readOnly, true);
-  assert.equal(newer.warnings[0], `The profiles file is version ${next}, saved by a newer rex-github than this panel, which reads up to version ${P.STORE_VERSION}: close and reopen the panel to edit it. Until then it is read only here`);
+  assert.equal(newer.warnings[0], `The profiles file is version ${next}, saved by a newer rex-github than this panel, which reads up to version ${P.STORE_VERSION}: update rex-github if needed, then close and reopen the panel to edit it. Until then it is read only here`);
   assert.equal(newer.store.profiles[0].harness, "pi");
   // A version that isn't a whole number newer than this one keeps saying what it is.
   for (const [version, shown] of [["7", '"7"'], [7.5, "7.5"], [0, "0"], [-1, "-1"], [null, "null"], [undefined, "null"]]) {

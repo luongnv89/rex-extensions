@@ -2587,11 +2587,12 @@ function settingsLines(cols, rows) {
   // or why it failed, then the store's warnings and the OpenCode note. The header,
   // the key hints and a line of the body come first; each message is whole while
   // the room left allows, and a status too long for it is cut there, ending in "…".
+  // A warning that "Not saved: …" already shows isn't said again under it (#69).
   const notes = [];
   if (st.mode === "confirm") notes.push([yellow, `Delete ${p.name}? y deletes it, any other key keeps it`]);
   if (st.error) notes.push([red, st.error]);
   if (st.info) notes.push([green, st.info]);
-  for (const w of st.warnings) notes.push([yellow, w]);
+  for (const w of st.warnings) if (st.error !== `Not saved: ${w}`) notes.push([yellow, w]);
   if (st.mode === "edit" && st.form.testing) notes.push([yellow, st.form.testing]);
   if (picking && st.picker.loading) notes.push([yellow, "Reading mcc's profiles…"]);
   if (picking && st.picker.importing) notes.push([yellow, st.picker.importing]);
