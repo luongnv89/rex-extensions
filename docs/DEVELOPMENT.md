@@ -80,7 +80,7 @@ cd github && node --test --experimental-test-coverage
 | `REX_GITHUB_NO_RELOAD`, `REX_MCC_NO_RELOAD`, `REX_TABS_NO_RELOAD`, `REX_SSHTAB_NO_RELOAD` | `install.js` | When set, skip `rex config reload`. |
 | `REX_TABS_STATE`, `REX_SSHTAB_STATE` | tabs and sshtab `install.js`, and `rex-sshtab.lua` | The watcher's state folder (pid and `off` file, and sshtab's `agents.json`). Default `~/.cache/rex-tabs` or `~/.cache/rex-sshtab`. |
 | `REX_SSHTAB_E2E` | `sshtab/test/restore.e2e.test.js` | Set to `1` to run the agent session restore test on a throwaway Rex server. Needs Rex and zsh as the login shell. |
-| `REX_SESSION`, `REX_BLOCK` | github and mcc `panel.js` | Set by Rex in the panel's pane: the session and block the panel is in. |
+| `REX_BLOCK`, `REX_SESSION` | github and mcc `panel.js` | Set by Rex in the panel's pane: the block the panel is in, and (older Rex only) its session. Without `REX_SESSION`, the panel asks Rex for the session holding `REX_BLOCK`. |
 | `REX_GITHUB_STARTUP_MS` | github `panel.js` | How long Resolve/Review waits for the agent to start, in ms. Default 3000. |
 | `MCC_BIN` | mcc and github `panel.js` | The full path to `mcc`, when it isn't on `PATH` or in the usual install folders. The github panel passes over one that isn't the full path of an executable file. |
 | `REX_GITHUB_MCC_SYSTEM_DIRS` | github `panel.js` | Tests only: replaces `/opt/homebrew/bin` and `/usr/local/bin` among the folders the panel looks for `mcc` in, so the tests never find the machine's own mcc. |
