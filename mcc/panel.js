@@ -1242,7 +1242,7 @@ else module.exports = {
   // The panel's height after a drag (#55): fit it, when a drag settles, and a reset for tests.
   needsFit, resize, settleResize, refit, resetFit: () => { panes = null; fitted = null; full = null; fitting = false; },
   // Where you work (#64): the mark's source, one look, the cache read that asks again, and a reset for tests.
-  parseHere, follow, load, resetHere: () => { target = null; hereDir = null; locating = false; lookups++; ui.here = null; mcc = null; },
+  parseHere, follow, load, refresh, resetHere: () => { target = null; hereDir = null; locating = false; lookups++; ui.here = null; mcc = null; },
   parseProcStat, cpuPercent, parseMeminfo, parseVmStat, parseNetDev, parseNetstat, rate, step, formatBytes, formatRate, shortBytes, formatPair, memPercent, diskPercent, parseStatfs, readDisk, readout, label,
   cpuTimes, readStats, applyStats, resetStats, statsRow, statsParts, dotBlinks, isOnline, readOnline, header, refreshButton, footerButtons,
 };
