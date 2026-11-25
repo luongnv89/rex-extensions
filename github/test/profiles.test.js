@@ -208,7 +208,7 @@ test("parseStore: no file is empty; bad JSON or another version is read only", (
   // a profile imported from mcc (#63), and all are read; a newer one is read only.
   const newer = P.parseStore(JSON.stringify({ version: 8, profiles: [ok({ harness: "pi" })], assign: { resolve: "p" } }));
   assert.equal(newer.readOnly, true);
-  assert.equal(newer.warnings[0], "The profiles file is version 8, not 1, 2, 3, 4, 5, 6 or 7: it is read only here");
+  assert.equal(newer.warnings[0], "The profiles file is version 8, saved by a newer rex-github than this panel, which reads up to version 7: update rex-github if needed, then close and reopen the panel to edit it. Until then it is read only here");
   assert.equal(P.resolveProfile(newer.store, "resolve").harness, "pi");
 });
 
@@ -879,7 +879,7 @@ test("args it can't use make their profile skipped and the file read only; a new
   // A newer version is still read only, its args read.
   const newer = hand(["--x"], 8);
   assert.equal(newer.readOnly, true);
-  assert.match(newer.warnings[0], /version 8, not 1, 2, 3, 4, 5, 6 or 7/);
+  assert.match(newer.warnings[0], /version 8, saved by a newer rex-github than this panel/);
   assert.deepEqual(newer.store.profiles[0].args, ["--x"]);
 });
 
@@ -1080,4 +1080,37 @@ test("importedProfile: the mcc profile's model and thinking level from its setti
   for (const n of ["work", "default", long, "_x", "Lab.2"]) assert.deepEqual(P.validateProfile(P.importedProfile(n, { model: "sonnet", effortLevel: "max" }, store)), [], n);
   // A name it can't pass on isn't imported.
   for (const n of ["-x", "a b", "", null]) assert.throws(() => P.importedProfile(n, null, store), /^Error: Mcc profile: /, String(n));
+});
+
+// ── A file newer than the panel (#69) ───────────────────────────────────────
+
+test("a file from a newer rex-github says to reopen the panel, and is read only; another bad version says what it did (#69)", () => {
+  const next = P.STORE_VERSION + 1;
+  const newer = P.parseStore(JSON.stringify({ version: next, profiles: [ok({ harness: "pi" })] }));
+  assert.equal(newer.readOnly, true);
+  assert.equal(newer.warnings[0], `The profiles file is version ${next}, saved by a newer rex-github than this panel, which reads up to version ${P.STORE_VERSION}: update rex-github if needed, then close and reopen the panel to edit it. Until then it is read only here`);
+  assert.equal(newer.store.profiles[0].harness, "pi");
+  // A version that isn't a whole number newer than this one keeps saying what it is.
+  for (const [version, shown] of [["7", '"7"'], [7.5, "7.5"], [0, "0"], [-1, "-1"], [null, "null"], [undefined, "null"]]) {
+    const r = P.parseStore(JSON.stringify({ version, profiles: [] }));
+    assert.equal(r.readOnly, true, shown);
+    assert.equal(r.warnings[0], `The profiles file is version ${shown}, not 1, 2, 3, 4, 5, 6 or 7: it is read only here`, shown);
+  }
+});
+
+test("a version 7 file with an imported profile is edited, added to and removed from, and stays writable (#69)", () => {
+  const v7 = P.serializeStore(P.upsertProfile(P.upsertProfile(P.emptyStore(), { id: "a", name: "A", harness: "claude" }), { id: "work", name: "mcc work", harness: "mcc", mccProfile: "work", model: "opus" }));
+  const read = P.parseStore(v7);
+  assert.deepEqual([JSON.parse(v7).version, read.readOnly, read.warnings], [7, false, []]);
+  const again = (store) => { const r = P.parseStore(P.serializeStore(store)); assert.deepEqual([r.readOnly, r.warnings], [false, []]); return r.store; };
+  // Edited: the imported profile keeps its mcc profile.
+  let store = again(P.upsertProfile(read.store, { ...read.store.profiles[1], name: "mcc work!" }, "work"));
+  assert.deepEqual(store.profiles[1], { id: "work", name: "mcc work!", harness: "mcc", mccProfile: "work", model: "opus" });
+  // Added.
+  store = again(P.upsertProfile(store, { id: "b", name: "B", harness: "pi" }));
+  assert.deepEqual(store.profiles.map((p) => p.id), ["a", "work", "b"]);
+  // Removed.
+  store = again(P.removeProfile(store, "a"));
+  assert.deepEqual(store.profiles.map((p) => p.id), ["work", "b"]);
+  assert.equal(JSON.parse(P.serializeStore(store)).version, 7);
 });

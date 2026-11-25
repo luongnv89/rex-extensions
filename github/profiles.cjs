@@ -417,7 +417,9 @@ function emptyStore() {
 // The store in a file's text, read leniently: a bad profile, prompt or custom
 // model is skipped with a warning. A file that isn't valid JSON, is from another
 // version, or holds something that was skipped is read-only: saving would
-// overwrite what it holds.
+// overwrite what it holds. One from a newer version says to update and reopen
+// the panel: a panel started before rex-github was updated still runs the old
+// code (#69).
 // No file (null or "") is an empty store.
 function parseStore(text) {
   const warnings = [];
@@ -429,7 +431,10 @@ function parseStore(text) {
     return { store: emptyStore(), warnings, readOnly: true };
   }
   let readOnly = false;
-  if (!READS.includes(data.version)) {
+  if (Number.isInteger(data.version) && data.version > STORE_VERSION) {
+    warnings.push(`The profiles file is version ${data.version}, saved by a newer rex-github than this panel, which reads up to version ${STORE_VERSION}: update rex-github if needed, then close and reopen the panel to edit it. Until then it is read only here`);
+    readOnly = true;
+  } else if (!READS.includes(data.version)) {
     warnings.push(`The profiles file is version ${JSON.stringify(data.version ?? null)}, not ${READS.slice(0, -1).join(", ")} or ${READS.at(-1)}: it is read only here`);
     readOnly = true;
   }

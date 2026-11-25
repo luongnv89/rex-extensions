@@ -1392,6 +1392,28 @@ test("a store with a profile it can't use is read only, so saving doesn't erase 
   assert.equal(fs.readFileSync(file, "utf8"), before);
 });
 
+test("a refused change says why once, and the selected profile stays in view at 28x24 and 40x16 (#69)", (t) => {
+  const dir = home(t);
+  const why = "The profiles file is version 8, saved by a newer rex-github than this panel, which reads up to version 7: update rex-github if needed, then close and reopen the panel to edit it. Until then it is read only here";
+  const newer = JSON.stringify({ version: 8, profiles: [{ id: "one", name: "One", harness: "pi" }], assign: {} });
+  const count = (lines, s) => squash(text(lines)).split(squash(s)).length - 1;
+  for (const [cols, rows] of [[28, 24], [40, 16]]) {
+    fs.writeFileSync(useProfiles(dir, []), newer);
+    setupGitHub("issues");
+    let lines = screenAt(cols, rows, () => onInput(Buffer.from("s")));
+    assert.equal(count(lines, why), 1, `${cols}x${rows}:\n${lines.join("\n")}`);
+    lines = screenAt(cols, rows, () => onInput(Buffer.from("jR")));
+    fitsWithHints(lines, cols, rows, "↑↓ select", "esc back");
+    assert.ok(shows(lines, `Not saved: ${why}`), `${cols}x${rows}:\n${lines.join("\n")}`);
+    assert.equal(count(lines, why), 1, `${cols}x${rows}:\n${lines.join("\n")}`);
+    assert.ok(!aboveHints(lines, "↑↓ select").endsWith("…"), `${cols}x${rows}:\n${lines.join("\n")}`);
+    // The selected profile stays in view, with its buttons.
+    for (const row of [/▌ One\b/, /Use for Resolve/]) assert.ok(lines.some((l) => row.test(l ?? "")), `${cols}x${rows}: ${row}\n${lines.join("\n")}`);
+    assert.equal(fs.readFileSync(storeFile(), "utf8"), newer);
+    screenAt(cols, rows, () => onInput(Buffer.from("\x1b")));
+  }
+});
+
 test("the selected profile has buttons, the header a + New, and the form a Save", (t) => {
   claudeHome(t);
   setupGitHub("issues");
@@ -1631,7 +1653,7 @@ test("at 28, 30 and 40 cells the profiles show each warning, note and question w
     fs.writeFileSync(useProfiles(dir, []), JSON.stringify({ version: 8, profiles: [], assign: {} }));
     setupGitHub("issues");
     lines = at(() => onInput(Buffer.from("s")));
-    assert.ok(shows(lines, "The profiles file is version 8, not 1, 2, 3, 4, 5, 6 or 7: it is read only here"), `${cols}:\n${lines.join("\n")}`);
+    assert.ok(shows(lines, "The profiles file is version 8, saved by a newer rex-github than this panel, which reads up to version 7: update rex-github if needed, then close and reopen the panel to edit it. Until then it is read only here"), `${cols}:\n${lines.join("\n")}`);
     at(() => onInput(Buffer.from("\x1b")));
 
     // A 40-character name in what a change did, and in the delete question.
@@ -4242,7 +4264,7 @@ test("a model isn't added to a read-only file, or over a change made elsewhere",
   setupGitHub("issues");
   screen(() => onInput(Buffer.from("sn" + TO_MODEL)));
   let lines = screen(() => onInput(Buffer.from("+mine\r")));
-  assert.ok(shows(lines, "Not saved: The profiles file is version 8, not 1, 2, 3, 4, 5, 6 or 7: it is read only here"), lines.join("\n"));
+  assert.ok(shows(lines, "Not saved: The profiles file is version 8, saved by a newer rex-github than this panel, which reads up to version 7: update rex-github if needed, then close and reopen the panel to edit it. Until then it is read only here"), lines.join("\n"));
   assert.equal(fs.readFileSync(storeFile(), "utf8"), newer);
   assert.equal(ui.settings.form.adding, "mine");
   screen(() => onInput(Buffer.from("\x1b\x1b\x1b")));
@@ -6273,7 +6295,7 @@ test("a read-only profiles file isn't written by an import (#63)", async (t) => 
   screen(() => key("s"));
   await picked(() => key("i"));
   const lines = await picked(() => key("\r"));
-  assert.ok(shows(lines, "Not saved: The profiles file is version 8, not 1, 2, 3, 4, 5, 6 or 7: it is read only here"), lines.join("\n"));
+  assert.ok(shows(lines, "Not saved: The profiles file is version 8, saved by a newer rex-github than this panel, which reads up to version 7: update rex-github if needed, then close and reopen the panel to edit it. Until then it is read only here"), lines.join("\n"));
   assert.equal(storeText(), newer);
   screen(() => key("\x1b\x1b"));
 });
@@ -6532,7 +6554,7 @@ test("a read-only profiles file isn't written by importing several, and they sta
   await picked(() => key("i"));
   screen(() => key(" j "));
   const lines = await picked(() => key("\r"));
-  assert.ok(shows(lines, "Not saved: The profiles file is version 8, not 1, 2, 3, 4, 5, 6 or 7: it is read only here"), lines.join("\n"));
+  assert.ok(shows(lines, "Not saved: The profiles file is version 8, saved by a newer rex-github than this panel, which reads up to version 7: update rex-github if needed, then close and reopen the panel to edit it. Until then it is read only here"), lines.join("\n"));
   assert.ok(!text(lines).includes("Imported"), lines.join("\n"));
   assert.equal(storeText(), newer);
   assert.equal(ui.settings.mode, "import");
