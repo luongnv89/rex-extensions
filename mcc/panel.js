@@ -744,10 +744,12 @@ function withLiveLogins(profiles, live = ui.liveLogins, now = Date.now()) {
 }
 
 async function load() {
-  if (!mcc) mcc = findMcc();
-  if (!mcc) { ui.error = "mcc not found: install it or set MCC_BIN"; ui.loaded = true; return draw(); }
-  const r = await run(mcc, ["usage", "--json-v2"], CACHE_TIMEOUT);
-  if (r.error) ui.error = r.error.killed ? "mcc usage timed out" : `can't run ${mcc}`;
+  // A local copy: a refresh that overlaps this read can reassign `mcc` meanwhile.
+  const bin = findMcc();
+  mcc = bin;
+  if (!bin) { ui.error = "mcc not found: install it or set MCC_BIN"; ui.loaded = true; return draw(); }
+  const r = await run(bin, ["usage", "--json-v2"], CACHE_TIMEOUT);
+  if (r.error) ui.error = r.error.killed ? "mcc usage timed out" : `can't run ${bin}`;
   else {
     try {
       ui.profiles = ordered(withLiveLogins(parse(r.stdout)));
@@ -772,17 +774,18 @@ async function refit() {
 // it couldn't reach; those get a ⚠ and a line saying why.
 async function refresh() {
   if (ui.refreshing) return;
-  if (!mcc) mcc = findMcc();
-  if (!mcc) return load();
+  const bin = findMcc();
+  mcc = bin;
+  if (!bin) return load();
   ui.refreshing = true;
   ui.flash = null;
   draw();
   const started = Date.now();
-  const r = await run(mcc, ["usage", "--all", "--json-v2"], LIVE_TIMEOUT);
+  const r = await run(bin, ["usage", "--all", "--json-v2"], LIVE_TIMEOUT);
   await sleep(Math.max(0, MIN_SPIN - (Date.now() - started)));
   let ok = false;
   try {
-    if (r.error) throw new Error(r.error.killed ? "live lookup timed out" : `can't run ${mcc}`);
+    if (r.error) throw new Error(r.error.killed ? "live lookup timed out" : `can't run ${bin}`);
     const live = parse(r.stdout);
     ui.issues = liveIssues(live);
     ui.liveLogins = Object.fromEntries(live.filter((p) => p.loginExpiresAt).map((p) => [p.name, p.loginExpiresAt]));
@@ -1239,7 +1242,7 @@ else module.exports = {
   // The panel's height after a drag (#55): fit it, when a drag settles, and a reset for tests.
   needsFit, resize, settleResize, refit, resetFit: () => { panes = null; fitted = null; full = null; fitting = false; },
   // Where you work (#64): the mark's source, one look, the cache read that asks again, and a reset for tests.
-  parseHere, follow, load, resetHere: () => { target = null; hereDir = null; locating = false; lookups++; ui.here = null; mcc = null; },
+  parseHere, follow, load, refresh, resetHere: () => { target = null; hereDir = null; locating = false; lookups++; ui.here = null; mcc = null; },
   parseProcStat, cpuPercent, parseMeminfo, parseVmStat, parseNetDev, parseNetstat, rate, step, formatBytes, formatRate, shortBytes, formatPair, memPercent, diskPercent, parseStatfs, readDisk, readout, label,
   cpuTimes, readStats, applyStats, resetStats, statsRow, statsParts, dotBlinks, isOnline, readOnline, header, refreshButton, footerButtons,
 };
