@@ -155,11 +155,12 @@ function parse(stdout) {
 }
 
 // `mcc here`, run in a folder → the profile `mcc run` would start there, from its
-// first line: Here: `NAME` — REASON. Only a project default counts, set on that
+// first line: Here: `NAME` — REASON, or Here: `NAME` (LABEL) — REASON for a profile
+// with an account label (mcc 0.13, #75). Only a project default counts, set on that
 // folder or inherited from a parent; mcc names `default` when there is none ("no
 // project default here or in a parent folder"), and that's no default for the folder.
 // Any other line, from an older mcc or a new wording, names nothing.
-const HERE = /^Here: `([^`]+)` — (?:the default for |inherited from parent folder )/;
+const HERE = /^Here: `([^`]+)`(?: \(.*\))? — (?:the default for |inherited from parent folder )/;
 function parseHere(stdout) {
   const m = String(stdout ?? "").split("\n")[0].match(HERE);
   return (m && clean(m[1])) || null;
