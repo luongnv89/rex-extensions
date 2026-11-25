@@ -76,7 +76,7 @@ The server must speak API revision 8 or later.
 | `rex.call("session.new_split")` | github, mcc | Open the panel. |
 | `rex.call("block.close")` | github, mcc | Close the panel. |
 | `rex.call("block.method", { method = "process" })` | github (Lua and `panel.js`), mcc `panel.js` | The program running in a pane, and its folder. |
-| `session.resize_pane` (via `rex api call`) | mcc `panel.js` | Fit the panel's height. |
+| `session.resize_pane` (via `rex api call`) | github and mcc `panel.js` | Fit the panel's width (github) or height (mcc). |
 | `rex.call("session.list")` | tabs, sshtab | Every session at start. |
 | `rex.call("session.set_label")`, `rex.call("session.set_window_label")` | tabs | Rename sessions and tabs. |
 | `rex.call("client.list")` | sshtab | The kind of client that created a block. |

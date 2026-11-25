@@ -123,4 +123,4 @@ There is no linter or formatter yet. Follow the existing code:
 
 ## Releasing
 
-Each extension is versioned on its own in its `CHANGELOG.md`. To release one, rename its `## Unreleased` section to `## X.Y.Z (YYYY-MM-DD)`. There are no tags or GitHub Releases yet; the tag scheme will be settled when the first one is published.
+Each extension is versioned on its own in its `CHANGELOG.md`. To release one, replace its `## Unreleased` section with a fresh empty `## Unreleased` section followed by `## X.Y.Z (YYYY-MM-DD)` and the released entries, and tag the commit `<extension>-vX.Y.Z`, as the first release was tagged `github-v0.1.0` for the github panel.

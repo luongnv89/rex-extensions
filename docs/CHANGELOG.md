@@ -1,6 +1,6 @@
 # Changelog
 
-Each extension is versioned on its own and keeps its own changelog, which is the source of truth for its versions. Repo-wide changes, such as docs and CI, aren't versioned. Tags and GitHub Releases will follow the scheme set when the first one is published.
+Each extension is versioned on its own and keeps its own changelog, which is the source of truth for its versions. Repo-wide changes, such as docs and CI, aren't versioned. Tags use the per-extension scheme `<extension>-vX.Y.Z`, set by the first release, `github-v0.1.0`; GitHub Releases, when published, use the same tag.
 
 | Extension | Changelog |
 | --- | --- |
