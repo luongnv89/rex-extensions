@@ -4,7 +4,7 @@ How to work on the extensions: what you need, how to run the checks CI runs, how
 
 ## Requirements
 
-- **Node 20 or later.** CI tests Node 20, 22 and 24. There is no `package.json` and nothing to `npm install`.
+- **Node 20 or later.** Pull requests are checked on Node 20; every merge to `main` tests Node 20, 22 and 24. There is no `package.json` and nothing to `npm install`.
 - **Lua 5.1 or LuaJIT**, for the `tabs` and `sshtab` Lua tests. `test/lib.test.js` runs `test/lib_spec.lua` with the first of `lua5.1`, `luajit` or `lua` it finds on the `PATH`.
   - With no Lua on the `PATH`, that test is **skipped, not failed**, so a green local run can hide a broken `lib.lua`. Check that the run reports 0 skipped.
   - A plain `lua` may be 5.4 or later, which accepts code that 5.1 rejects. Prefer `lua5.1` or `luajit` (`brew install luajit`, `apt install lua5.1`). CI uses `lua5.1`.
@@ -29,7 +29,18 @@ See also [Layout](../README.md#layout) in the root README.
 
 ## Run the checks
 
-These are the commands CI runs, wrapped in `( ... )` so a failure doesn't close your shell ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)), from the repo root.
+Git hooks run the checks for you. Install [pre-commit](https://pre-commit.com) (`brew install pre-commit` or `pip install pre-commit`), then install both hooks once, from the repo root:
+
+```sh
+pre-commit install
+pre-commit install --hook-type pre-push
+```
+
+- **On commit**, on the staged files: whitespace and end-of-file fixes, YAML and JSON checks, a private key check, Oxlint, `node --check`, and the Lua 5.1 syntax check (`scripts/syntax.sh`).
+- **On push**: every extension's tests (`scripts/run-tests.sh`). It fails when no Lua is on the `PATH`, rather than skipping the Lua specs.
+- Don't skip them with `--no-verify`. On a pull request, CI runs both hook stages again over the pull request's changes ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)), and fails what the hooks would have failed.
+
+`pre-commit run --all-files` runs the commit checks on every file, and `pre-commit run --all-files --hook-stage pre-push` runs the tests. To run the checks by hand, from the repo root (wrapped in `( ... )` so a failure doesn't close your shell):
 
 Tests, one extension:
 
@@ -40,19 +51,19 @@ cd tabs && node --test
 Tests, every extension:
 
 ```sh
-(for d in */; do [ -d "$d/test" ] || continue; (cd "$d" && node --test) || exit 1; done)
+bash scripts/run-tests.sh
 ```
 
 Syntax:
 
 ```sh
-(for f in $(git ls-files '*.js'); do node --check "$f" || exit 1; done)
-(for f in $(git ls-files '*.lua'); do luac5.1 -p "$f" || exit 1; done)
+bash scripts/syntax.sh node $(git ls-files '*.js' '*.cjs')
+bash scripts/syntax.sh lua $(git ls-files '*.lua')
 ```
 
-Without `luac5.1`, use `luajit -bl "$f" >/dev/null` or `luac -p "$f"` instead, with the same caveat as above: a `luac` newer than 5.1 accepts code Rex won't.
+For Lua it uses `luac5.1`, else a `luac` that reports 5.1, else `luajit`, and fails when there is none: a `luac` newer than 5.1 accepts code Rex won't.
 
-Coverage, optional and not in CI yet:
+Coverage (CI writes a summary for each merge to `main`, from the Node 24 run):
 
 ```sh
 cd github && node --test --experimental-test-coverage
@@ -99,7 +110,7 @@ Before each edit it saves the old file as `init.lua.bak-rex-<name>` next to it. 
 
 ## Style
 
-There is no linter or formatter yet. Follow the existing code:
+Oxlint checks JavaScript on commit, with its correctness rules (`.oxlintrc.json`). There is no formatter. Follow the existing code:
 
 - 2-space indent, double quotes, `"use strict"` at the top of each JS file.
 - `local` functions in Lua. A file finds its own folder with `debug.getinfo(1, "S")` (the `here` variable).
@@ -110,7 +121,7 @@ There is no linter or formatter yet. Follow the existing code:
 
 1. Create the folder `<name>/` with `rex-<name>.lua`, which registers one `rex.action({ name, title, description, category, keywords, run })`.
 2. Copy `install.js` from the closest pattern: github or mcc for a panel, tabs or sshtab for a watcher. Change `REX`'s environment variable (`REX_<NAME>_REX`), `ACTION`, `MODULE`, `CANDIDATES`, `MARKER`, the tree URL in `block()`, the file and action names in the `loadsModule` and `removeBlock` regexes, and the other `REX_<NAME>_*` variables.
-3. Write tests in `<name>/test/`, starting from a copy of the closest `install.test.js`. CI runs every folder that has a `test/` folder, so `ci.yml` needs no change.
+3. Write tests in `<name>/test/`, starting from a copy of the closest `install.test.js`. `scripts/run-tests.sh` runs every folder that has a `test/` folder, so neither it nor `ci.yml` needs a change.
 4. Write a `README.md` with Install, Use, Needs, What it runs, Troubleshooting or Limits, and Remove, and a `CHANGELOG.md` that starts with `## Unreleased`.
 5. Add a row to both tables in the root [README](../README.md).
 

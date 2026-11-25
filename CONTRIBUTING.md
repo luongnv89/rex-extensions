@@ -28,8 +28,11 @@ This project follows the [Code of Conduct](CODE_OF_CONDUCT.md). By taking part y
 3. Run the checks (see [Run the checks](docs/DEVELOPMENT.md#run-the-checks)):
 
    ```sh
-   (for d in */; do [ -d "$d/test" ] || continue; (cd "$d" && node --test) || exit 1; done)
+   pre-commit install && pre-commit install --hook-type pre-push   # once
+   bash scripts/run-tests.sh
    ```
+
+   The hooks then check each commit and run the tests on each push. Don't bypass them with `--no-verify`: CI runs them again on the pull request.
 
 4. Add an entry under `## Unreleased` in `<extension>/CHANGELOG.md`, under Added, Changed or Fixed.
 5. Update `<extension>/README.md` if its keys, behaviour, needs or what it runs changed. If an extension's one-line description or default key changed, update the tables in the root [README](README.md) too.
@@ -49,7 +52,7 @@ ci: ...
 ## Pull requests
 
 - Fill in the pull request template and link the issue it closes.
-- CI must pass on Node 20, 22 and 24.
+- CI must pass: it re-runs the hooks over the pull request's changes on Node 20. Each merge to `main` then tests Node 20, 22 and 24.
 - Attach a screenshot for visible changes to a panel (github, mcc).
 - Keep to one extension per pull request where you can.
 

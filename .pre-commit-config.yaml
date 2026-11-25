@@ -1,0 +1,54 @@
+# Hooks with no `stages:` run in EVERY stage; this keeps them on commit only.
+# Hooks whose own manifest sets `stages:` (trailing-whitespace, end-of-file-fixer,
+# check-added-large-files) keep theirs and also run on push.
+default_stages: [pre-commit]
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: detect-private-key
+
+  # Oxlint, correctness rules only (.oxlintrc.json). Remote hook: the repo has
+  # no package.json on purpose, so pre-commit installs and pins the tool itself.
+  - repo: https://github.com/oxc-project/mirrors-oxlint
+    rev: v1.95.0
+    hooks:
+      - id: oxlint
+        additional_dependencies: ["oxlint@1.95.0"]
+
+  - repo: local
+    hooks:
+      # node --check reads only its first file argument, so the script loops.
+      - id: node-syntax
+        name: JavaScript syntax (node --check)
+        entry: bash scripts/syntax.sh node
+        language: system
+        files: \.(js|cjs|mjs)$
+
+      # Rex runs Lua 5.1: the script refuses a luac newer than 5.1, which
+      # accepts code Rex rejects, and falls back to LuaJIT.
+      - id: lua-syntax
+        name: Lua 5.1 syntax
+        entry: bash scripts/syntax.sh lua
+        language: system
+        files: \.lua$
+
+      # The whole suite on push, not related tests on commit: changing a
+      # panel.js alone selects github/test/panel.test.js (9.9s) or
+      # mcc/test/resize.test.js (13.7s), past the 10s commit budget. The whole
+      # suite took 28s (2026-11-25, Node 26), inside the 60s push budget.
+      # always_run: a deletion-only push passes no file, and would skip it.
+      - id: test-full
+        name: full test suite (every extension)
+        entry: bash scripts/run-tests.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
