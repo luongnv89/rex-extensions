@@ -7,7 +7,7 @@
 // rex-github.lua starts it as `node panel.js --target BLOCK --cwd DIR`: the pane
 // it opened beside, and that pane's folder. When panel.js is under $HOME, the path
 // is resolved under the $HOME of the machine the pane runs on, through `sh -c`.
-// Rex sets REX_SESSION and REX_BLOCK.
+// Rex sets REX_BLOCK, the panel's pane; older Rex also set REX_SESSION.
 "use strict";
 const { execFile, spawn } = require("node:child_process");
 const fs = require("node:fs");
@@ -17,7 +17,6 @@ const path = require("node:path");
 const P = require(path.join(__dirname, "profiles.cjs"));
 
 const REX = process.env.REX_GITHUB_REX || "rex";
-const SESSION = process.env.REX_SESSION || null;
 const SELF = process.env.REX_BLOCK || null;
 const STATE = path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state"), "rex-github");
 const STALE = 120000;
@@ -329,9 +328,26 @@ const given = flags(process.argv.slice(2));
 let cwd = given.cwd || process.cwd();
 let target = given.target || null;
 
+// The session the panel is in: $REX_SESSION, which Rex no longer sets, else the one
+// holding the panel's pane, asked of Rex once (`-s` takes a block too). Null while
+// Rex doesn't answer, and asked again on the next call.
+let session = process.env.REX_SESSION || null;
+async function sessionId() {
+  if (session || !SELF) return session;
+  const r = await run(REX, ["api", "call", "-s", SELF, "session.view", "{}"], { timeout: 5000 }).catch(() => null);
+  if (r?.code !== 0) return null;
+  try {
+    const id = JSON.parse(r.stdout)?.session_id;
+    if (typeof id === "string" && id.startsWith("session:")) session = id;
+  } catch {}
+  return session;
+}
+
 // One Rex API call: { result } with its JSON, or { error } with why it failed.
 async function rexApi(method, args = {}, timeout = 5000) {
-  const r = await run(REX, ["api", "call", "-s", SESSION, method, JSON.stringify({ session_id: SESSION, ...args })], { timeout }).catch((e) =>
+  const id = await sessionId();
+  if (!id) return { error: "Can't find the panel's Rex session" };
+  const r = await run(REX, ["api", "call", "-s", id, method, JSON.stringify({ session_id: id, ...args })], { timeout }).catch((e) =>
     ({ code: -1, stdout: "", stderr: e.code === "ENOENT" ? "rex isn't installed" : e.message }));
   if (r.code !== 0) return { error: rexError(r) };
   try { return { result: JSON.parse(r.stdout) }; } catch { return { error: "Can't read rex's answer" }; }
@@ -353,7 +369,7 @@ async function processOf(block) {
 
 // Follow the focused pane of our own tab; when we have focus, keep the last one.
 async function locate() {
-  if (!SELF || !SESSION) return;
+  if (!SELF) return;
   try {
     const { result: view } = await rexApi("session.view");
     const me = windowOf(view, SELF);
@@ -1278,7 +1294,7 @@ async function launch(action, root, profile, template = null) {
   if (bad.length) throw new Error(`Invalid prompt: ${bad.join("; ")}`);
   const what = action.numbers ? issueList(action.numbers) : `${action.noun} #${action.number}`, verb = action.verb ?? action.key;
   const again = action.button ?? action.label;
-  if (!SESSION || !SELF) return say("error", `Open this panel in Rex to ${verb} ${what} with an agent.`);
+  if (!SELF) return say("error", `Open this panel in Rex to ${verb} ${what} with an agent.`);
   const mcc = harness === "mcc" ? findMcc() : null;
   if (harness === "mcc" && !mcc) {
     return say("error", `mcc isn't on your PATH: press s to pick another profile for ${action.profiles ?? action.label}, or install mcc.`);
@@ -1323,7 +1339,7 @@ async function launch(action, root, profile, template = null) {
   const note = plan.warnings.length ? ` (${plan.warnings.join("; ")})` : "";
 
   say("info", `Starting ${shown} to ${verb} ${what}…`);
-  const split = await run(REX, ["split", "-s", SESSION, "-b", anchor, "--split=right", "-c", root, "--focus=false",
+  const split = await run(REX, ["split", "-s", await sessionId(), "-b", anchor, "--split=right", "-c", root, "--focus=false",
     "--label", paneLabel(action), "--json", "--", ...agentArgv(plan, text, mcc)], { timeout: 10000 }).catch((e) =>
     ({ code: -1, stdout: "", stderr: e.code === "ENOENT" ? "rex isn't installed" : e.message }));
   let pane = null;
@@ -3133,7 +3149,7 @@ function notePanes(window) {
 // Fit the panel to its width by moving the border on its left. A panel that isn't
 // the right part of a left/right split is left as it is.
 async function fitWidth() {
-  if (!SELF || !SESSION || fitting) return;
+  if (!SELF || fitting) return;
   fitting = true;
   const target = savedWidth();
   try {
@@ -3169,7 +3185,7 @@ async function fitWidth() {
 // the width it has now. The panes come first, as Rex evening out its splits moves
 // the border too. A resize of Rex's window moves no border and saves nothing.
 async function settleResize() {
-  if (fitting || !SELF || !SESSION) return;
+  if (fitting || !SELF) return;
   const window = windowOf((await rexApi("session.view")).result, SELF);
   if (!window || panes == null) return;
   if (panesOf(window) !== panes) return fitWidth();
