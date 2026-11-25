@@ -6642,3 +6642,182 @@ test("with mcc found, Settings and the import picker keep their title and key hi
     screen(() => key("\x1b\x1b"));
   }
 });
+
+// ── A button's label and prompt, edited together (#70) ──────────────────────
+
+// A profiles file from before #70, version 6, with custom prompts and labels.
+function useButtons(dir, prompts, labels) {
+  const file = useProfiles(dir, [CC], { resolve: "cc", review: "cc" });
+  fs.writeFileSync(file, JSON.stringify({
+    version: 6, profiles: [CC], assign: { resolve: "cc", review: "cc" }, prompts: { resolve: null, review: null, autopilot: null, ...prompts }, customModels: {},
+    labels: { resolve: null, review: null, autopilot: null, ...labels },
+  }));
+  return file;
+}
+// A button's row on the Buttons tab: its name's line, then the lines under it, without their bar.
+const buttonRow = (lines, name) => {
+  const y = lines.findIndex((l) => new RegExp(`^[▌ ] ${name}( |$)`).test(l ?? ""));
+  return [lines[y]?.trimEnd(), ...lines.slice(y + 1, y + 3).map((l) => l?.replace(/^▌/, "").trim())];
+};
+
+test("a button's label and prompt are one row on Buttons and one editor, saved together in one write that the button then uses (#70)", async (t) => {
+  claudeHome(t);
+  setupGitHub("issues");
+  const stored = () => JSON.parse(fs.readFileSync(storeFile(), "utf8"));
+  // One row: its name, then the button as it reads, then the prompt it sends.
+  let lines = screen(() => key("s2"));
+  assert.deepEqual(buttonRow(lines, "Resolve"), ["▌ Resolve                                    default  Edit", "Resolve #N", "/issue-resolver {number}"], lines.join("\n"));
+  // Its editor: Label above Prompt, on the prompt, each with what it is when empty.
+  lines = screen(() => key("e"));
+  const label = lines.indexOf("  Label"), prompt = lines.indexOf("▌ Prompt");
+  assert.ok(label > 0 && prompt > label, lines.join("\n"));
+  assert.equal(lines[label + 1].trim(), "default: Resolve");
+  assert.equal(lines[prompt + 1].replace(/^▌/, "").trim(), "default: /issue-resolver {number}");
+  // Both typed, then one save: one write, holding both.
+  const writes = storeWrites(t);
+  screen(() => key("\x1b[A"));
+  screen(() => key("Fix it"));
+  screen(() => key("\x1b[B"));
+  screen(() => key("Fix #{number}, tests first"));
+  assert.deepEqual([ui.settings.prompt.label, ui.settings.prompt.prompt], ["Fix it", "Fix #{number}, tests first"]);
+  lines = screen(() => key("\r"));
+  assert.equal(ui.settings.mode, "list");
+  assert.equal(writes(), 1);
+  assert.deepEqual([stored().labels?.resolve, stored().prompts?.resolve], ["Fix it", "Fix #{number}, tests first"]);
+  assert.ok(shows(lines, "The Resolve button now reads Fix it; Fix it now sends: Fix #{number}, tests first"), lines.join("\n"));
+  assert.deepEqual(buttonRow(lines, "Resolve"), ["▌ Resolve                                     custom  Edit", "Fix it #N", "Fix #{number}, tests first"], lines.join("\n"));
+  // The button reads the label, and sends the prompt.
+  lines = screen(() => key("\x1b"));
+  assert.ok(lines.some((l) => l?.replace(/^▌/, "").trim() === "Fix it #12   Close #12"), lines.join("\n"));
+  assert.equal(P.resolvePrompt(readStore().store, "resolve"), "Fix #{number}, tests first");
+  fakeRex(agentHere());
+  await screenAsync(() => startWithMenu());
+  assert.deepEqual(splitCommand(), ["claude", "Fix #12, tests first"]);
+});
+
+test("a save writes only the field changed, the other as saved; with neither changed it writes nothing (#70)", (t) => {
+  const dir = home(t);
+  const file = useButtons(dir, { review: "Review #{number}" }, { review: "Audit" });
+  setupGitHub("prs");
+  const stored = () => JSON.parse(fs.readFileSync(file, "utf8"));
+  screen(() => key("s2je"));
+  assert.deepEqual([ui.settings.prompt.label, ui.settings.prompt.prompt], ["Audit", "Review #{number}"]);
+  // The label only: the prompt stays as saved, and only the label's change is said.
+  let lines = screen(() => key("\x1b[A" + "\x7f".repeat(5) + "Check\r"));
+  assert.equal(ui.settings.mode, "list");
+  assert.deepEqual([stored().labels.review, stored().prompts.review], ["Check", "Review #{number}"]);
+  assert.ok(shows(lines, "The Review button now reads Check"), lines.join("\n"));
+  assert.ok(!text(lines).includes("now sends"), lines.join("\n"));
+  // The prompt only: the label stays, and the action is named by it.
+  lines = screen(() => key("e now\r"));
+  assert.deepEqual([stored().labels.review, stored().prompts.review], ["Check", "Review #{number} now"]);
+  assert.ok(shows(lines, "Check now sends: Review #{number} now"), lines.join("\n"));
+  assert.ok(!text(lines).includes("button now reads"), lines.join("\n"));
+  // Neither changed, or changed and typed back, or only spaces at its end: back to
+  // the list, the file as it was.
+  const before = fs.readFileSync(file, "utf8"), writes = storeWrites(t);
+  for (const keys of ["e\r", "e\x7fw\r", "e  \r", "e\x1b[A \r"]) {
+    lines = screen(() => key(keys));
+    assert.deepEqual([ui.settings.mode, ui.settings.info, ui.settings.error], ["list", null, null], `${JSON.stringify(keys)}\n${lines.join("\n")}`);
+  }
+  assert.equal(writes(), 0);
+  assert.equal(fs.readFileSync(file, "utf8"), before);
+});
+
+test("ctrl-r and Use default take back only the field you are on, and a click on a field goes to it (#70)", (t) => {
+  const dir = home(t);
+  const file = useButtons(dir, { resolve: "Fix #{number}" }, { resolve: "Fix" });
+  setupGitHub("issues");
+  const stored = () => JSON.parse(fs.readFileSync(file, "utf8"));
+  // On the prompt, typed on; then ctrl-r on the label: the label goes back to the
+  // button's name, and the prompt as typed is saved with it.
+  screen(() => key("s2e"));
+  screen(() => key("X"));
+  let lines = screen(() => key("\x1b[A"));
+  assert.ok(shows(lines, "^R default") && shows(lines, " Use default "), lines.join("\n"));
+  lines = screen(() => key("\x12"));
+  assert.equal(ui.settings.mode, "list");
+  assert.equal(stored().labels, undefined);
+  assert.equal(stored().prompts.resolve, "Fix #{number}X");
+  assert.ok(shows(lines, "The Resolve button reads Resolve again; Resolve now sends: Fix #{number}X"), lines.join("\n"));
+  // The label has none now: on it, no ^R and no Use default, and ctrl-r does nothing.
+  lines = screen(() => key("e\x1b[A"));
+  assert.equal(ui.settings.prompt.field, 0);
+  assert.ok(!shows(lines, "^R default") && !shows(lines, "Use default"), lines.join("\n"));
+  const before = fs.readFileSync(file, "utf8");
+  screen(() => key("\x12"));
+  assert.deepEqual([ui.settings.mode, fs.readFileSync(file, "utf8")], ["prompt", before]);
+  // A click on the Prompt field goes to it, and what you type goes there; its Use
+  // default shows, and clears the prompt only, with the label typed meanwhile.
+  screen(() => key("Go"));
+  lines = screen(() => click(...find(lines, "Prompt")));
+  assert.equal(ui.settings.prompt.field, 1);
+  lines = screen(() => key("Y"));
+  assert.deepEqual([ui.settings.prompt.label, ui.settings.prompt.prompt], ["Go", "Fix #{number}XY"]);
+  assert.ok(shows(lines, "^R default"), lines.join("\n"));
+  lines = screen(() => pressButton(lines, " Use default "));
+  assert.equal(ui.settings.mode, "list");
+  assert.deepEqual([stored().labels.resolve, stored().prompts?.resolve ?? null], ["Go", null]);
+  // And a click on the Label field goes back to it.
+  lines = screen(() => key("e"));
+  screen(() => click(...find(lines, "Label")));
+  assert.equal(ui.settings.prompt.field, 0);
+  screen(() => key("\x1b\x1b"));
+});
+
+test("a label and a prompt that can't be saved each show their reason under their own field, and nothing is written (#70)", (t) => {
+  claudeHome(t);
+  setupGitHub("issues");
+  const before = fs.readFileSync(storeFile(), "utf8"), writes = storeWrites(t);
+  screen(() => key("s2e"));
+  screen(() => key("no number"));
+  screen(() => key("\x1b[A"));
+  screen(() => key("a\\b"));
+  let lines = screen(() => key("\r"));
+  assert.equal(ui.settings.mode, "prompt");
+  const labelWhy = "Resolve label: no control, invisible or private-use characters, line breaks or backslashes";
+  const promptWhy = "Resolve prompt: must contain {number}, where the number goes";
+  assert.deepEqual(ui.settings.fieldErrors, { label: labelWhy, prompt: promptWhy });
+  assert.equal(ui.settings.error, null);
+  // Each under its field: the label's between Label and Prompt, the prompt's after Prompt.
+  const at = (s) => lines.findIndex((l) => l?.includes(s));
+  assert.ok(at("Label") < at("Resolve label:") && at("Resolve label:") < at("Prompt") && at("Prompt") < at("Resolve prompt:"), lines.join("\n"));
+  assert.ok(shows(lines, labelWhy) && shows(lines, promptWhy), lines.join("\n"));
+  assert.equal(writes(), 0);
+  assert.equal(fs.readFileSync(storeFile(), "utf8"), before);
+  // Typing takes back only the reason of the field typed in.
+  screen(() => key("\x7f"));
+  assert.deepEqual(ui.settings.fieldErrors, { prompt: promptWhy });
+  // With the label fixed, the prompt alone still keeps both from being written.
+  lines = screen(() => key("\x7f\x7fFix\r"));
+  assert.deepEqual([ui.settings.mode, ui.settings.fieldErrors], ["prompt", { prompt: promptWhy }]);
+  assert.equal(writes(), 0);
+  // With the prompt fixed too, both are saved.
+  screen(() => key("\x1b[B {number}\r"));
+  assert.equal(ui.settings.mode, "list");
+  assert.equal(writes(), 1);
+  assert.deepEqual(readStore().store.labels.resolve, "Fix");
+  assert.deepEqual(readStore().store.prompts.resolve, "no number {number}");
+});
+
+test("a profiles file from before, with custom prompts and labels, shows them on the Buttons tab and in each button's editor (#70)", (t) => {
+  const dir = home(t);
+  const file = useButtons(dir, { resolve: "Fix #{number}", autopilot: "Go {numbers}" }, { resolve: "Fix", autopilot: "All" });
+  const before = fs.readFileSync(file, "utf8");
+  setupGitHub("issues");
+  const lines = screenAt(60, 40, () => key("s2"));
+  assert.deepEqual(buttonRow(lines, "Resolve"), ["▌ Resolve                                     custom  Edit", "Fix #N", "Fix #{number}"], lines.join("\n"));
+  assert.deepEqual(buttonRow(lines, "Review"), ["  Review                                            default", "Review #N", "/issue-pr-review {number}"], lines.join("\n"));
+  assert.deepEqual(buttonRow(lines, "Auto-pilot"), ["  Auto-pilot                                         custom", "☑ All", "Go {numbers}"], lines.join("\n"));
+  // Each editor holds them as saved, to change; esc writes nothing. One key at a
+  // time: a chunk that leaves the editor drops the text after it, as a paste's.
+  for (const [keys, action, label, prompt] of [["e", "resolve", "Fix", "Fix #{number}"], ["\x1b je", "review", "", ""], ["\x1b je", "autopilot", "All", "Go {numbers}"]]) {
+    const shown = screenAt(60, 40, () => { for (const k of keys.split(" ")) key(k); });
+    assert.deepEqual(ui.settings.prompt, { action, field: 1, label, prompt }, shown.join("\n"));
+    const at = shown.indexOf("▌ Prompt");
+    assert.equal(shown[at - 2].trim(), label || `default: ${P.DEFAULT_LABELS[action]}`, shown.join("\n"));
+    assert.equal(shown[at + 1].replace(/^▌/, "").trim(), prompt || "default: /issue-pr-review {number}", shown.join("\n"));
+  }
+  screen(() => key("\x1b\x1b"));
+  assert.equal(fs.readFileSync(file, "utf8"), before);
+});
