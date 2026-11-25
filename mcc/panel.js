@@ -743,7 +743,7 @@ function withLiveLogins(profiles, live = ui.liveLogins, now = Date.now()) {
 }
 
 async function load() {
-  if (!mcc) mcc = findMcc();
+  mcc = findMcc();
   if (!mcc) { ui.error = "mcc not found: install it or set MCC_BIN"; ui.loaded = true; return draw(); }
   const r = await run(mcc, ["usage", "--json-v2"], CACHE_TIMEOUT);
   if (r.error) ui.error = r.error.killed ? "mcc usage timed out" : `can't run ${mcc}`;
@@ -771,7 +771,7 @@ async function refit() {
 // it couldn't reach; those get a ⚠ and a line saying why.
 async function refresh() {
   if (ui.refreshing) return;
-  if (!mcc) mcc = findMcc();
+  mcc = findMcc();
   if (!mcc) return load();
   ui.refreshing = true;
   ui.flash = null;
