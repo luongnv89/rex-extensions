@@ -1,4 +1,5 @@
 "use strict";
+// oxlint-disable no-control-regex -- matching terminal escapes and control characters is on purpose here
 const test = require("node:test");
 const assert = require("node:assert/strict");
 // profiles.cjs is a copy of herdr-github's profiles module: these are its tests,
@@ -129,7 +130,7 @@ test("buildLaunch checks its own input and throws on a bad profile or prompt", (
     "x ": /no spaces at either end/, " x": /no spaces at either end/, "x\u00a0": /no spaces at either end/, "\u3000x": /no spaces at either end/,
   };
   for (const [prompt, why] of Object.entries(refused)) {
-    assert.throws(() => P.buildLaunch(P.DEFAULT_PROFILE, prompt), (e) => /^Invalid prompt: /.test(e.message) && why.test(e.message), JSON.stringify(prompt));
+    assert.throws(() => P.buildLaunch(P.DEFAULT_PROFILE, prompt), (e) => e.message.startsWith("Invalid prompt: ") && why.test(e.message), JSON.stringify(prompt));
     assert.ok(P.validatePrompt(prompt).some((r) => why.test(r)), JSON.stringify(prompt));
   }
   assert.deepEqual(P.validatePrompt("x".repeat(500)), []);

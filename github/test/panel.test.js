@@ -1,4 +1,5 @@
 "use strict";
+// oxlint-disable no-control-regex -- matching terminal escapes and control characters is on purpose here
 const test = require("node:test");
 const assert = require("node:assert/strict");
 // Record what the panel would open instead of starting a browser. panel.js reads
@@ -61,7 +62,7 @@ Object.assign(process.env, {
 });
 process.argv.push("--target", "block:agent", "--cwd", "/start");
 const P = require("../profiles.cjs");
-const { width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput, MODES_ON, MODES_OFF, act, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, flags, locate, state, follow, splitLeft, ratioFor, fitWidth, COLUMNS, MAX_SHARE, settleResize, savedWidth, resetWidth, pressMerge, MERGE_GAP, mergeStrategy, mergeArgs, mergeGuard, refresh, pressClose, checkedNumbers, paneLabel, KEYMAP, mergeMode, branchDelete } = require("../panel.js");
+const { width, fit, wrap, ago, checks, clean, plain, prRow, issueRow, FORGES, remoteHost, pickHost, forgesFor, firstLine, ui, draw, click, onInput, MODES_ON, MODES_OFF, act, launch, findSkill, promptFor, readStore, IDD, agentOf, agentArgv, flags, locate, state, follow, splitLeft, ratioFor, fitWidth, COLUMNS, MAX_SHARE, settleResize, savedWidth, resetWidth, pressMerge, MERGE_GAP, mergeStrategy, mergeArgs, mergeGuard, refresh, pressClose, checkedNumbers, paneLabel, KEYMAP, branchDelete } = require("../panel.js");
 
 // Drops colors and OSC 8 hyperlinks, leaving the text a terminal shows.
 const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b\]8;[^\x07\x1b]*(?:\x1b\\|\x07)/g, "");
@@ -5678,7 +5679,7 @@ test("the form's Args are typed, saved, edited and cleared, and their reason sho
   assert.ok(lines.some((l) => /^ {2}Args {5}none/.test(l ?? "")), lines.join("\n"));
   assert.equal(ui.settings.form.args, "");
   lines = screen(() => key("\x1b[A"));
-  assert.ok(lines.some((l) => /^▌ Args/.test(l ?? "")), lines.join("\n"));
+  assert.ok(lines.some((l) => (l ?? "").startsWith("▌ Args")), lines.join("\n"));
   // Typed with spaces between the words, as many as you like, and saved as a list.
   screen(() => key("--dangerously-skip-permissions  --verbose"));
   lines = screen(() => key("\r"));
@@ -5702,7 +5703,7 @@ test("the form's Args are typed, saved, edited and cleared, and their reason sho
   assert.equal(ui.settings.error, null);
   assert.equal(ui.settings.fieldErrors.args,
     "Args: word 5 has a space, a control or invisible character, a line break or a backslash; Args: word 6 is --, which would move the prompt: leave it out");
-  const args = lines.findIndex((l) => /^▌ Args/.test(l ?? ""));
+  const args = lines.findIndex((l) => (l ?? "").startsWith("▌ Args"));
   assert.ok(lines.slice(args + 1).join(" ").replace(/\s+/g, " ").includes("Args: word 5 has a space"), lines.join("\n"));
   assert.equal(storeText(), before);
   // Cleared: the profile has no args, and the file goes back to the version it was.
@@ -6194,7 +6195,7 @@ test("mcc's list of profiles, answering after the picker closed or opened again,
   lines = screen(draw);
   assert.equal(ui.settings.picker.loading, false);
   assert.equal(ui.settings.error, null);
-  assert.ok(lines.some((l) => /^▌ \[ \] cskonal/.test(l ?? "")), lines.join("\n"));
+  assert.ok(lines.some((l) => (l ?? "").startsWith("▌ [ ] cskonal")), lines.join("\n"));
   assert.equal(storeText(), before);
   screen(() => key("\x1b\x1b"));
 });
@@ -6407,7 +6408,7 @@ test("in a narrow import picker, a profile's name stays readable and its tags gi
   await picked(() => key("i"));
   for (const cols of [28, 30]) {
     const lines = screenAt(cols, 24, draw);
-    const row = lines.find((l) => /^▌ /.test(l ?? ""));
+    const row = lines.find((l) => (l ?? "").startsWith("▌ "));
     assert.ok(width(row) <= cols, `${cols}: ${row}`);
     // "default · imported" is cut, not the name.
     assert.match(row, /^▌ {2}✓ {2}cus_konal +default.*…$/, `${cols}:\n${lines.join("\n")}`);
@@ -6638,7 +6639,7 @@ test("with mcc found, Settings and the import picker keep their title and key hi
     foot = text(lines.slice(-2));
     for (const hint of ["↑↓ select", "⏎ import", "? keys", "esc back", "␣ mark"]) assert.ok(foot.includes(hint), `${cols}: ${foot}`);
     assert.ok(!foot.includes("…"), `${cols}: ${foot}`);
-    assert.ok(lines.some((l) => /^▌ \[ \] cskonal/.test(l ?? "")) && lines.some((l) => /^ {2}\[ \] work/.test(l ?? "")), `${cols}:\n${lines.join("\n")}`);
+    assert.ok(lines.some((l) => (l ?? "").startsWith("▌ [ ] cskonal")) && lines.some((l) => (l ?? "").startsWith("  [ ] work")), `${cols}:\n${lines.join("\n")}`);
     screen(() => key("\x1b\x1b"));
   }
 });

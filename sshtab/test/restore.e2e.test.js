@@ -122,7 +122,7 @@ test("after a server restart each pane resumes its agent session, once", { skip:
   const b1 = made.initial_windows[0].block_ids[0];
   const b2 = JSON.parse(rex("split", "-s", session, "-b", b1, "-c", path.join(dir, "p2"), "--focus=false", "--json")).block_ids[0];
   for (const b of [b1, b2]) {
-    await until(`the shell in ${b}`, () => /rx> $/.test(rex("capture", "-s", session, "-b", b, "--trim").trimEnd() + " "));
+    await until(`the shell in ${b}`, () => (rex("capture", "-s", session, "-b", b, "--trim").trimEnd() + " ").endsWith("rx> "));
     rex("send", "-s", session, "-b", b, "claude");
     rex("send-key", "-s", session, "-b", b, "enter");
   }
@@ -175,7 +175,7 @@ test("after a server restart each pane resumes its agent session, once", { skip:
   rex("send-key", "-s", session, "-b", b2, "ctrl+c");
   await until("the second pane's prompt", () => {
     const proc = JSON.parse(rex("block", "call", "-s", session, "-b", b2, "process"));
-    return proc.foreground?.name === "zsh" && /rx> $/.test(rex("capture", "-s", session, "-b", b2, "--trim").trimEnd() + " ");
+    return proc.foreground?.name === "zsh" && (rex("capture", "-s", session, "-b", b2, "--trim").trimEnd() + " ").endsWith("rx> ");
   });
   rex("do", "same_host_tabs");
   await until("the watcher to stop", () => count(readText(log), / stopped\n/g) === 1);
