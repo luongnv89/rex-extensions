@@ -1497,9 +1497,10 @@ const MENU_KEYS = [" ↑↓/jk choose · ⏎ start · esc/q cancel", " ↑↓ ·
 // Every button's key, by view (#37): the list ? shows, and what the form's and the
 // prompt's key hints are made of. An entry's `keys` are single keys, and no key is
 // in a view twice. `hint` is the entry's key hint; `model` says it's shown only on
-// the form's Model field (true) or only off it (false), `custom` only while a
-// custom prompt is saved, which is when Use default shows, and `mcc` only while mcc
-// is found, which is when + Import shows (#63).
+// the form's Model field (true) or only off it (false), `custom` only while the
+// button editor's field you are on has a value of your own saved, which is when Use
+// default shows (#70), and `mcc` only while mcc is found, which is when + Import
+// shows (#63).
 const binding = (keys, does, more = {}) => ({ keys: keys ? keys.split(" ") : [], does, ...more });
 const VIEW_KEYS = [
   binding("s", "⚙ Settings"),
@@ -1541,13 +1542,13 @@ const KEYMAP = {
     binding("q esc", "close the menu"),
   ],
   settings: [
-    binding("1 2 3 4", "the Profiles, Prompts, Button labels or Merging tab"),
+    binding("1 2 3", "the Profiles, Buttons or Merging tab"),
     binding("⇥ → l", "the next tab, from the last to the first"),
     binding("⇧⇥ ← h", "the previous tab"),
     binding("↑ ↓ j k", "select a row in the tab"),
     binding("n", "+ New"),
     binding("i", "+ Import a profile from mcc", { mcc: true }),
-    binding("e ⏎", "Edit, or Change the merge mode"),
+    binding("e ⏎", "Edit a profile, or a button's label and prompt, or Change the merge mode"),
     binding("d", "Delete: it asks first"),
     binding("R", "Use for Resolve"),
     binding("V", "Use for Review"),
@@ -1573,9 +1574,10 @@ const KEYMAP = {
     binding("esc", "Cancel, or ✕", { hint: "esc back" }),
   ],
   prompt: [
+    binding("↑ ↓ ⇥", "the label or the prompt", { hint: "↑↓ field" }),
     binding("", "type to edit", { hint: "type to edit" }),
     binding("⏎", "Save", { hint: "⏎ save" }),
-    binding("^R", "Use default", { hint: "^R default", custom: true }),
+    binding("^R", "Use default: for the field you are on", { hint: "^R default", custom: true }),
     binding("esc", "Cancel, or ✕", { hint: "esc back" }),
   ],
 };
@@ -1879,26 +1881,23 @@ const PROMPT_FIELDS = [
   ...P.PROMPT_KEYS.map((a) => ({ key: "prompt", word: P.PROMPT_LABELS[a] })),
   ...P.LABEL_KEYS.map((a) => ({ key: "label", word: P.LABEL_FIELDS[a] })),
 ];
-// A button label row is named by its action: label:resolve. The merge mode's (#39)
-// is MERGE_ROW.
-const LABEL_ROWS = P.LABEL_KEYS.map((a) => `label:${a}`);
-const labelRow = (row) => (LABEL_ROWS.includes(row) ? row.slice("label:".length) : null);
+// A button's row is named by its action (resolve); the merge mode's (#39) is MERGE_ROW.
 const MERGE_ROW = "merge";
 // Settings' tabs (#67), each one area's rows, as promptSel names them: null for the
 // profiles, which st.sel picks between. `short` is the name kept in a narrow pane.
 // The tab showing is the selected row's, so a save that selects a row, or a profile,
-// shows its tab without being told.
+// shows its tab without being told. Each button's label and prompt are one row on
+// Buttons (#70).
 const TABS = [
   { name: "Profiles", short: "Profiles", rows: [null] },
-  { name: "Prompts", short: "Prompts", rows: P.PROMPT_KEYS },
-  { name: "Button labels", short: "Labels", rows: LABEL_ROWS },
+  { name: "Buttons", short: "Buttons", rows: P.PROMPT_KEYS },
   { name: "Merging", short: "Merging", rows: [MERGE_ROW] },
 ];
 const tabOf = (promptSel) => TABS.findIndex((t) => t.rows.includes(promptSel));
 
-// `promptSel` is the row selected in a tab other than Profiles: an action's prompt,
-// its button label's, or MERGE_ROW, the merge mode's (#39); null on Profiles. `prompt` is
-// the prompt or the label being edited: { action, kind, text }, kind "prompt" or "label".
+// `promptSel` is the row selected in a tab other than Profiles: a button's, or
+// MERGE_ROW, the merge mode's (#39); null on Profiles. `prompt` is the button being
+// edited (#70): { action, field, label, prompt }, `field` 0 on its label, 1 on its prompt.
 // `scroll` is how far the wheel moved the form or the prompt from where it shows.
 // `mcc` is the mcc binary, found once as Settings opens, or null: + Import shows
 // only with it (#63). `picker` is the import's list of mcc profiles while it shows,
@@ -2133,45 +2132,57 @@ function removeModel() {
   }, `Removed ${name} from ${P.HARNESS_NAMES[f.harness]}'s models`);
 }
 
-// A prompt row's Edit, e or enter: its text, to change; empty sends the default.
-function editPrompt(action) {
+// A button row's Edit, e or enter (#70): its label and its prompt, together, each as
+// saved; empty shows the button's own name, or sends the default. It opens on the
+// prompt, which Edit opened on before the label shared its editor.
+function editButton(action) {
   const st = ui.settings;
-  Object.assign(st, { mode: "prompt", promptSel: action, prompt: { action, kind: "prompt", text: P.resolvePrompt(st.store, action) ?? "" }, scroll: 0, error: null, fieldErrors: {}, info: null });
+  const prompt = { action, field: 1, label: P.resolveLabel(st.store, action) ?? "", prompt: P.resolvePrompt(st.store, action) ?? "" };
+  Object.assign(st, { mode: "prompt", promptSel: action, prompt, scroll: 0, error: null, fieldErrors: {}, info: null });
   draw();
 }
 
-// A button label row's Edit, e or enter: the label in the same editor as a prompt,
-// one line long; empty shows the button's own name.
-function editLabel(action) {
-  const st = ui.settings;
-  Object.assign(st, { mode: "prompt", promptSel: `label:${action}`, prompt: { action, kind: "label", text: P.resolveLabel(st.store, action) ?? "" }, scroll: 0, error: null, fieldErrors: {}, info: null });
-  draw();
+// What the editor's field `i` edits: its key in st.prompt and in fieldErrors, how
+// long it can be, its heading, what it is with nothing typed, and its setter and
+// reader in the profiles module.
+const editTarget = (pr, i = pr.field) => i === 0
+  ? { key: "label", max: P.LABEL_MAX, title: "Label", empty: P.DEFAULT_LABELS[pr.action], set: P.setLabel, saved: P.resolveLabel }
+  : { key: "prompt", max: P.PROMPT_MAX, title: "Prompt", empty: DEFAULT_PROMPTS[pr.action], set: P.setPrompt, saved: P.resolvePrompt };
+
+// The field's Use default, or ctrl-r (#37): shown, and done, only while the field
+// you are on has a value of your own saved. It empties that field only, and saves
+// what the other one holds with it.
+const hasCustom = (st) => editTarget(st.prompt).saved(st.store, st.prompt.action) !== null;
+function useDefault() {
+  const pr = ui.settings.prompt;
+  pr[editTarget(pr).key] = "";
+  saveButton();
 }
 
-// What the editor edits: its field's key in fieldErrors, how long it can be, its
-// heading, and what it is with nothing typed.
-const editTarget = (pr) => pr.kind === "label"
-  ? { key: "label", max: P.LABEL_MAX, title: P.LABEL_FIELDS[pr.action], empty: P.DEFAULT_LABELS[pr.action] }
-  : { key: "prompt", max: P.PROMPT_MAX, title: P.PROMPT_LABELS[pr.action], empty: DEFAULT_PROMPTS[pr.action] };
-
-// The prompt's or label's Use default, or ctrl-r (#37): shown, and done, only while
-// a custom one is saved.
-const hasCustom = (st) => (st.prompt.kind === "label" ? P.resolveLabel : P.resolvePrompt)(st.store, st.prompt.action) !== null;
-const useDefault = () => savePrompt("");
-
-function savePrompt(text = ui.settings.prompt.text) {
-  const st = ui.settings, { action, kind } = st.prompt, t = text.trim();
-  if (kind === "label") {
-    const name = P.DEFAULT_LABELS[action];
-    return change(() => {
-      saveStore(P.setLabel(st.store, action, t));
-      Object.assign(st, { mode: "list", prompt: null });
-    }, t ? `The ${name} button now reads ${t}` : `The ${name} button reads ${name} again`);
+// Save, or enter: each field changed from what is saved is checked, both against the
+// store as read, so each reason shows under its own field and nothing is written
+// while either is refused; then both go in one write. With nothing changed, back to
+// the list, writing nothing.
+function saveButton() {
+  const st = ui.settings, pr = st.prompt, a = pr.action, name = P.DEFAULT_LABELS[a];
+  const typed = { label: pr.label.trim(), prompt: pr.prompt.trim() };
+  const changed = [0, 1].map((i) => editTarget(pr, i)).filter((f) => typed[f.key] !== (f.saved(st.store, a) ?? ""));
+  if (!changed.length) {
+    Object.assign(st, { mode: "list", prompt: null, error: null, fieldErrors: {}, info: null });
+    return draw();
   }
+  // The action by the label it will have, as Settings names it once saved.
+  const called = typed.label || name;
+  const said = changed.map((f) => f.key === "label"
+    ? (typed.label ? `The ${name} button now reads ${typed.label}` : `The ${name} button reads ${name} again`)
+    : (typed.prompt ? `${called} now sends: ${typed.prompt}` : `${called} now sends the default: ${DEFAULT_PROMPTS[a]}`));
   change(() => {
-    saveStore(P.setPrompt(st.store, action, t));
+    const why = [];
+    for (const f of changed) { try { f.set(st.store, a, typed[f.key]); } catch (e) { why.push(e.message); } }
+    if (why.length) throw new Error(why.join("; "));
+    saveStore(changed.reduce((store, f) => f.set(store, a, typed[f.key]), st.store));
     Object.assign(st, { mode: "list", prompt: null });
-  }, t ? `${actionName(action)} now sends: ${t}` : `${actionName(action)} now sends the default: ${DEFAULT_PROMPTS[action]}`);
+  }, said.join("; "));
 }
 
 // The selected profile's actions, from a key or its buttons.
@@ -2364,19 +2375,17 @@ function settingsKey(m) {
   if (st.mode === "prompt") return promptKey(st, k);
   selectedEntry(st);
   if (k === "\x1b" || k === "q" || k === "s") return closeSettings();
-  const at = P.PROMPT_KEYS.indexOf(st.promptSel), merge = st.promptSel === MERGE_ROW, label = labelRow(st.promptSel), to = tabKey(st, k);
+  const at = P.PROMPT_KEYS.indexOf(st.promptSel), merge = st.promptSel === MERGE_ROW, to = tabKey(st, k);
   if (to >= 0) switchTab(st, to);
   else if (UP.includes(k) || k === "k") step(st, -1);
   else if (DOWN.includes(k) || k === "j") step(st, 1);
   else if (k === "n") return editProfile(null);
   else if (k === "i" && st.mcc) return openImport();
-  else if (k === "e" || k === "\r" || k === "\n") return merge ? toggleMergeMode() : label ? editLabel(label) : at >= 0 ? editPrompt(st.promptSel) : editSelected();
+  else if (k === "e" || k === "\r" || k === "\n") return merge ? toggleMergeMode() : at >= 0 ? editButton(st.promptSel) : editSelected();
   else if (merge && (k === "d" || k === "R" || k === "V")) {
     Object.assign(st, { error: "The merge mode isn't a profile: e or enter changes it", info: null });
-  } else if (label && (k === "d" || k === "R" || k === "V")) {
-    Object.assign(st, { error: `The ${P.LABEL_FIELDS[label]} isn't a profile: e or enter edits it`, info: null });
   } else if (at >= 0 && (k === "d" || k === "R" || k === "V")) {
-    Object.assign(st, { error: `The ${P.PROMPT_LABELS[st.promptSel]} isn't a profile: e or enter edits it`, info: null });
+    Object.assign(st, { error: `The ${P.DEFAULT_LABELS[st.promptSel]} button isn't a profile: e or enter edits it`, info: null });
   } else if (k === "d") return askDelete();
   else if (k === "R" || k === "V") return assignTo(k === "R" ? "resolve" : "review");
   else if (k === "?") return openHelp("settings");
@@ -2392,7 +2401,7 @@ function step(st, by) {
   else st.promptSel = rows[Math.max(0, Math.min(rows.length - 1, rows.indexOf(st.promptSel) + by))];
 }
 
-// The tab a key opens (#67), or -1: 1 to 4 open one, ⇥ → l the next and ⇧⇥ ← h the
+// The tab a key opens (#67), or -1: 1 to 3 open one, ⇥ → l the next and ⇧⇥ ← h the
 // previous, past the last back to the first, as ⇥ goes round the lists. The arrows
 // come as CSI or as SS3, which a terminal in application cursor mode sends.
 function tabKey(st, k) {
@@ -2422,15 +2431,23 @@ function wheel(st, by) {
   draw();
 }
 
-// Keys while a prompt or a label is edited: text, as in the form; enter saves, esc
-// goes back, ctrl-r is Use default (#37), and does nothing while there's no custom one.
+// Keys while a button is edited (#70): text, into the field you are on, as in the
+// form; ↑↓ and ⇥ go to the other field, enter saves both, esc goes back, ctrl-r is
+// Use default (#37) for the field you are on, and does nothing while it has no
+// custom one. The arrows come as CSI or as SS3.
 function promptKey(st, k) {
   const pr = st.prompt, field = editTarget(pr);
   if (k === "\x1b") return settingsBack();
-  if (k === "\r" || k === "\n") return savePrompt();
+  if (k === "\r" || k === "\n") return saveButton();
   if (k === "\x12") return hasCustom(st) ? useDefault() : undefined;
-  if (k === "\x7f" || k === "\b") pr.text = [...pr.text].slice(0, -1).join("");
-  else if (!k.startsWith("\x1b") && !/[\x00-\x1f\x7f-\x9f]/.test(k) && [...pr.text].length < field.max) pr.text += k;
+  if (UP.includes(k) || DOWN.includes(k) || k === "\t" || k === "\x1b[Z") {
+    pr.field = 1 - pr.field;
+    st.error = null;
+    return draw();
+  }
+  const text = pr[field.key];
+  if (k === "\x7f" || k === "\b") pr[field.key] = [...text].slice(0, -1).join("");
+  else if (!k.startsWith("\x1b") && !/[\x00-\x1f\x7f-\x9f]/.test(k) && [...text].length < field.max) pr[field.key] += k;
   else return;
   delete st.fieldErrors[field.key];
   draw();
@@ -2569,7 +2586,7 @@ function settingsLines(cols, rows) {
   // stay whole beside + Import, + Import gives way: i, in the key hints and ?, still
   // imports. n and i work from every tab, and a profile saved shows on Profiles (#67).
   const title = st.mode === "edit" ? (st.form.prev ? `Edit profile ${st.form.prev}` : "New profile")
-    : st.mode === "prompt" ? editTarget(st.prompt).title : picking ? "Import from mcc" : "⚙ Settings";
+    : st.mode === "prompt" ? `${P.DEFAULT_LABELS[st.prompt.action]} button` : picking ? "Import from mcc" : "⚙ Settings";
   const tools = tab === 0 ? [[" + Import ", () => openImport()], [" + New ", () => editProfile(null)]] : [];
   tools.push([" ✕ ", () => settingsBack()]);
   const toolsWidth = () => tools.reduce((w, [t]) => w + width(t), 0);
@@ -2660,26 +2677,39 @@ function settingsLines(cols, rows) {
     body.push(""); owner.push(null);
     addButtons([["Save", () => saveForm()], ["Test", pressTest], ["Cancel", () => settingsBack()]], "  ", 2, null);
   } else if (st.mode === "prompt") {
-    // The text, broken into lines of the pane's width, the cursor after it; empty,
-    // what the action sends instead. Then its reason, what to know, and the buttons.
-    const { action, kind, text } = st.prompt, field = editTarget(st.prompt), valueW = cols - 3, lines = [""];
-    for (const ch of text) {
-      if (width(lines[lines.length - 1] + ch) > valueW) lines.push("");
-      lines[lines.length - 1] += ch;
-    }
-    if (!text) lines[0] = invert(" ") + dim(fit(`default: ${field.empty}`, valueW - 1));
-    else if (width(lines[lines.length - 1]) < valueW) lines[lines.length - 1] += invert(" ");
-    else lines.push(invert(" "));
-    selStart = body.length;
-    for (const l of lines) { body.push(`${accent("▌")} ${l}`); owner.push(null); }
-    // Its reason under it: whole while the pane has room for it and the line you
-    // type on, cut there otherwise, ending in "…".
-    const why = st.fieldErrors[field.key];
-    if (why) for (const l of wrap(why, cols - 4, Math.max(1, height - 1))) { body.push("    " + red(l)); owner.push(null); }
-    selEnd = body.length;
+    // The button's two fields (#70), Label then Prompt, each under its name, as the
+    // profile form's: the one you are on behind the bar, the cursor after its text.
+    // The label is one line, its end in view while you type; the prompt is broken
+    // into lines of the pane's width. Empty, each shows what the button reads or
+    // sends instead. Each field's reason under it, a click on either goes to it;
+    // then what to know about the one you are on, and the buttons.
+    const pr = st.prompt, { action } = pr, field = editTarget(pr), valueW = cols - 3;
+    [0, 1].forEach((i) => {
+      const f = editTarget(pr, i), on = i === pr.field, text = pr[f.key], bar = on ? accent("▌") : " ";
+      const pick = () => { st.error = null; pr.field = i; draw(); };
+      const lines = [""];
+      if (!text) lines[0] = (on ? invert(" ") : "") + dim(fit(`default: ${f.empty}`, valueW - (on ? 1 : 0)));
+      else if (f.key === "label") lines[0] = on ? tail(text, valueW - 1) + invert(" ") : fit(text, valueW);
+      else {
+        for (const ch of text) {
+          if (width(lines[lines.length - 1] + ch) > valueW) lines.push("");
+          lines[lines.length - 1] += ch;
+        }
+        if (on && width(lines[lines.length - 1]) < valueW) lines[lines.length - 1] += invert(" ");
+        else if (on) lines.push(invert(" "));
+      }
+      if (i) { body.push(""); owner.push(null); }
+      body.push(`${bar} ${(on ? bold : muted)(f.title)}`); owner.push(pick);
+      for (const l of lines) { body.push(`${bar} ${l}`); owner.push(pick); }
+      // Its reason under it: the focused field's whole while the pane has room for
+      // it and the line you type on, cut there otherwise, ending in "…".
+      const why = st.fieldErrors[f.key];
+      if (why) for (const l of wrap(why, cols - 4, on ? Math.max(1, height - 1) : Infinity)) { body.push("    " + red(l)); owner.push(pick); }
+      if (on) selEnd = body.length;
+    });
     body.push(""); owner.push(null);
     const noun = Object.values(ACTIONS).find((a) => a.key === action)?.noun;
-    const notes = kind === "label" ? [
+    const notes = field.key === "label" ? [
       action === AUTOPILOT.key
         ? `The text of the header's ☑ ${field.empty} button, and of its profile menu.`
         : `The text of each ${noun}'s ${field.empty} #N button, and of its profile menu.`,
@@ -2692,7 +2722,7 @@ function settingsLines(cols, rows) {
     ];
     for (const note of notes) for (const l of wrap(note, cols - 4, Infinity)) { body.push("  " + dim(l)); owner.push(null); }
     body.push(""); owner.push(null);
-    addButtons([["Save", () => savePrompt()], ...(hasCustom(st) ? [["Use default", useDefault]] : []), ["Cancel", () => settingsBack()]], "  ", 2, null);
+    addButtons([["Save", () => saveButton()], ...(hasCustom(st) ? [["Use default", useDefault]] : []), ["Cancel", () => settingsBack()]], "  ", 2, null);
   } else if (picking) {
     // mcc's Claude Code profiles (#63), each after its box, [x] when marked and ✓
     // once imported, with its tags at the right edge: mcc's default, and imported
@@ -2722,8 +2752,8 @@ function settingsLines(cols, rows) {
       }
     });
   } else {
-    // The tab's rows only (#67): the profiles, the prompt each action sends, its
-    // button's label, or what a merge does. The strip above names the area.
+    // The tab's rows only (#67): the profiles, each button's label and the prompt it
+    // sends (#70), or what a merge does. The strip above names the area.
     const using = (id) => P.ACTION_KEYS.filter((a) => (st.store.assign[a] ?? P.DEFAULT_PROFILE.id) === id);
     if (tab === 0) entries().forEach((q, i) => {
       if (i) { body.push(""); owner.push(null); }
@@ -2761,15 +2791,15 @@ function settingsLines(cols, rows) {
         selEnd = body.length;
       }
     });
-    // A row of the other tabs: on Prompts each action's prompt, then Auto-pilot's
-    // (#31), your own or the default it sends without one; on Merging the merge mode
-    // (#39), in plain words. A blank line sets each apart from the one above. A
+    // A row of the other tabs: on Buttons each action's button, then Auto-pilot's
+    // (#31); on Merging the merge mode (#39), in plain words. Its name, then its
+    // `values`, a line each. A blank line sets each apart from the one above. A
     // row's state ("default" dim, "custom" in the accent) sits at the right edge.
     // The selected row's button (Edit, or Change) goes there, the state just before
     // it, so which prompt is in use still shows; a pane too narrow for the whole
     // name, the state and the button drops the state. A click on the row only
     // selects it.
-    const settingRow = (key, title, value, state, button, press) => {
+    const settingRow = (key, title, values, state, button, press) => {
       if (body.length) { body.push(""); owner.push(null); }
       const on = st.promptSel === key && st.mode === "list", bar = on ? accent("▌") : " ", b = ` ${button} `;
       const select = () => { Object.assign(st, { promptSel: key, error: null, mode: "list" }); draw(); };
@@ -2784,30 +2814,26 @@ function settingsLines(cols, rows) {
         hits[body.length] = [{ from: x, to: x + width(b), action: press }];
         body.push(`${bar} ${bold(label)}${gap}${tag ? tagged + " " : ""}${invert(b)}`);
       } else body.push(`${bar} ${label}${tag ? gap + tagged : ""}`);
-      body.push(`${bar}   ${value}`);
-      owner.push(select, select);
+      owner.push(select);
+      for (const value of values) { body.push(`${bar}   ${value}`); owner.push(select); }
       if (on) selEnd = body.length;
     };
+    // Each button (#70), by the action's own name: under it the button as it reads,
+    // Resolve #N or ☑ Auto-pilot, with your label or its name, then the prompt it
+    // sends, your own or the default; custom while either is yours.
     if (tab === 1) for (const a of P.PROMPT_KEYS) {
-      const custom = P.resolvePrompt(st.store, a);
-      settingRow(a, actionName(a), custom ? fit(custom, cols - 4) : dim(fit(DEFAULT_PROMPTS[a], cols - 4)),
-        custom ? [accent, "custom"] : [dim, "default"], "Edit", () => editPrompt(a));
-    }
-    // Each button's label: under the action's own name, the button as it reads,
-    // Resolve #N or ☑ Auto-pilot, with your label or its name.
-    if (tab === 2) for (const a of P.LABEL_KEYS) {
-      const custom = P.resolveLabel(st.store, a), name = P.buttonLabel(st.store, a);
+      const label = P.resolveLabel(st.store, a), prompt = P.resolvePrompt(st.store, a), name = P.buttonLabel(st.store, a);
       const reads = fit(a === AUTOPILOT.key ? `☑ ${name}` : `${name} #N`, cols - 4);
-      settingRow(`label:${a}`, P.DEFAULT_LABELS[a], custom ? reads : dim(reads),
-        custom ? [accent, "custom"] : [dim, "default"], "Edit", () => editLabel(a));
+      settingRow(a, P.DEFAULT_LABELS[a], [label ? reads : dim(reads), prompt ? fit(prompt, cols - 4) : dim(fit(DEFAULT_PROMPTS[a], cols - 4))],
+        label || prompt ? [accent, "custom"] : [dim, "default"], "Edit", () => editButton(a));
     }
-    if (tab === 3) settingRow(MERGE_ROW, "After a merge", fit(MERGE_MODES[mergeMode()], cols - 4), null, "Change", () => toggleMergeMode());
+    if (tab === 2) settingRow(MERGE_ROW, "After a merge", [fit(MERGE_MODES[mergeMode()], cols - 4)], null, "Change", () => toggleMergeMode());
   }
-  // Keep the selected entry (or field) in view. A prompt keeps its end in view: the
-  // line you type on, and its reason. The wheel scrolls the form and the prompt
-  // from there.
+  // Keep the selected entry (or field) in view. The button editor keeps the end of
+  // the field you are on in view: the line you type on, and its reason, and as much
+  // above it as fits. The wheel scrolls the form and the editor from there.
   const most = Math.max(0, body.length - height);
-  const shown = st.mode === "prompt" ? Math.max(selStart, selEnd - height) : Math.min(selStart, Math.max(0, Math.min(selEnd, body.length) - height));
+  const shown = st.mode === "prompt" ? Math.max(0, selEnd - height) : Math.min(selStart, Math.max(0, Math.min(selEnd, body.length) - height));
   const top = editing ? Math.max(0, Math.min(most, shown + (st.scroll || 0))) : shown;
   if (editing) st.scroll = top - shown;
   for (let r = 0; r < height; r++) {
@@ -2895,9 +2921,10 @@ function quit() {
   process.exit(0);
 }
 
-// Pasted text goes into the prompt, the form's text field or the model being added: its
-// line breaks and tabs as spaces, since neither holds one, and with no control
-// character. Anywhere else, on the rows, in the list or the menu, it does nothing.
+// Pasted text goes into the button editor's field you are on (#70), the form's text
+// field or the model being added: its line breaks and tabs as spaces, since neither
+// holds one, and with no control character. Anywhere else, on the rows, in the list
+// or the menu, it does nothing.
 function pasteText(text) {
   const st = ui.settings;
   if (ui.pasteCR && text.startsWith("\n")) text = text.slice(1);
@@ -2906,7 +2933,7 @@ function pasteText(text) {
   const adding = st.mode === "edit" && st.form.adding !== null;
   const field = st.mode === "prompt" ? editTarget(st.prompt) : adding ? { key: "model", max: MODEL_MAX } : FIELDS[st.field];
   if (!field.max) return;
-  const box = st.mode === "prompt" ? st.prompt : st.form, key = st.mode === "prompt" ? "text" : adding ? "adding" : field.key;
+  const box = st.mode === "prompt" ? st.prompt : st.form, key = adding ? "adding" : field.key;
   for (const c of text.replace(/\r\n|[\r\n\t]/g, " ")) {
     if ([...box[key]].length >= field.max) break;
     if (!/[\x00-\x1f\x7f-\x9f]/.test(c)) box[key] += c;
