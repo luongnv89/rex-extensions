@@ -27,6 +27,52 @@ node ~/.config/rex/rex-extensions/github/install.js
 
 Then press `cmd+shift+g` in a Rex pane inside a GitHub or GitLab repo, or the key `install.js` says it picked. The github panel needs [`gh`](https://cli.github.com) or [`glab`](https://gitlab.com/gitlab-org/cli), logged in, plus Rex and Node 20 or later (see [Needs](#needs)). [Install](#install) explains each step.
 
+## Features
+
+Each extension's README explains every feature in full. This is the list.
+
+### github: pull requests and issues in a side pane
+
+- **Lists** the 50 most recent open pull requests and issues of the repo in the focused pane, from GitHub, GitHub Enterprise, GitLab or a self-hosted GitLab, with each row's author, branch, Draft chip, review state, checks, labels in their colors and age. The panel follows you when you `cd` or change pane, and refreshes every 2 minutes. ([Use](github/README.md#use))
+- **Resolve and Review buttons** on GitHub start an agent in a new pane beside yours: Resolve hands an issue to the `issue-resolver` skill, Review hands a pull request to `issue-pr-review`. The panel checks the skill is installed first, and leaves your own agent and focus alone. ([Resolve and review with an agent](github/README.md#resolve-and-review-with-an-agent))
+- **Agent profiles** choose the agent, model, thinking level and launch arguments, for seven harnesses: Claude Code via `mcc run`, Claude Code, Codex, Pi, OpenCode, Mistral Vibe and Devin. A menu picks the profile at each start, and each action keeps a default. ([Agent profiles](github/README.md#agent-profiles))
+  - Built-in model lists for each harness, plus models you add yourself. ([Models](github/README.md#models))
+  - A **Test** button checks a profile's agent and model can start, without starting it or spending tokens. ([Test a profile](github/README.md#test-a-profile))
+  - **Import from mcc** turns mcc's Claude Code profiles into panel profiles, several at once, with each one's model and thinking level. ([Import from mcc](github/README.md#import-from-mcc))
+- **Custom prompts and button labels** replace the skill a button sends with a prompt of your own, and rename the button to match, such as **Fix with tests #N**. ([Custom prompts](github/README.md#custom-prompts), [Button labels](github/README.md#button-labels))
+- **Auto-pilot** puts a checkbox on every issue and runs one agent on the ones you check, with the IDD `auto-pilot` skill or your own prompt. GitHub only. ([Auto-pilot several issues](github/README.md#auto-pilot-several-issues))
+- **Merge** a pull request from its row, on GitHub and GitLab, with a second press to confirm. It uses the method the repo allows, refuses if the branch moved since you looked, and shows its progress on the button. ([Merge a pull request](github/README.md#merge-a-pull-request))
+  - After a merge it deletes the branch, or keeps it, as you set. When it deletes it, your checkout ends on an up-to-date default branch with the local copy gone. ([Delete the branch](github/README.md#delete-the-branch))
+- **Close** an issue from its row, on GitHub and GitLab, with a second press to confirm. ([Close an issue](github/README.md#close-an-issue))
+- **Settings** in tabs: profiles, each button's label and prompt, and the merge mode. ([Edit them](github/README.md#edit-them))
+- **Works without a mouse:** every button has a key, `?` lists the keys of the view you're in, and the profile menu opens at the bottom of the pane where a phone over remote access can see it. ([Use](github/README.md#use))
+- **Remembers** the list you chose and the width you dragged it to, across restarts, and runs in sessions on remote Rex servers. ([Remote hosts](github/README.md#remote-hosts))
+
+### mcc: Claude Code usage and machine stats in a bottom strip
+
+- **Usage bars** for the 5-hour and weekly window of every [mcc](https://github.com/luongnv89/mcc) account, with the time to each reset, ordered by weekly use. Devin shows its daily window and overage balance. ([mcc README](mcc/README.md))
+- **API-key profiles** show this month's estimated spend, and a bar against the budget when one is set.
+- **The `►` mark** shows which profile `mcc run` would start in the folder of the pane you work in, and moves with you.
+- **Login warnings:** a ⚠ marks an account whose login has ended, ends soon or whose last lookup failed, with the `mcc login` command that fixes it.
+- **Details** (`d`) shows each account's last use, login end, how old its numbers are and its reset times as clock times.
+- **Live refresh** looks every account up on demand; between refreshes the panel rereads mcc's cache every 30 seconds, including accounts on other machines mcc reaches over SSH. ([Use](mcc/README.md#use))
+- **Machine stats:** CPU, memory, disk and network speed, every 5 seconds, with an online dot in a narrow pane.
+- **Fits itself** to its accounts, collapses to one summary line, and opens under the github panel when the tab has one.
+
+### tabs: where every tab is, in the sidebar
+
+- **Machine in the session name**, such as `devbox,Laptop:deploy`, and **folder in the tab name**, such as `api · claude`. ([tabs README](tabs/README.md))
+- **Follows ssh:** a tab running `ssh`, `mosh`, `et` or `autossh` shows the remote machine and folder.
+- **Keeps your names:** rename a session or tab as usual and the machine or folder is added back.
+- **Turns off cleanly:** the key puts every name back as it was, and off is remembered across restarts.
+
+### sshtab: new tabs follow ssh, agents come back after a restart
+
+- **Same-machine tabs and splits:** a new tab or split pane opened from one that's ssh'd into a machine connects to that machine, from the **+** button, the menu, the palette or `cmd+t`. ([sshtab README](sshtab/README.md))
+- **Carries the ssh options** (`-p`, `-i`, `-J`, `-o` and the rest) and drops what would break a shell: the remote command, port forwards and flags such as `-N` and `-f`.
+- **Leaves scripts alone:** tabs and panes made by `rex` commands, scripts and agents are never touched. Each decision goes to a log.
+- **Agent sessions after a Rex restart:** a pane that ran an agent resumes the same session in the same folder. Claude Code always comes back; Codex, OpenCode, Cursor Agent and pi come back when they were started with a session id; Gemini, Amp, Qwen, Copilot and Kimi don't. A palette action turns this part off on its own. ([Agent sessions after a restart](sshtab/README.md#agent-sessions-after-a-restart))
+
 ## Install
 
 Rex has no plugin manager. An extension is enabled when the `init.lua` Rex reads loads its Lua file and binds a key to its action. Each extension's `install.js` makes that edit for you.
