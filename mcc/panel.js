@@ -4,8 +4,8 @@
 // every account up live (`mcc usage --all`); collapse shrinks the strip so the
 // panes above get the room back. `d` swaps the bars for what else mcc knows: when
 // each account was last used, when its login ends, how old its numbers are and when
-// its windows reset. Devin, which has a daily window instead of a 5-hour one, shows it. A line under the title shows this machine's CPU,
-// memory, disk and network, sampled every 5 seconds. A ► marks the profile mcc
+// its windows reset. Devin, which has a daily window instead of a 5-hour one, shows it. Two lines under the title show this machine's CPU,
+// memory and disk space, then its network and disk read/write speed, sampled every 5 seconds. A ► marks the profile mcc
 // would start in the folder of the pane you work in (`mcc here`), and follows you
 // from pane to pane.
 //
@@ -40,7 +40,7 @@ const STALE = 3600000;
 // and no command that reads them may run into the next sample.
 const STATS = 5000;
 const STATS_TIMEOUT = 4000;
-// The online dot on a narrow stats line blinks on and off at this pace.
+// The online and disk activity dots on a narrow stats line blink on and off at this pace.
 const BLINK = 1000;
 // A refresh spins at least this long, so a quick one is still seen, and then says
 // how it went on its button for FLASH.
@@ -320,16 +320,56 @@ function parseNetstat(text) {
   return seen ? { rx, tx } : null;
 }
 
-// Bytes per second between two counter samples ({ rx, tx, at } with `at` in ms).
-// Counters that went backwards (an interface gone) count as no traffic.
+// /proc/diskstats (Linux) → bytes read and written so far by the whole physical disks.
+// After the name come reads, merged, sectors read, ms, writes, merged, sectors written;
+// a sector there is always 512 bytes. A partition counts again in its disk, and loop,
+// RAM, device-mapper and RAID devices sit on real disks, so only whole disks count.
+// `isDisk(name)` (true/false, or undefined when it doesn't know) beats the name list.
+const WHOLE_DISK = /^(?:[shv]d[a-z]+|xvd[a-z]+|nvme\d+n\d+|mmcblk\d+)$/;
+function parseDiskstats(text, isDisk) {
+  let read = 0, write = 0, seen = 0;
+  for (const line of String(text ?? "").split("\n")) {
+    const f = line.trim().split(/\s+/);
+    if (f.length < 10) continue;
+    const r = num(f[5]), w = num(f[9]);
+    if (Number.isNaN(num(f[0])) || Number.isNaN(r) || Number.isNaN(w)) continue;
+    seen++;
+    if (!(isDisk?.(f[2]) ?? WHOLE_DISK.test(f[2]))) continue;
+    read += r * 512; write += w * 512;
+  }
+  return seen ? { read, write } : null;
+}
+
+// `ioreg -r -c IOBlockStorageDevice -l -w0 -d2` (macOS) → the same, from the
+// statistics of each disk's driver. Disk images (a "Virtual Interface" backed by a
+// "File") are left out: what they read and write goes through a real disk too.
+function parseIoreg(text) {
+  let read = 0, write = 0, seen = 0;
+  for (const dev of String(text ?? "").split(/^(?=\+-o )/m)) {
+    const image = /"Physical Interconnect"\s*=\s*"Virtual Interface"|"Physical Interconnect Location"\s*=\s*"File"/.test(dev);
+    for (const [, stats] of dev.matchAll(/"Statistics"\s*=\s*\{([^}]*)\}/g)) {
+      const r = Number(/"Bytes \(Read\)"=(\d+)/.exec(stats)?.[1]), w = Number(/"Bytes \(Write\)"=(\d+)/.exec(stats)?.[1]);
+      if (!Number.isFinite(r) || !Number.isFinite(w)) continue;
+      seen++;
+      if (!image) { read += r; write += w; }
+    }
+  }
+  return seen ? { read, write } : null;
+}
+
+// Bytes per second between two counter samples, for each count in them ({ rx, tx }
+// or { read, write }, with `at` in ms). A counter that went backwards (an interface
+// or a disk gone) counts as nothing.
 function rate(prev, cur) {
   if (!prev || !cur) return null;
   const s = (cur.at - prev.at) / 1000;
   if (!(s > 0)) return null;
-  return { rx: Math.max(0, cur.rx - prev.rx) / s, tx: Math.max(0, cur.tx - prev.tx) / s };
+  const out = {};
+  for (const [k, v] of Object.entries(cur)) if (k !== "at") out[k] = Math.max(0, v - (prev[k] ?? v)) / s;
+  return out;
 }
 
-// A metric worked out from two samples (CPU, network) after a new one:
+// A metric worked out from two samples (CPU, network, disk I/O) after a new one:
 // null when it failed, undefined until there are two. `base` is kept for the next.
 function step(base, cur, delta) {
   if (!cur) return { value: null, base: null };
@@ -420,6 +460,17 @@ function linuxVirtual(name) {
   return virtualNet.get(name);
 }
 
+// The same for block devices: /sys/block lists whole disks only, and
+// /sys/devices/virtual/block the ones that aren't physical (loop, RAM, device-mapper).
+const blockDisk = new Map();
+function linuxDisk(name) {
+  if (!blockDisk.has(name)) {
+    const sys = fs.existsSync("/sys/block");
+    blockDisk.set(name, sys ? fs.existsSync(path.join("/sys/block", name)) && !fs.existsSync(path.join("/sys/devices/virtual/block", name)) : undefined);
+  }
+  return blockDisk.get(name);
+}
+
 const readText = (file) => fs.promises.readFile(file, "utf8").catch(() => null);
 
 // Online: some interface has an address other than loopback or link-local (169.254/16,
@@ -442,35 +493,42 @@ function readOnline(list = os.networkInterfaces) {
 async function readStats() {
   const at = Date.now(), cpu = cpuTimes(), online = readOnline();
   if (process.platform === "darwin") {
-    const [vm, ns, disk] = await Promise.all([run("/usr/bin/vm_stat", [], STATS_TIMEOUT), run("/usr/sbin/netstat", ["-ibn"], STATS_TIMEOUT), readDisk()]);
-    return { cpu, mem: readout(vm, (t) => parseVmStat(t, os.totalmem())), disk, net: readout(ns, parseNetstat), online, at };
+    const [vm, ns, io, disk] = await Promise.all([
+      run("/usr/bin/vm_stat", [], STATS_TIMEOUT),
+      run("/usr/sbin/netstat", ["-ibn"], STATS_TIMEOUT),
+      run("/usr/sbin/ioreg", ["-r", "-c", "IOBlockStorageDevice", "-l", "-w0", "-d2"], STATS_TIMEOUT),
+      readDisk(),
+    ]);
+    return { cpu, mem: readout(vm, (t) => parseVmStat(t, os.totalmem())), disk, net: readout(ns, parseNetstat), io: readout(io, parseIoreg), online, at };
   }
-  const [mem, dev, disk] = await Promise.all([readText("/proc/meminfo"), readText("/proc/net/dev"), readDisk()]);
-  return { cpu, mem: mem ? parseMeminfo(mem) : null, disk, net: dev ? parseNetDev(dev, linuxVirtual) : null, online, at };
+  const [mem, dev, ds, disk] = await Promise.all([readText("/proc/meminfo"), readText("/proc/net/dev"), readText("/proc/diskstats"), readDisk()]);
+  return { cpu, mem: mem ? parseMeminfo(mem) : null, disk, net: dev ? parseNetDev(dev, linuxVirtual) : null, io: ds ? parseDiskstats(ds, linuxDisk) : null, online, at };
 }
 
 // Turn a reading into what the stats line shows, keeping it as the base for the next.
 function applyStats(r) {
   const cpu = step(ui.cpuBase, r.cpu, cpuPercent);
   const net = step(ui.netBase, r.net ? { ...r.net, at: r.at } : null, rate);
+  const io = step(ui.ioBase, r.io ? { ...r.io, at: r.at } : null, rate);
   ui.cpuBase = cpu.base;
   ui.netBase = net.base;
-  ui.stats = { cpu: cpu.value, mem: r.mem, disk: r.disk, net: net.value, online: r.online };
+  ui.ioBase = io.base;
+  ui.stats = { cpu: cpu.value, mem: r.mem, disk: r.disk, net: net.value, io: io.value, online: r.online };
 }
 
 // Start the stats over: the next sample sets new bases, so the first CPU percent and
-// rate after a collapse or expand cover only the time since.
+// rates after a collapse or expand cover only the time since.
 function resetStats() {
   ui.stats = {};
-  ui.cpuBase = ui.netBase = null;
+  ui.cpuBase = ui.netBase = ui.ioBase = null;
 }
 
 // Each metric that can't be read shows "unavailable" on its own; none of it touches
-// the usage rows or their errors, and the stats line never changes the pane's height.
+// the usage rows or their errors, and the stats lines never change the pane's height.
 async function sampleStats() {
   if (ui.sampling) return;
   ui.sampling = true;
-  try { applyStats(await readStats()); } catch { applyStats({ cpu: null, mem: null, disk: null, net: null, online: null, at: Date.now() }); }
+  try { applyStats(await readStats()); } catch { applyStats({ cpu: null, mem: null, disk: null, net: null, io: null, online: null, at: Date.now() }); }
   ui.sampling = false;
   draw();
 }
@@ -679,11 +737,17 @@ function row(p, layout, issue, now = Date.now(), here = null) {
 // The highest percent of one window across accounts, for the collapsed header.
 const peak = (profiles, key) => profiles.reduce((m, p) => (p[key] ? Math.max(m ?? 0, Math.round(p[key].percent)) : m), null);
 
-// The machine's line, in the first form that fits:
-//   " cpu 12% · mem 28.0/32.0 GB · disk 822.0/926.4 GB 89% · net ↓1.2 MB/s ↑40 KB/s"
-//   " cpu 12% · mem 88% · disk 89% · net ●"   (● blinks green online, ○ red offline)
-// then without the network, then without the disk, then cut.
+// The machine's two lines, each in the first form that fits, then cut. Storage:
+//   " cpu 12% · mem 28.0/32.0 GB · disk 822.0/926.4 GB 89%"
+//   " cpu 12% · mem 88% · disk 89%"   then without the disk.
+// Speeds:
+//   " net ↓1.2 MB/s ↑40 KB/s · io r 12.0 MB/s w 3.1 MB/s"
+//   " net ● · io ●"   then without io.
+// The net dot blinks green online and is a red ○ offline; the io dot blinks green
+// while the disks read or write, and is dim when they're idle.
+// Each part is [key, value, colour, blinks].
 function statsParts(cols, s = ui.stats, blink = ui.blink) {
+  const plain = (x) => x;
   const pct = (v) => label(v, (x) => `${Math.round(x)}%`);
   const color = (p) => (p == null ? dim : tone(Math.round(p)));
   const mp = memPercent(s.mem);
@@ -693,17 +757,22 @@ function statsParts(cols, s = ui.stats, blink = ui.blink) {
   const dp = diskPercent(s.disk);
   const diskFull = ["disk ", label(s.disk, (d) => `${formatPair(d.used, d.total)} ${Math.round(dp)}%`), color(dp)];
   const diskShort = ["disk ", pct(s.disk && dp), color(dp)];
-  const net = ["net ", label(s.net, (n) => `↓${formatRate(n.rx)} ↑${formatRate(n.tx)}`), s.net ? (x) => x : dim];
-  const link = ["net ", label(s.online, (on) => (on ? "●" : "○")), s.online ? (blink ? dim : green) : s.online === false ? red : dim];
-  const choices = [[cpu, memFull, diskFull, net], [cpu, memShort, diskShort, link], [cpu, memShort, diskShort], [cpu, memShort]];
-  return choices.find((c) => width(" " + c.map(([k, v]) => k + v).join(" · ")) <= cols) ?? choices.at(-1);
+  const net = ["net ", label(s.net, (n) => `↓${formatRate(n.rx)} ↑${formatRate(n.tx)}`), s.net ? plain : dim];
+  const link = ["net ", label(s.online, (on) => (on ? "●" : "○")), s.online ? (blink ? dim : green) : s.online === false ? red : dim, s.online === true];
+  const io = ["io ", label(s.io, (d) => `r ${formatRate(d.read)} w ${formatRate(d.write)}`), s.io ? plain : dim];
+  const busy = Boolean(s.io && s.io.read + s.io.write > 0);
+  const ioDot = ["io ", label(s.io, () => "●"), busy && !blink ? green : dim, busy];
+  const pick = (choices) => choices.find((c) => width(" " + c.map(([k, v]) => k + v).join(" · ")) <= cols) ?? choices.at(-1);
+  return [
+    pick([[cpu, memFull, diskFull], [cpu, memShort, diskShort], [cpu, memShort]]),
+    pick([[net, io], [link, ioDot], [link]]),
+  ];
 }
-function statsRow(cols, s = ui.stats, blink = ui.blink) {
-  const parts = statsParts(cols, s, blink);
-  return clip(" " + parts.map(([k, v, c]) => dim(k) + c(v)).join(dim(" · ")), cols);
+function statsRows(cols, s = ui.stats, blink = ui.blink) {
+  return statsParts(cols, s, blink).map((parts) => clip(" " + parts.map(([k, v, c]) => dim(k) + c(v)).join(dim(" · ")), cols));
 }
-// Whether the line shows the online dot that blinks, so only then is it redrawn for it.
-const dotBlinks = (cols, s = ui.stats) => !ui.collapsed && s.online === true && statsParts(cols, s).some((m) => m[1] === "●");
+// Whether the lines show a dot that blinks, so only then are they redrawn for it.
+const dotBlinks = (cols, s = ui.stats) => !ui.collapsed && statsParts(cols, s).flat().some((m) => m[3] === true);
 
 // ── State ───────────────────────────────────────────────────────────────────
 
@@ -723,10 +792,11 @@ const ui = {
   frame: 0,
   buttons: [],
   sized: null,       // the content rows the pane was last fitted to
-  stats: {},         // cpu, mem, disk, net, online: a value, undefined until there is one, null when it can't be read
-  blink: false,      // the online dot's off half of its blink
-  cpuBase: null,     // the last CPU times and byte counters, for the next percent and rate
+  stats: {},         // cpu, mem, disk, net, io, online: a value, undefined until there is one, null when it can't be read
+  blink: false,      // the dots' off half of their blink
+  cpuBase: null,     // the last CPU times and byte counters, for the next percent and rates
   netBase: null,
+  ioBase: null,
   sampling: false,
   here: null,        // the profile mcc would start in your pane's folder, or null (#64)
 };
@@ -881,10 +951,10 @@ async function rowsOf(block) {
 }
 
 // The rows the panel's content wants: the header only when collapsed, else everything:
-// header, stats line, rule, rows, notices and footer.
+// header, two stats lines, rule, rows, notices and footer.
 function wantedRows() {
   if (ui.collapsed) return 1;
-  return 3 + Math.max(1, ui.profiles.length) + noticeLines().length + 1;
+  return 4 + Math.max(1, ui.profiles.length) + noticeLines().length + 1;
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -1144,7 +1214,7 @@ function draw() {
   const out = [header(cols)];
   const notices = noticeLines(now);
   const footer = ui.collapsed ? [] : [dim(fit(FOOTER.map((f) => f.text).join(" · "), cols))];
-  if (!ui.collapsed) out.push(statsRow(cols), dim("─".repeat(cols)));
+  if (!ui.collapsed) out.push(...statsRows(cols), dim("─".repeat(cols)));
 
   const nameWidth = Math.min(16, Math.max(4, ...ui.profiles.map((p) => width(p.name))));
   const indexWidth = String(ui.profiles.length).length;
@@ -1224,7 +1294,7 @@ function main() {
   setInterval(() => { if (!ui.refreshing) load(); }, POLL);
   // Sampled while collapsed too: the title line shows CPU and memory then.
   setInterval(sampleStats, STATS);
-  // The online dot blinks once a second; nothing redraws for it when it isn't shown.
+  // The dots blink once a second; nothing redraws for them when none is shown.
   setInterval(() => { if (dotBlinks(process.stdout.columns || 60)) { ui.blink = !ui.blink; draw(); } }, BLINK);
 
   // Rex's focus can move with no key in this pane, so the panel looks.
@@ -1244,6 +1314,6 @@ else module.exports = {
   needsFit, resize, settleResize, refit, resetFit: () => { panes = null; fitted = null; full = null; fitting = false; },
   // Where you work (#64): the mark's source, one look, the cache read that asks again, and a reset for tests.
   parseHere, follow, load, refresh, resetHere: () => { target = null; hereDir = null; locating = false; lookups++; ui.here = null; mcc = null; },
-  parseProcStat, cpuPercent, parseMeminfo, parseVmStat, parseNetDev, parseNetstat, rate, step, formatBytes, formatRate, shortBytes, formatPair, memPercent, diskPercent, parseStatfs, readDisk, readout, label,
-  cpuTimes, readStats, applyStats, resetStats, statsRow, statsParts, dotBlinks, isOnline, readOnline, header, refreshButton, footerButtons,
+  parseProcStat, cpuPercent, parseMeminfo, parseVmStat, parseNetDev, parseNetstat, parseDiskstats, parseIoreg, rate, step, formatBytes, formatRate, shortBytes, formatPair, memPercent, diskPercent, parseStatfs, readDisk, readout, label,
+  cpuTimes, readStats, applyStats, resetStats, statsRows, statsParts, dotBlinks, isOnline, readOnline, header, refreshButton, footerButtons,
 };
