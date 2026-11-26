@@ -8,7 +8,7 @@ Extensions for Rex, the terminal multiplexer. Each one is a folder with a Lua fi
 | Extension | What it does | Default key |
 | --- | --- | --- |
 | [github](github/README.md) | The open pull requests and issues of the repo you're in, from GitHub or GitLab, in a side pane. Resolve an issue or review a pull request with an agent, from a button on each row, with the agent profile and prompt you choose, merge a pull request from its own Merge button, close an issue from its own Close button, and run one agent on the issues you check with Auto-pilot. | `cmd+shift+g` |
-| [mcc](mcc/README.md) | The 5-hour and weekly Claude Code usage of every [mcc](https://github.com/luongnv89/mcc) account, and the spend of its API-key profiles, in a strip along the bottom of the tab, with a button to look them up live, and the machine's CPU, memory, disk and network. | `cmd+shift+u` |
+| [mcc](mcc/README.md) | The 5-hour and weekly Claude Code usage of every [mcc](https://github.com/luongnv89/mcc) account, and the spend of its API-key profiles, in a strip along the bottom of the tab, with a button to look them up live, and the machine's CPU, memory, disk space, network speed and disk read/write speed. | `cmd+shift+u` |
 | [tabs](tabs/README.md) | The machine in each session's name and the folder in each tab's name, such as `devbox` over `skills · claude`, so the sidebar shows where every tab is. Works over ssh. | `cmd+shift+l` |
 | [sshtab](sshtab/README.md) | A new tab or split pane opened from one that's ssh'd into a machine connects to that machine too, with the same ssh options, from the + button, the menu, the command palette or the keys. After Rex restarts, the Claude Code, Codex and other agent sessions that were running come back in their panes and folders. | `cmd+alt+t` |
 
@@ -56,7 +56,7 @@ Each extension's README explains every feature in full. This is the list.
 - **Login warnings:** a ⚠ marks an account whose login has ended, ends soon or whose last lookup failed, with the `mcc login` command that fixes it.
 - **Details** (`d`) shows each account's last use, login end, how old its numbers are and its reset times as clock times.
 - **Live refresh** looks every account up on demand; between refreshes the panel rereads mcc's cache every 30 seconds, including accounts on other machines mcc reaches over SSH. ([Use](mcc/README.md#use))
-- **Machine stats:** CPU, memory, disk and network speed, every 5 seconds, with an online dot in a narrow pane.
+- **Machine stats:** on two lines, every 5 seconds: CPU, memory and disk space, then network speed and disk read/write speed, with an online dot and a disk activity dot in a narrow pane.
 - **Fits itself** to its accounts, collapses to one summary line, and opens under the github panel when the tab has one.
 
 ### tabs: where every tab is, in the sidebar

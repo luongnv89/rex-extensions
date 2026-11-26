@@ -85,7 +85,7 @@ test("the smallest height follows the accounts: one more and a short drag snaps 
   tab.ratio = 0.95;
   assert.equal(await p.settleResize(), true);
   assert.equal(tab.panel(), p.wantedRows());
-  assert.equal(p.wantedRows(), 12);
+  assert.equal(p.wantedRows(), 13);
 });
 
 test("accounts that need more than 60% of the split: a fit stops at 60%, a short drag snaps back past it to fit them all (#55)", async (t) => {

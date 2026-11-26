@@ -33,7 +33,7 @@
     <p>The extensions send nothing to their author. On your machine they read and write:</p>
     <ul>
       <li><strong>github:</strong> the repo of the focused pane, through <code>git</code>, and its pull requests and issues, through <code>gh</code> or <code>glab</code>. It keeps its profiles in <code>~/.config/rex-github/profiles.json</code>, and which list you chose, the panel's width and the merge mode in <code>~/.local/state/rex-github/</code>.</li>
-      <li><strong>mcc:</strong> mcc's usage cache, through <code>mcc usage</code>, and this machine's CPU, memory, disk and network figures. It keeps whether the panel was collapsed in <code>~/.local/state/rex-mcc/collapsed</code>.</li>
+      <li><strong>mcc:</strong> mcc's usage cache, through <code>mcc usage</code>, and this machine's CPU, memory, disk space, network and disk read/write figures. It keeps whether the panel was collapsed in <code>~/.local/state/rex-mcc/collapsed</code>.</li>
       <li><strong>sshtab:</strong> the command line of the program in a pane, and from an agent's environment only <code>CLAUDE_CONFIG_DIR</code>, <code>CODEX_HOME</code>, <code>EDITOR</code> and <code>VISUAL</code>. In <code>~/.cache/rex-sshtab/</code> it keeps a log and, for each pane with an agent, the agent's name, session id and folder; no prompt is kept.</li>
       <li><strong>tabs:</strong> the folder and title of each tab, to name sessions and tabs. It keeps its watcher's pid, and whether you turned it off, in <code>~/.cache/rex-tabs/</code>.</li>
     </ul>

@@ -73,7 +73,56 @@ utun4      1280  100.126.124.7 100.126.124.78   4540648     - 3898884893  315360
 vmenet0    1500  <Link#30>   aa:bb:cc:dd:ee:ff       10     0       9000       10     0       9000     0
 `;
 
+// /proc/diskstats: sda and nvme0n1 are whole physical disks; the rest are partitions,
+// loop, RAM, zram, device-mapper and an optical drive. Sectors are 512 bytes.
+const DISKSTATS = `   7       0 loop0 100 0 2000 10 0 0 0 0 0 10 10 0 0 0 0
+   8       0 sda 1000 0 4000 100 500 0 2000 50 0 100 150 0 0 0 0
+   8       1 sda1 900 0 3600 90 450 0 1800 45 0 90 135 0 0 0 0
+ 259       0 nvme0n1 200 0 1000 20 100 0 600 10 0 20 30 0 0 0 0
+ 259       1 nvme0n1p1 150 0 800 15 80 0 500 8 0 15 23 0 0 0 0
+ 253       0 dm-0 300 0 3000 30 200 0 1500 20 0 30 50 0 0 0 0
+   1       0 ram0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+ 252       0 zram0 50 0 400 1 60 0 480 1 0 1 2 0 0 0 0
+  11       0 sr0 5 0 40 1 0 0 0 0 0 1 1 0 0 0 0
+`;
+
+// /usr/sbin/ioreg -r -c IOBlockStorageDevice -l -w0 -d2 on a Mac, cut to what matters:
+// the internal SSD and a USB disk count; the disk image doesn't. Each disk's driver
+// holds its statistics.
+const IOREG = `+-o NS_01@1  <class IOEmbeddedNVMeBlockDevice, id 0x100000b0a, registered, matched, active, busy 0 (46 ms), retain 7>
+  | {
+  |   "Protocol Characteristics" = {"Physical Interconnect"="Apple Fabric","Physical Interconnect Location"="Internal"}
+  | }
+  |
+  +-o IOBlockStorageDriver  <class IOBlockStorageDriver, id 0x100000b0c, registered, matched, active, busy 0 (46 ms), retain 8>
+      {
+        "Statistics" = {"Operations (Write)"=17565055,"Bytes (Read)"=4000,"Errors (Write)"=0,"Bytes (Write)"=3000,"Operations (Read)"=20614438}
+      }
+
++-o IOBlockStorageServices  <class IOBlockStorageServices, id 0x10000a6e6, registered, matched, active, busy 0 (23 ms), retain 6>
+  | {
+  |   "Protocol Characteristics" = {"Write Time Out Duration"=30000,"Physical Interconnect"="USB","Physical Interconnect Location"="External","Retry Count"=20}
+  | }
+  |
+  +-o IOBlockStorageDriver  <class IOBlockStorageDriver, id 0x10000a6e7, registered, matched, active, busy 0 (21 ms), retain 8>
+      {
+        "Statistics" = {"Operations (Write)"=1152,"Bytes (Read)"=500,"Errors (Write)"=0,"Bytes (Write)"=200,"Operations (Read)"=32709}
+      }
+
++-o AppleDiskImageDevice@0  <class AppleDiskImageDevice, id 0x100001e04, registered, matched, active, busy 0 (27 ms), retain 10>
+  | {
+  |   "Physical Interconnect Location" = "File"
+  |   "Protocol Characteristics" = {"Physical Interconnect"="Virtual Interface","Physical Interconnect Location"="File"}
+  | }
+  |
+  +-o DIDeviceIOUserClient  <class DIDeviceIOUserClient, id 0x100001e05, !registered, !matched, active, busy 0, retain 6>
+  +-o IOBlockStorageDriver  <class IOBlockStorageDriver, id 0x100001e06, registered, matched, active, busy 0 (26 ms), retain 8>
+      {
+        "Statistics" = {"Operations (Write)"=0,"Bytes (Read)"=9000,"Errors (Write)"=0,"Bytes (Write)"=9000,"Operations (Read)"=568}
+      }
+`;
+
 const EMPTY = "";
 const GARBAGE = "hello world\nnot: a stat file\n1 2 3\n";
 
-module.exports = { PROC_STAT_1, PROC_STAT_2, MEMINFO, VM_STAT, MEMSIZE, IOSTAT, NET_DEV, NETSTAT, EMPTY, GARBAGE };
+module.exports = { PROC_STAT_1, PROC_STAT_2, MEMINFO, VM_STAT, MEMSIZE, IOSTAT, NET_DEV, NETSTAT, DISKSTATS, IOREG, EMPTY, GARBAGE };
