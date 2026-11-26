@@ -737,12 +737,18 @@ function row(p, layout, issue, now = Date.now(), here = null) {
 // The highest percent of one window across accounts, for the collapsed header.
 const peak = (profiles, key) => profiles.reduce((m, p) => (p[key] ? Math.max(m ?? 0, Math.round(p[key].percent)) : m), null);
 
-// The machine's two lines, each in the first form that fits, then cut. Storage:
+// The machine's lines, each in the first form that fits, then cut. A pane as wide as
+// the speeds at their widest gets two lines. Storage:
 //   " cpu 12% · mem 28.0/32.0 GB · disk 822.0/926.4 GB 89%"
 //   " cpu 12% · mem 88% · disk 89%"   then without the disk.
 // Speeds:
 //   " net ↓1.2 MB/s ↑40 KB/s · io r 12.0 MB/s w 3.1 MB/s"
-//   " net ● · io ●"   then without io.
+//   " net ● · io ●"   then without io (only for rates past the widest below).
+// A narrower pane gets one line, with the two dots after the percents:
+//   " cpu 12% · mem 88% · disk 89% · net ● · io ●"
+//   then without the disk, then without io, then without the net dot.
+// The switch goes by the pane's width alone, not by how wide the rates are now, so
+// the panel doesn't gain and lose a row as the traffic changes.
 // The net dot blinks green online and is a red ○ offline; the io dot blinks green
 // while the disks read or write, and is dim when they're idle.
 // Each part is [key, value, colour, blinks].
@@ -763,11 +769,16 @@ function statsParts(cols, s = ui.stats, blink = ui.blink) {
   const busy = Boolean(s.io && s.io.read + s.io.write > 0);
   const ioDot = ["io ", label(s.io, () => "●"), busy && !blink ? green : dim, busy];
   const pick = (choices) => choices.find((c) => width(" " + c.map(([k, v]) => k + v).join(" · ")) <= cols) ?? choices.at(-1);
+  if (statsLines(cols) === 1) return [pick([[cpu, memShort, diskShort, link, ioDot], [cpu, memShort, link, ioDot], [cpu, memShort, link], [cpu, memShort]])];
   return [
     pick([[cpu, memFull, diskFull], [cpu, memShort, diskShort], [cpu, memShort]]),
     pick([[net, io], [link, ioDot], [link]]),
   ];
 }
+// The speeds line at its widest: four rates nine cells wide ("1023 KB/s", "99.9 GB/s").
+// A pane that wide shows any rate under 100 GB/s in full.
+const SPEEDS_WIDTH = width(" net ↓1023 KB/s ↑1023 KB/s · io r 1023 KB/s w 1023 KB/s");
+const statsLines = (cols) => (cols >= SPEEDS_WIDTH ? 2 : 1);
 function statsRows(cols, s = ui.stats, blink = ui.blink) {
   return statsParts(cols, s, blink).map((parts) => clip(" " + parts.map(([k, v, c]) => dim(k) + c(v)).join(dim(" · ")), cols));
 }
@@ -836,8 +847,11 @@ async function load() {
 
 // Grow or shrink with the content (an account added, a notice shown), but only then:
 // a height you set by hand stays until the content changes.
+// A pane made wider or narrower than SPEEDS_WIDTH changes the content too. True when it fit.
 async function refit() {
-  if (ui.sized != null && !ui.collapsed && wantedRows() !== ui.sized) await resize({ fill: true });
+  if (ui.sized == null || ui.collapsed || wantedRows() === ui.sized) return false;
+  await resize({ fill: true });
+  return true;
 }
 
 // Look every account up live. mcc saves what it finds to its cache, so reading the
@@ -951,10 +965,10 @@ async function rowsOf(block) {
 }
 
 // The rows the panel's content wants: the header only when collapsed, else everything:
-// header, two stats lines, rule, rows, notices and footer.
-function wantedRows() {
+// header, the stats lines (two, or one in a narrow pane), rule, rows, notices and footer.
+function wantedRows(cols = process.stdout.columns || 60) {
   if (ui.collapsed) return 1;
-  return 4 + Math.max(1, ui.profiles.length) + noticeLines().length + 1;
+  return 2 + statsLines(cols) + Math.max(1, ui.profiles.length) + noticeLines().length + 1;
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -1059,7 +1073,7 @@ function onResize() {
   // A drag that ends while a fit runs waits for it, so it isn't missed.
   settle = setTimeout(async function again() {
     if (fitting) settle = setTimeout(again, 500);
-    else if (await settleResize()) draw();
+    else if ((await settleResize()) || (await refit())) draw();
   }, 500);
 }
 
