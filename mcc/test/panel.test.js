@@ -158,7 +158,9 @@ test("wantedRows fits the accounts and notices, or only the header when collapse
   p.ui.error = null;
   p.ui.collapsed = false;
   // header + 2 stats lines + rule + 3 accounts + 2 notices + footer
-  assert.equal(p.wantedRows(), 10);
+  assert.equal(p.wantedRows(80), 10);
+  assert.equal(p.wantedRows(55), 10, "as wide as the speeds at their widest");
+  assert.equal(p.wantedRows(54), 9, "narrower: one stats line");
   p.ui.collapsed = true;
   assert.equal(p.wantedRows(), 1);
   p.ui.collapsed = false;
@@ -326,7 +328,7 @@ test("the stats lines never exceed the pane width, read or not", () => {
   for (const [name, s] of Object.entries(STATES)) {
     for (const cols of [16, 20, 24, 28, 32, 40, 50, 60, 80, 120, 200]) {
       const lines = p.statsRows(cols, s);
-      assert.equal(lines.length, 2, `${name} at ${cols} cols: two lines`);
+      assert.equal(lines.length, cols >= 55 ? 2 : 1, `${name} at ${cols} cols`);
       for (const line of lines.map(strip)) assert.ok(p.width(line) <= cols, `${name} at ${cols} cols: "${line}" is ${p.width(line)} wide`);
     }
   }
@@ -334,37 +336,55 @@ test("the stats lines never exceed the pane width, read or not", () => {
 
 const rows = (cols, s, blink) => p.statsRows(cols, s, blink).map(strip);
 
-test("the first stats line shows CPU, memory and disk space, then percents, then drops the disk", () => {
+test("the first stats line shows CPU, memory and disk space, then percents", () => {
   const s = STATES.read;
   assert.equal(rows(80, s)[0], " cpu 17% · mem 25.6/32.0 GB · disk 822.1/926.4 GB 89%");
-  assert.equal(rows(53, s)[0], " cpu 17% · mem 25.6/32.0 GB · disk 822.1/926.4 GB 89%", "exactly fits");
-  assert.equal(rows(52, s)[0], " cpu 17% · mem 80% · disk 89%", "one cell short: percents");
-  assert.equal(rows(29, s)[0], " cpu 17% · mem 80% · disk 89%");
-  assert.equal(rows(28, s)[0], " cpu 17% · mem 80%");
+  assert.equal(rows(55, s)[0], " cpu 17% · mem 25.6/32.0 GB · disk 822.1/926.4 GB 89%");
   assert.equal(rows(80, STATES.pending)[0], " cpu — · mem — · disk —");
+  // Wider numbers can still outgrow a two-line pane: then the percents.
+  const GB = 1024 ** 3;
+  const big = { ...s, cpu: 100, mem: { used: 100 * GB, total: 128 * GB } };
+  assert.equal(rows(56, big)[0], " cpu 100% · mem 100.0/128.0 GB · disk 822.1/926.4 GB 89%", "exactly fits");
+  assert.equal(rows(55, big)[0], " cpu 100% · mem 78% · disk 89%", "one cell short: percents");
+  assert.equal(rows(55, big).length, 2);
 });
 
-test("the second stats line shows the network and disk speeds, then two dots, then the online dot alone", () => {
+test("the second stats line shows the network and disk speeds, at any rate under 100 GB/s", () => {
   const s = STATES.read;
   assert.equal(rows(80, s)[1], " net ↓1.2 MB/s ↑40 KB/s · io r 12 MB/s w 3.1 MB/s");
-  assert.equal(rows(49, s)[1], " net ↓1.2 MB/s ↑40 KB/s · io r 12 MB/s w 3.1 MB/s", "exactly fits");
-  assert.equal(rows(48, s)[1], " net ● · io ●", "one cell short: the dots");
-  assert.equal(rows(13, s)[1], " net ● · io ●");
-  assert.equal(rows(12, s)[1], " net ●");
+  assert.equal(rows(55, s)[1], " net ↓1.2 MB/s ↑40 KB/s · io r 12 MB/s w 3.1 MB/s");
+  const KB = 1024, GB = 1024 ** 3;
+  const widest = { ...s, net: { rx: 1023 * KB, tx: 99.9 * GB }, io: { read: 1023 * KB * KB, write: 50 * GB } };
+  assert.equal(rows(55, widest)[1], " net ↓1023 KB/s ↑99.9 GB/s · io r 1023 MB/s w 50.0 GB/s", "the widest rates still fit");
+  assert.equal(rows(55, { ...widest, net: { rx: 200 * GB, tx: 200 * GB } })[1], " net ● · io ●", "past them: the dots");
   assert.equal(rows(80, STATES.pending)[1], " net — · io —");
-  assert.equal(rows(40, STATES.pending)[1], " net — · io —");
+});
+
+test("a pane narrower than the widest speeds gets one stats line, with the dots after the percents", () => {
+  const s = STATES.read;
+  for (const cols of [54, 44]) assert.deepEqual(rows(cols, s), [" cpu 17% · mem 80% · disk 89% · net ● · io ●"], `${cols} cols`);
+  assert.deepEqual(rows(43, s), [" cpu 17% · mem 80% · net ● · io ●"], "one cell short: without the disk");
+  assert.deepEqual(rows(33, s), [" cpu 17% · mem 80% · net ● · io ●"]);
+  assert.deepEqual(rows(32, s), [" cpu 17% · mem 80% · net ●"], "then without io");
+  assert.deepEqual(rows(26, s), [" cpu 17% · mem 80% · net ●"]);
+  assert.deepEqual(rows(25, s), [" cpu 17% · mem 80%"], "then without the net dot");
+  // The rates don't decide it: idle or busy, the same width gets the same lines.
+  const idle = { ...s, net: { rx: 0, tx: 0 }, io: { read: 0, write: 0 } };
+  for (const cols of [40, 54, 55, 80]) assert.equal(rows(cols, idle).length, rows(cols, s).length, `${cols} cols`);
+  assert.deepEqual(rows(54, STATES.pending), [" cpu — · mem — · disk — · net — · io —"]);
 });
 
 test("the dots: net green and blinking online, red ○ offline; io green and blinking while the disks work", () => {
-  const second = (s, blink) => p.statsRows(20, s, blink)[1];
-  assert.equal(second(STATES.read, false), " \x1b[90mnet \x1b[0m\x1b[32m●\x1b[0m\x1b[90m · \x1b[0m\x1b[90mio \x1b[0m\x1b[32m●\x1b[0m", "both on: green");
-  assert.equal(second(STATES.read, true), " \x1b[90mnet \x1b[0m\x1b[90m●\x1b[0m\x1b[90m · \x1b[0m\x1b[90mio \x1b[0m\x1b[90m●\x1b[0m", "off half of the blink: dim");
+  // The dots sit after the percents on the narrow line: compare from the net dot on.
+  const second = (s, blink) => { const line = p.statsRows(50, s, blink)[0]; return line.slice(line.lastIndexOf("\x1b[90mnet ")); };
+  assert.equal(second(STATES.read, false), "\x1b[90mnet \x1b[0m\x1b[32m●\x1b[0m\x1b[90m · \x1b[0m\x1b[90mio \x1b[0m\x1b[32m●\x1b[0m", "both on: green");
+  assert.equal(second(STATES.read, true), "\x1b[90mnet \x1b[0m\x1b[90m●\x1b[0m\x1b[90m · \x1b[0m\x1b[90mio \x1b[0m\x1b[90m●\x1b[0m", "off half of the blink: dim");
   const offline = second(STATES.offline, false);
   assert.ok(offline.includes("net \x1b[0m\x1b[31m○\x1b[0m"), "offline: red, and a different shape");
   assert.ok(offline.includes("io \x1b[0m\x1b[90m●\x1b[0m"), "idle disks: dim");
   assert.equal(second(STATES.offline, true), offline, "neither blinks");
-  assert.equal(rows(50, STATES.mixed)[1], " net — · io unavailable");
-  assert.equal(rows(16, STATES.mixed)[1], " net ○", "an io that can't be read is too long for a narrow line");
+  assert.equal(rows(60, STATES.mixed)[1], " net — · io unavailable");
+  assert.deepEqual(rows(45, STATES.mixed), [" cpu 3% · mem unavailable · net ○"], "an io that can't be read is too long for the narrow line");
   const wide = rows(100, STATES.offline)[1];
   assert.equal(wide, " net ↓0 B/s ↑0 B/s · io r 0 B/s w 0 B/s", "wide: the rates");
   assert.ok(!/[●○]/.test(wide), "wide: no dot");
@@ -373,11 +393,12 @@ test("the dots: net green and blinking online, red ○ offline; io green and bli
 test("the dots blink only while one is shown and lit: expanded, on the narrow line", (t) => {
   withUi(t, { collapsed: false });
   assert.equal(p.dotBlinks(40, STATES.read), true);
-  assert.equal(p.dotBlinks(80, STATES.read), false, "the wide line shows the rates instead");
-  assert.equal(p.dotBlinks(20, STATES.offline), false, "offline and idle: nothing blinks");
-  assert.equal(p.dotBlinks(20, { ...STATES.offline, io: { read: 10, write: 0 } }), true, "offline, but the disks read");
-  assert.equal(p.dotBlinks(20, { ...STATES.read, io: { read: 0, write: 0 } }), true, "idle disks, but online");
-  assert.equal(p.dotBlinks(12, { ...STATES.offline, io: { read: 10, write: 0 } }), false, "too narrow for the io dot");
+  assert.equal(p.dotBlinks(80, STATES.read), false, "the wide lines show the rates instead");
+  assert.equal(p.dotBlinks(50, STATES.offline), false, "offline and idle: nothing blinks");
+  assert.equal(p.dotBlinks(50, { ...STATES.offline, io: { read: 10, write: 0 } }), true, "offline, but the disks read");
+  assert.equal(p.dotBlinks(50, { ...STATES.read, io: { read: 0, write: 0 } }), true, "idle disks, but online");
+  assert.equal(p.dotBlinks(30, { ...STATES.offline, io: { read: 10, write: 0 } }), false, "too narrow for the io dot");
+  assert.equal(p.dotBlinks(20, STATES.read), false, "too narrow for either dot");
   assert.equal(p.dotBlinks(40, STATES.pending), false);
   p.ui.collapsed = true;
   assert.equal(p.dotBlinks(40, STATES.read), false, "collapsed: no stats lines");
@@ -402,7 +423,7 @@ test("the disk is green, yellow from 80% and red from 95%, like CPU and memory",
   const at = (pct) => ({ cpu: 10, mem: { used: 10 * GB, total: 100 * GB }, disk: { used: pct * GB, total: 100 * GB }, net: undefined });
   const disk = (code) => `\x1b[90mdisk \x1b[0m\x1b[${code}m`;
   for (const [pct, code] of [[79, 32], [80, 33], [94, 33], [95, 31], [100, 31]]) {
-    for (const cols of [80, 32]) {
+    for (const cols of [80, 50]) {
       const line = p.statsRows(cols, at(pct))[0];
       assert.ok(line.includes(disk(code)), `${pct}% at ${cols} cols: ${JSON.stringify(line)}`);
       assert.ok(line.includes(`\x1b[90mmem \x1b[0m\x1b[32m`), `${pct}% at ${cols} cols: memory stays green`);
@@ -415,7 +436,7 @@ test("a metric that can't be read says so, and the rest still show", () => {
   assert.deepEqual(rows(80, STATES.mixed), [" cpu 3% · mem unavailable · disk 822.1/926.4 GB 89%", " net — · io unavailable"]);
   assert.deepEqual(rows(80, STATES.unavailable), [" cpu unavailable · mem unavailable · disk unavailable", " net unavailable · io unavailable"]);
   assert.deepEqual(rows(80, STATES.noDisk), [" cpu 17% · mem 25.6/32.0 GB · disk unavailable", " net ↓1.2 MB/s ↑40 KB/s · io r 12 MB/s w 3.1 MB/s"]);
-  assert.equal(rows(40, STATES.noDisk)[0], " cpu 17% · mem 80% · disk unavailable");
+  assert.equal(rows(60, STATES.noDisk)[0], " cpu 17% · mem 25.6/32.0 GB · disk unavailable");
 });
 
 test("each sample updates the stats: CPU, network and disk I/O from the second one on", (t) => {

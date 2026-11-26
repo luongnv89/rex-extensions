@@ -37,7 +37,9 @@ When the pane is wide enough (about 91 columns or more), each row also says, aft
 
 **Details** (`d`) swaps each row's bars for the same last use and login end, how old its numbers are (`upd 4m`, yellow past an hour), and when each window resets as a clock time (`5h 13:10`, `wk Fri 18:00`), in the order they're dropped last as the pane narrows: in a pane 51 columns wide, the reset times give way. The panel's height doesn't change; press `d` again for the bars. The panel doesn't remember the view.
 
-Two lines under the title show this machine. The first has its CPU, memory and disk space use (green, yellow from 80%, red from 95%). The second has how fast it's receiving (↓) and sending (↑) over the network, and how fast its disks read (`r`) and write (`w`). A value it can't read says `unavailable`; the rest of the lines and the usage rows still show. When the first line doesn't fit, it shows only the memory and disk percent, then drops the disk. When the second doesn't fit, it shows two dots instead: `net ●`, blinking green while this machine is online, or a red `net ○` when it's offline, and `io ●`, blinking green while the disks read or write, dim when they're idle (`net ● · io ●`). Narrower still, it drops the io dot.
+Two lines under the title show this machine. The first has its CPU, memory and disk space use (green, yellow from 80%, red from 95%). The second has how fast it's receiving (↓) and sending (↑) over the network, and how fast its disks read (`r`) and write (`w`). A value it can't read says `unavailable`; the rest of the lines and the usage rows still show. When the first line doesn't fit, it shows only the memory and disk percent.
+
+In a pane narrower than 55 columns (the speeds at their widest), the two lines become one: the percents, then two dots instead of the speeds, `cpu 17% · mem 80% · disk 89% · net ● · io ●`. `net ●` blinks green while this machine is online, or is a red `net ○` when it's offline; `io ●` blinks green while the disks read or write and is dim when they're idle. Narrower still, the disk goes first, then the io dot, then the net dot. Only the width decides, not how fast the traffic is, so the panel doesn't gain and lose a row as the rates change; it fits its height again when you make the pane wider or narrower across 55 columns.
 
 It is the Rex twin of [mcc-herdr-plugin](https://github.com/luongnv89/mcc-herdr-plugin), the same panel for Herdr.
 
@@ -133,7 +135,7 @@ node --test
 - `rex-mcc.lua`: the `mcc_usage` action, which opens the panel under the tab's rex-github panel, or across the bottom of the tab, or closes it.
 - `panel.js`: the panel itself. Plain Node, no npm packages.
 - `install.js`: adds the panel and a key to `init.lua`, or takes them out.
-- `test/`: unit tests for reading mcc's JSON (Devin and API-key profiles included), the rows and the details at every width, the notices, reading `mcc here` and the mark that follows the focused pane's folder (`test/here.test.js`), the machine stats parsers (disk I/O included), the disk reading, the online check, and their two lines at every width (fixtures in `test/system-fixtures.js`), finding the split above the panel and the ratio that fits it, and for which key `install.js` picks and how it edits `init.lua`.
+- `test/`: unit tests for reading mcc's JSON (Devin and API-key profiles included), the rows and the details at every width, the notices, reading `mcc here` and the mark that follows the focused pane's folder (`test/here.test.js`), the machine stats parsers (disk I/O included), the disk reading, the online check, and their lines at every width (two, or one in a narrow pane) (fixtures in `test/system-fixtures.js`), finding the split above the panel and the ratio that fits it, and for which key `install.js` picks and how it edits `init.lua`.
 
 ## License
 

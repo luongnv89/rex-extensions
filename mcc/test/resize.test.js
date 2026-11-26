@@ -145,6 +145,27 @@ test("past 60% after a snap, new content refits to every account, not back to 60
   assert.ok(tab.ratio < 0.4);
 });
 
+test("a pane made narrower than the widest speeds loses a stats line and refits; wider gets it back", async (t) => {
+  const was = Object.getOwnPropertyDescriptor(process.stdout, "columns");
+  t.after(() => (was ? Object.defineProperty(process.stdout, "columns", was) : delete process.stdout.columns));
+  Object.defineProperty(process.stdout, "columns", { value: 80, configurable: true, writable: true });
+  accounts(5);
+  const tab = fakeTab(t, 60);
+  await p.resize();
+  assert.equal(tab.panel(), 10);
+  assert.equal(await p.refit(), false, "same width: nothing to fit");
+  process.stdout.columns = 40;
+  assert.equal(await p.refit(), true);
+  assert.equal(tab.panel(), 9, "one row shorter");
+  process.stdout.columns = 50;
+  tab.resized.length = 0;
+  assert.equal(await p.refit(), false, "still narrow: nothing moves");
+  assert.deepEqual(tab.resized, []);
+  process.stdout.columns = 80;
+  assert.equal(await p.refit(), true);
+  assert.equal(tab.panel(), 10, "the row comes back");
+});
+
 test("accounts the split can't hold: after the snap, a drag shorter keeps its place until the accounts change (#55)", async (t) => {
   accounts(15);
   const tab = fakeTab(t, 20);

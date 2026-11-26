@@ -56,7 +56,7 @@ Each extension's README explains every feature in full. This is the list.
 - **Login warnings:** a ⚠ marks an account whose login has ended, ends soon or whose last lookup failed, with the `mcc login` command that fixes it.
 - **Details** (`d`) shows each account's last use, login end, how old its numbers are and its reset times as clock times.
 - **Live refresh** looks every account up on demand; between refreshes the panel rereads mcc's cache every 30 seconds, including accounts on other machines mcc reaches over SSH. ([Use](mcc/README.md#use))
-- **Machine stats:** on two lines, every 5 seconds: CPU, memory and disk space, then network speed and disk read/write speed, with an online dot and a disk activity dot in a narrow pane.
+- **Machine stats:** every 5 seconds, on two lines: CPU, memory and disk space, then network speed and disk read/write speed. A narrow pane fits them on one line, with an online dot and a disk activity dot after the percents.
 - **Fits itself** to its accounts, collapses to one summary line, and opens under the github panel when the tab has one.
 
 ### tabs: where every tab is, in the sidebar
